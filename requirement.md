@@ -1,0 +1,1158 @@
+# Face Symmetry Lab
+
+## プロダクト要件定義・技術仕様・開発ガイド v3.0
+
+| 項目 | 内容 |
+|---|---|
+| ステータス | MVP 実装ベースライン（M0 未決事項あり） |
+| 版 | v3.0 |
+| 更新日 | 2026-07-11 |
+| 想定リポジトリ | `face-symmetry-lab` |
+| 配布形態 | ローカル Streamlit アプリ |
+| 基準ランタイム | Python 3.12 |
+| データ方針 | Local-first / 画像非保存 / 既定オフライン |
+
+> 本書の **MUST / SHOULD / MAY** は、それぞれ「必須 / 原則必須 / 任意」を表す。MVP のリリース判定は MUST の充足を条件とする。
+
+---
+
+## 0. v3.0 の設計判断
+
+v2.4 の基本方針を維持しつつ、曖昧さと実装リスクを減らすため、次を変更する。
+
+1. **プロダクトの目的を「美的評価」ではなく「撮影条件を整えた顔の左右差の可視化」に限定する。** スコアは医学的評価、魅力度、本人の価値を示さない。
+2. **年齢・性別推定をコア MVP から分離する。** 対称性分析に不要で、誤解・バイアス・モデルライセンスのリスクが大きいため、研究用拡張として既定 OFF にする。
+3. **初回体験を要件化する。** モデル準備、プライバシー説明、カメラ許可、撮影品質調整、分析という一連の導線を定義する。
+4. **分析状態と理由コードを分離する。** `HOLD` だけでなく、姿勢、距離、複数顔、低品質など「次に何を直せばよいか」を UI が説明できるようにする。
+5. **スコアを版管理する。** モデルだけでなく、ランドマーク対応表、係数、重み、前処理を含む `metric_version` を結果に記録する。
+6. **リアルタイム処理を latest-frame-wins にする。** 受信スレッドを重い推論で塞がず、古いフレームを溜めない。
+7. **Streamlit のブロッキングループを廃止する。** UI 更新は定期再実行フラグメントで行い、推論スレッドから Streamlit API に触れない。
+8. **ネットワーク境界を明示する。** localhost 実行時は STUN/TURN を使わず、モデル取得は明示操作・固定 URL・sha256 検証を必須にする。
+9. **性能要件に測定条件を持たせる。** 「15fps」を単独で掲げず、入力、端末プロファイル、測定区間、パーセンタイルを定義する。
+10. **要件・受け入れ基準・テストの対応を一本化する。** 各要件に ID、優先度、検証方法を付ける。
+
+---
+
+# Part I — Product Requirements
+
+## 1. プロダクト概要
+
+### 1.1 ビジョン
+
+Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマークを端末内で解析し、左右差をわかりやすく可視化する研究・セルフチェック用ツールである。
+
+ユーザーは、画像を外部サービスへ送信せず、撮影条件が結果に与える影響を理解しながら、同一人物・同一環境内での相対的な傾向を確認できる。
+
+### 1.2 解決する課題
+
+- 一般的な画像編集ツールでは、顔の左右差を定量的かつ再現可能に確認しづらい。
+- 顔分析サービスへ画像をアップロードすることに、プライバシー上の抵抗がある。
+- 姿勢、距離、照明、レンズ歪みの影響を区別せずに数値だけを見せると、結果が過度に権威的に受け取られる。
+- リアルタイム顔分析の試作では、モデル、UI、スレッド、履歴が密結合し、改善や検証が難しくなりやすい。
+
+### 1.3 プロダクト原則
+
+- **Local first**: 画像処理は端末内で完結し、画像を外部へ送らない。
+- **Guide before score**: 数値より先に、撮影品質と改善方法を示す。
+- **Explain, do not judge**: 「良い／悪い」「美しい／醜い」と評価しない。
+- **Relative, not absolute**: 異なる人物間の比較やランキングを行わない。
+- **Version everything**: モデル、計算式、設定、出力スキーマを追跡可能にする。
+- **Graceful degradation**: 高負荷時は古いフレームを捨て、UI とカメラ操作を維持する。
+
+### 1.4 成功指標
+
+| 指標 | MVP 目標 | 測定方法 |
+|---|---:|---|
+| 初回分析到達率 | 90% 以上 | 5 名以上のタスクテストで、説明なしに有効スコアへ到達した割合 |
+| Time to first valid result | p90 60 秒以内 | モデル準備済みの起動から最初の `OK` まで |
+| 撮影条件の理解 | 80% 以上 | テスト後に「姿勢や照明で値が変わる」と回答できた割合 |
+| 固定条件での表示安定性 | 標準偏差 2.0 点以下 | 同一 fixture または固定撮影で連続 10 秒の平滑化済み全体スコア |
+| 画像の外部送信・永続化 | 0 件 | ネットワーク遮断テスト、ファイル書込監査、ログ監査 |
+
+成功指標はプロダクト評価用であり、顔対称性スコア自体の医学的・心理的妥当性を意味しない。
+
+## 2. 対象ユーザーと利用文脈
+
+### 2.1 主対象
+
+1. **研究・開発者**: 顔ランドマークと幾何計算を再現可能な形で検証したい。
+2. **デモ利用者**: 外部アップロードなしで、顔の左右差の可視化を試したい。
+3. **同一条件で経時比較する利用者**: 同一人物・同一端末・同一照明で相対的な変化を確認したい。
+
+### 2.2 想定しない利用
+
+- 医療診断、治療方針、美容医療の適否判断
+- 採用、保険、与信、教育、監視など人物に影響を与える意思決定
+- 魅力度、人格、健康、能力の推定
+- 複数人物の順位付け、異なる人物間の優劣比較
+- 本人または保護者の同意がない画像の分析
+- 公開環境での不特定多数向けサービス提供
+
+## 3. スコープと優先度
+
+### 3.1 P0 — Core MVP
+
+- ローカル環境の事前チェックとモデル準備
+- プライバシー・免責事項の初回確認
+- Web カメラによるリアルタイム分析
+- JPEG / PNG の静止画分析
+- 単一顔ポリシー、姿勢・距離・安定性の品質ゲート
+- 輪郭、目、鼻、口、全体の左右差スコア
+- オーバーレイ、状態表示、改善ガイダンス
+- 表示値の平滑化とセッション内トレンド
+- 設定変更、停止、リセット
+- CSV / JSON エクスポート
+- モデル・指標・設定・スキーマの版管理
+- 画像非保存、ローカル限定、匿名ログ
+
+### 3.2 P1 — MVP 改善
+
+- 低照度・過露出・ぼけ警告の検証と、品質ゲートへの昇格
+- セッション要約と比較可能性の警告
+- 追加ブラウザ・カメラを用いたリアルタイム E2E matrix
+- 3D 正規化方式の評価と、2D 指標との比較レポート
+- 日本語／英語 UI
+
+### 3.3 P2 — Research Extensions
+
+- 正面判定の学習済み分類器への差し替え
+- 年齢・モデル推定性別の研究用表示（既定 OFF）
+- FastAPI アダプタ、別フロントエンド、DB、クラウド配置
+- 定期再学習、自動モデル更新、オンデバイス個人化
+
+### 3.4 非スコープ
+
+- 顔認証、本人特定、顔埋め込みの保存
+- 動画ファイル、録画、スクリーンショットの保存
+- 複数顔の同時採点
+- ログイン、組織管理、マルチテナント
+- 自動クラウド送信、分析データ収集、テレメトリ
+- 画像加工による「理想顔」生成
+
+## 4. 情報設計と主要ユーザーフロー
+
+### 4.1 画面構成
+
+アプリは次の 4 領域で構成する。
+
+1. **Analyze**: カメラ／静止画、品質ガイド、現在スコア
+2. **Trend**: セッション内の時系列、状態別の欠測表示
+3. **Session**: 件数、開始時刻、設定、エクスポート、リセット
+4. **About**: 算出方法、制約、モデル・ライセンス、プライバシー
+
+主要操作は Analyze に集約し、詳細設定はサイドバーまたは popover に置く。画面上部にはアプリ名、`Local processing` 表示、モデル／指標バージョン、停止ボタンを常時表示する。
+
+### 4.2 初回フロー
+
+1. 起動時に Python、依存、モデル、カメラ利用可否を確認する。
+2. 不足モデルがある場合は、取得元、サイズ、ライセンス、sha256 を表示し、ユーザー操作で取得する。
+3. 「画像は保存・外部送信しない」「結果は参考値」「本人の同意がある画像のみ使用」の 3 点を確認する。
+4. 入力方法を Camera / Image から選択する。
+5. Camera の場合はブラウザの許可を求める。拒否時は設定方法と Image への代替動線を示す。
+6. 顔の位置、距離、向きが条件を満たすまで、スコアの代わりに具体的なガイドを示す。
+7. 有効フレームが連続して得られたら分析結果へ切り替える。
+
+### 4.3 再訪フロー
+
+- モデルが準備済みなら、既定設定で Analyze を表示する。同じブラウザセッション内の rerun だけは UI 設定を維持する。
+- 前回の画像、分析履歴、推定値、カメラ許可状態をアプリ独自に永続化しない。
+- 指標またはモデルが変更された場合は、変更を通知し、過去エクスポートとの単純比較を避けるよう案内する。
+
+### 4.4 終了・プライバシーフロー
+
+- `Stop camera` は WebRTC track と分析ワーカーを停止し、最新フレーム参照を破棄する。
+- `Reset session` は履歴、EMA、エラー、設定スナップショットを初期化する。モデルキャッシュは削除しない。
+- ページ離脱または接続切断時も同等のクリーンアップを行う。
+
+## 5. UX / UI 要件
+
+### 5.1 レイアウト
+
+- デスクトップでは 12 カラム相当とし、カメラ 7、結果 5 の比率を基準とする。
+- 狭い画面ではカメラ、状態、スコア、トレンドの順に 1 カラムへ積む。
+- 重要操作をサイドバーだけに置かない。停止、入力切替、リセットは主画面から到達可能にする。
+- 初期画面でスコアカードの空箱を並べず、開始方法とプライバシー境界を示す。
+
+### 5.2 ビジュアル
+
+- Streamlit の公式テーマ設定を用い、light / dark の両方に対応する。
+- 生の HTML/CSS セレクタによる内部 DOM の上書きは MUST NOT。必要な独自 UI はテーマ変数に追従するコンポーネントとして隔離する。
+- 色の意味を固定する: neutral=未開始、blue=処理中、amber=調整が必要、red=回復不能なエラー。スコアの高低に赤／緑の価値判断を割り当てない。
+- 数値は最大 1 桁の小数で表示し、精度以上の細かさを演出しない。
+- 年齢・性別のような属性推定を、対称性スコアより目立たせない。
+
+### 5.3 文言
+
+- `Score` 単独ではなく、初出で「左右差スコア（実験値）」と表示する。
+- `HOLD` は内部値とし、UI では「少し右を向いてください」「顔を 10cm ほど離してください」のような行動可能な文言に変換する。
+- `ERROR` は原因、影響、回復操作を示す。内部例外やスタックトレースを表示しない。
+- 「完璧」「理想」「欠点」「歪み」「正常／異常」を使用しない。
+
+### 5.4 アクセシビリティ
+
+- 独自要素は WCAG 2.2 AA を目標とし、本文コントラスト比 4.5:1 以上を確保する。
+- 色だけで状態を伝えず、アイコン、ラベル、文言を併用する。
+- 全入力に可視ラベルを付け、キーボード操作とフォーカス表示を維持する。
+- カメラオーバーレイと同じ情報を画面テキストでも提供する。
+- チャートは要約値または表形式でも確認できるようにする。
+
+## 6. 状態モデル
+
+### 6.1 システム状態
+
+| 状態 | 条件 | UI |
+|---|---|---|
+| `BOOTSTRAPPING` | 依存・モデルを確認中 | 進捗、現在処理、キャンセル不可の理由 |
+| `READY` | 入力待ち | Camera / Image の選択 |
+| `REQUESTING_PERMISSION` | カメラ許可待ち | ブラウザ操作の説明 |
+| `STREAMING` | 映像受信中 | プレビュー、状態、停止操作 |
+| `PAUSED` | ユーザーが停止 | 最終数値を薄く表示し「停止中」を明記 |
+| `PERMISSION_DENIED` | カメラ許可が拒否された | ブラウザでの再許可手順と Image への動線 |
+| `NO_DEVICE` | 利用可能なカメラがない | 接続確認と Image への動線 |
+| `CONNECTION_FAILED` | WebRTC 接続を確立できない | 再接続、診断情報、Image への動線 |
+| `INVALID_INPUT` | 静止画を安全にデコードできない | 上限・対応形式・再選択 |
+| `FATAL_ERROR` | 継続不能 | 原因要約、再試行、診断情報のコピー |
+
+### 6.2 分析状態
+
+| `analysis_status` | 条件 | スコア |
+|---|---|---|
+| `OK` | 単一顔・品質ゲート通過・計算成功 | 新規算出する |
+| `HOLD` | 顔はあるが、姿勢・距離・安定性が条件外 | 新規算出しない |
+| `NO_FACE` | 対象顔がない | 新規算出しない |
+| `MULTI_FACE` | 2 顔以上を検出 | 誰も算出しない |
+| `ERROR` | 当該フレームの処理失敗 | 新規算出しない |
+
+`analysis_status` と `reason_codes[]` は分離する。`HOLD` の阻害理由は複数指定できる。分析を止めない照度・ぼけ等の P0 注意は `warning_codes[]` に分ける。
+
+### 6.3 理由コード
+
+| コード | 意味 | 既定ガイド |
+|---|---|---|
+| `OFF_AXIS_YAW` | 左右方向の角度外 | 顔を中央へ向ける |
+| `OFF_AXIS_PITCH` | 上下方向の角度外 | 顎を少し上げる／下げる |
+| `OFF_AXIS_ROLL` | 首の傾きが大きい | 頭を水平にする |
+| `TOO_CLOSE` / `TOO_FAR` | 顔領域が既定範囲外 | カメラから離れる／近づく |
+| `UNSTABLE` | 有効状態が規定フレーム継続していない | そのまま静止する |
+| `LOW_CONFIDENCE` | ランドマーク信頼度不足 | 明るさ、遮蔽、顔位置を確認する |
+| `LOW_LIGHT` / `OVEREXPOSED` | 輝度が推奨範囲外 | P0 は warning。正面から均一な光を当てる |
+| `BLUR` | 画像の鮮明度不足 | P0 は warning。カメラを固定し、レンズを確認する |
+| `STALE_RESULT` | 最新結果が映像より古い | 負荷を下げる設定を案内する |
+
+### 6.4 ヒステリシス
+
+- `HOLD` から `OK` への遷移は、内側閾値を満たす 5 連続有効フレームを必要とする。
+- `OK` から `HOLD` への遷移は、外側閾値を超えた 1 分析フレームで反映する。`MULTI_FACE` と処理例外も即時反映する。
+- 内側閾値の初期候補は yaw / pitch / roll = 15° / 15° / 25°、外側閾値は 17° / 17° / 28° とし、実機評価後に固定する。
+- 閾値と復帰フレーム数は Advanced 設定で変更できるが、変更時は EMA と比較 segment をリセットする。
+
+## 7. 機能要件
+
+| ID | Pri | 要件 | 受け入れ条件 |
+|---|:---:|---|---|
+| FR-001 | P0 | 起動時ヘルスチェック | モデルなし、破損、互換性なしを区別し、アプリ全体を例外終了させない |
+| FR-002 | P0 | 明示的モデル準備 | URL、サイズ、ライセンスを表示し、同意操作後に取得して sha256 を検証する |
+| FR-003 | P0 | プライバシー確認 | 初回分析前に 3 項目の説明を表示し、未確認ならカメラ・アップロードを開始しない |
+| FR-004 | P0 | 入力切替 | Camera / Image を 2 操作以内で切替でき、切替時に前入力のフレーム参照と EMA を破棄する |
+| FR-005 | P0 | カメラ入力 | 映像のみを取得し、音声 permission を要求しない。停止時は track を解放する |
+| FR-006 | P0 | 静止画入力 | JPEG / PNG、10MB 以下、12MP 以下を受け付け、EXIF orientation を適用する |
+| FR-007 | P0 | 入力検証 | 拡張子だけでなくファイル署名と画像デコードを検証し、アニメーション・破損画像を拒否する |
+| FR-008 | P0 | 単一顔ポリシー | 0 顔は `NO_FACE`、2 顔以上は `MULTI_FACE` とし、最大顔を黙って採点しない |
+| FR-009 | P0 | ランドマーク・姿勢 | 478 点ランドマークと yaw / pitch / roll を取得し、失敗を理由コードへ変換する |
+| FR-010 | P0 | 品質ゲート | 姿勢、顔サイズ、連続安定性を必須判定し、照度・ぼけは P0 では警告、P1 で評価後にゲート化できる |
+| FR-011 | P0 | 対称性指標 | §8 の手順で輪郭、目、鼻、口、全体を 0〜100 で算出し、範囲外値を拒否する |
+| FR-012 | P0 | 平滑化 | 表示用全体値に EMA を適用し、生値を別保持する。リセット条件は §8.8 に従う |
+| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態を表示し、ランドマーク表示は切替可能にする |
+| FR-014 | P0 | 結果表示 | 全体値、4 部位、姿勢、品質状態、比較上の注意を 1 画面に表示する |
+| FR-015 | P0 | トレンド | 直近 60 秒を既定表示し、欠測を 0 点として結ばず空白で表す |
+| FR-016 | P0 | セッション履歴 | 上限 3,000 件のリングバッファに数値結果のみ保持し、上限到達時は古い順に破棄する |
+| FR-017 | P0 | エクスポート | 1 件以上の結果がある場合のみ CSV / JSON を生成し、§9 のスキーマとメタ情報を含める |
+| FR-018 | P0 | 設定 | 基本設定と Advanced を分離し、不正な重み・係数・上限を保存できないよう検証する |
+| FR-019 | P0 | セッション制御 | Stop / Resume / Reset があり、結果・カメラ・モデルキャッシュへの影響を確認ダイアログで区別する |
+| FR-020 | P0 | バージョン表示 | `model_version`、`metric_version`、`schema_version`、設定 fingerprint を画面と出力に含める |
+| FR-021 | P1 | セッション要約 | 有効率、中央値、変動幅、主な HOLD 理由を表示する。人物間比較は行わない |
+| FR-022 | P2 | 属性推定拡張 | 年齢・モデル推定性別は研究モードでのみ有効化し、コア結果と別区画に表示する |
+
+---
+
+## 8. 対称性指標仕様
+
+### 8.1 入力と座標
+
+- 入力は EXIF 補正済みの RGB 画像とする。
+- ランドマークは MediaPipe Face Landmarker の 478 点を使用する。
+- 距離計算前に `x` と `y` を画像幅・高さで画素座標へ戻し、縦横比による歪みを防ぐ。
+- 計算途中の座標は `float64`、出力は有限値であることを検証する。
+
+### 8.2 品質ゲート
+
+1. 顔数が 1 であること。
+2. 顔検出または presence の信頼度が設定閾値以上であること。
+3. 既定で `|yaw| ≤ 15°`、`|pitch| ≤ 15°`、`|roll| ≤ 25°` であること。
+4. 顔 bbox 面積比が既定範囲内であること。初期候補はフレーム面積の 12〜55% とし、実機評価で固定する。
+5. §6.4 の安定条件を満たすこと。
+
+照度・ぼけは P0 では非ブロッキング警告とする。カメラ差が大きいため、固定 fixture と実機検証で誤拒否率を評価してから P1 でゲート昇格する。
+
+### 8.2.1 姿勢の座標規約
+
+- 保存・判定用の座標は非ミラー画像を基準とする。表示をミラー化しても符号を変更しない。
+- MediaPipe の顔変換行列から 3×3 部分を取り出し、極分解で scale / shear を除いた回転行列を用いる。
+- アプリ規約は intrinsic Y-X-Z とし、`yaw > 0` は鼻が非ミラー画像の右へ、`pitch > 0` は上へ、`roll > 0` は時計回りへ動く向きとする。
+- adapter は MediaPipe 座標から上記規約への変換を 1 箇所で行う。UI の「左／右」案内だけはミラー表示の有無に合わせる。
+- ±10° の単軸合成回転と既知 fixture で符号、軸順、degree 変換を contract test する。
+
+変換行列の規約が採用 MediaPipe asset と合わない場合、推測で補正せず ADR と `metric_version` を更新する。
+
+### 8.3 正規化
+
+1. 各眼の目頭・目尻の中点を眼 anchor として算出する。視線で動く虹彩中心はスケール基準に使わない。
+2. 両眼 anchor を結ぶ線が水平になるよう、全点へ 2D roll 補正を適用する。
+3. 両眼 anchor 間距離を 1.0 としてスケール正規化する。距離がゼロまたは下限未満なら `LOW_CONFIDENCE` とする。
+4. 両眼中点を原点へ平行移動する。
+
+MVP は正面品質ゲートを前提とした 2D 指標とする。3D frontalization は P1 の評価対象であり、同じ `metric_version` のまま差し替えてはならない。
+
+### 8.4 中心線
+
+- 眉間、鼻根、鼻尖、人中、上下唇中央、顎先からなる版管理済み正中点集合を使用する。
+- 中心線は通常の `x = ay + b` 回帰ではなく、**Total Least Squares（PCA による直交距離最小化）**で推定する。
+- 外れ値の影響が基準を超える場合は、RANSAC 等の頑健推定を新しい `metric_version` として評価する。
+
+### 8.5 左右差分
+
+- `landmark_map_version` で固定した左右対応ペアを、輪郭、目、鼻、口ごとに定義する。
+- 右側点を中心線に対して鏡映し、対応する左側点とのユークリッド距離を計算する。
+- 部位 `p` の正規化 RMS を次で求める。
+
+```text
+d_p = sqrt(mean(||left_i - mirror(right_i)||²))
+```
+
+- 使用可能なペア数が部位ごとの最小数を下回る場合、その部位と全体スコアを欠測にし、0 点へ置換しない。
+
+### 8.6 スコア変換
+
+```text
+score_p = clamp(100 × exp(-k_p × d_p), 0, 100)
+overall = Σ(w_p × score_p),  Σw_p = 1,  w_p ≥ 0
+```
+
+- `k_p` と `w_p` は指標設定の一部として版管理する。
+- MVP 初期値は部位重み各 0.25 とする。
+- 感度係数 `k_p` は固定評価セットによる分布確認後に凍結する。凍結前の UI は「試験中の指標」と表示する。
+- 0〜100 は理解しやすさのための変換値であり、母集団内順位、正常範囲、美的品質を意味しない。
+
+### 8.7 平滑化
+
+```text
+alpha_t = 1 - exp(-delta_t / tau)
+ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
+```
+
+- フレームレート変動で平滑化の時間特性が変わらないよう、固定 `α` ではなく時間ベース EMA を用いる。
+- 既定 `tau = 0.4 秒`。`delta_t` は単調時計の有効分析時刻差とする。
+- UI は平滑値を主表示し、生値は詳細・エクスポートで確認可能にする。
+- 部位別は P0 では生値、全体のみ EMA とする。
+- 静止画は stateless とし、`score_overall_smooth = null` とする。
+
+### 8.8 EMA のリセット
+
+次のいずれかで EMA をリセットする。
+
+- 入力ソースの変更
+- セッションの Reset
+- 指標に影響する設定の変更
+- `NO_FACE` または `MULTI_FACE` が 0.5 秒以上継続
+- モデルまたは `metric_version` の変更
+- 処理時刻が前回結果から 2 秒以上空いた場合
+
+顔認証は行わないため、人物の入れ替わりを推定して履歴を継続してはならない。
+
+## 9. データ契約とエクスポート
+
+### 9.1 データ分類
+
+| データ | 分類 | 保持 |
+|---|---|---|
+| カメラフレーム、アップロード bytes | 顔画像・機微 | 処理中のメモリのみ。停止・切替・終了で参照破棄 |
+| ランドマーク座標 | 顔由来データ | 計算中のみ。履歴・ログ・既定エクスポートに含めない |
+| 姿勢、品質値、左右差スコア | 顔由来の派生データ | セッション内リングバッファ。明示操作時のみエクスポート |
+| モデル、設定、指標バージョン | 技術メタデータ | モデルキャッシュ、履歴、エクスポート |
+| エラーログ | 運用データ | ローカルで上限・世代管理。顔由来値を含めない |
+
+「数値のみ」は匿名を意味しない。エクスポート前に、顔由来の派生データであることと共有時の注意を表示する。
+
+### 9.2 レコードスキーマ v1
+
+| フィールド | 型 | 規約 |
+|---|---|---|
+| `schema_version` | string | 例: `1.0.0` |
+| `session_id` | UUID string | 起動セッション内のランダム値。端末・人物を識別しない |
+| `segment_id` | UUID string | 指標に影響する設定変更ごとに更新 |
+| `frame_id` | int | セッション内で単調増加 |
+| `elapsed_ms` | int | セッション開始からの相対時刻。既定の時系列軸 |
+| `captured_at` | ISO 8601 UTC / null | 壁時計の出力を明示有効化した場合のみ |
+| `input_mode` | `camera` / `image` | 入力元 |
+| `analysis_status` | enum | `OK` / `HOLD` / `NO_FACE` / `MULTI_FACE` / `ERROR` |
+| `reason_codes` | array[string] | CSV では `;` 区切り |
+| `warning_codes` | array[string] | 非ブロッキング注意。CSV では `;` 区切り |
+| `face_count` | int / null | 検出顔数 |
+| `yaw_deg` / `pitch_deg` / `roll_deg` | float / null | 有限値、度 |
+| `face_area_ratio` | float / null | 0〜1 |
+| `quality_score` | float / null | P1。0〜1、指標本体とは分離 |
+| `score_contour_raw` | float / null | `OK` のみ、0〜100 |
+| `score_eyes_raw` | float / null | `OK` のみ、0〜100 |
+| `score_nose_raw` | float / null | `OK` のみ、0〜100 |
+| `score_mouth_raw` | float / null | `OK` のみ、0〜100 |
+| `score_overall_raw` | float / null | `OK` のみ、0〜100 |
+| `score_overall_smooth` | float / null | EMA 初期化後のみ |
+| `model_version` | string | 推論モデルの版 |
+| `model_sha256` | string | 使用バイナリの hash |
+| `metric_version` | string | 前処理、対応表、式、係数、重みの版 |
+| `app_version` | string | 実行アプリの版 |
+| `lock_digest` | string | `uv.lock` の sha256 |
+| `config_revision` | int | セッション内設定版 |
+| `config_fingerprint` | string | 正規化設定 JSON の sha256 |
+| `processing_ms` | float | 当該分析の処理時間 |
+| `pipeline_latency_ms` | float | capture から結果 publish まで。UI の stale 表示時間とは分離 |
+
+- 欠測は `null` とし、空文字、0、前値補完を用いない。
+- JSON に `NaN` / `Infinity`、CSV にそれらの文字列表現を出力しない。
+- 浮動値は保存時に小数 3 桁へ丸めるが、計算中は丸めない。
+- 最終正常値を表示する場合は、現在レコードとは別に `last_valid_result` と取得経過時間を UI へ表示し、現在値としてエクスポートしない。
+
+### 9.3 JSON 形式
+
+```json
+{
+  "manifest": {
+    "schema_version": "1.0.0",
+    "app_version": "0.1.0",
+    "lock_digest": "...",
+    "session_id": "uuid",
+    "started_at": null,
+    "model": {"name": "face_landmarker", "version": "...", "sha256": "..."},
+    "metric_version": "symmetry-2d/1.0.0",
+    "config_revisions": [
+      {"revision": 1, "fingerprint": "...", "settings": {}}
+    ]
+  },
+  "records": []
+}
+```
+
+`started_at` は「絶対時刻を含める」を有効にした場合のみ出力する。ホスト名、ユーザー名、元ファイル名、ファイルパス、EXIF、端末シリアルを含めない。
+
+### 9.4 CSV 形式
+
+- 1 行目をヘッダーとし、§9.2 の列を持つ。
+- 再現性に必要な版と fingerprint は各行に含める。
+- 完全な設定値が必要な場合は JSON を案内する。暗黙に sidecar を生成しない。
+- ファイル名は `face-symmetry-session_<session-short-id>.csv|json` とし、人物名・時刻を既定で含めない。
+
+## 10. データ・プライバシー・AI 安全
+
+### 10.1 データフロー
+
+```mermaid
+flowchart LR
+    B["Browser: camera / upload"] -->|"loopback only"| A["Local Streamlit app"]
+    A --> P["In-memory analysis pipeline"]
+    P --> R["Session-scoped ResultStore"]
+    R --> U["UI / user-initiated export"]
+    M["Approved model host"] -.->|"explicit setup only; HTTPS + sha256"| A
+```
+
+画像、映像、ランドマークを `A` から外部へ送る経路を持たない。モデル準備以外の外向き通信は P0 で禁止する。
+
+### 10.2 通信許可表
+
+| 場面 | 接続先 | 送信情報 | 既定 | P0 |
+|---|---|---|:---:|:---:|
+| localhost UI / WebRTC | `127.0.0.1` | 映像、UI イベント | ON | 許可 |
+| モデル準備 | manifest の許可済み HTTPS host | HTTP メタデータ | 手動 | 許可 |
+| STUN | 外部 ICE server | IP 関連メタデータ | OFF | 禁止 |
+| TURN | 外部 relay | 映像を含み得る | OFF | 禁止 |
+| Streamlit 利用統計 | Streamlit | 利用統計 | OFF | 禁止 |
+| 自動モデル更新確認 | model host | バージョン照会 | OFF | 禁止 |
+| アプリ独自テレメトリ | 外部分析基盤 | 利用データ | 実装なし | 禁止 |
+
+リモート配備は別の脅威モデル、同意、TLS、認証、STUN/TURN、データ処理契約を必要とし、本書の P0 をそのまま流用してはならない。
+
+### 10.3 ローカルアクセス境界
+
+- Streamlit は `127.0.0.1` のみに bind する。
+- CORS と XSRF protection を有効に保つ。
+- LAN 用 URL を公開・案内しない。
+- Community Cloud、tunnel、reverse proxy での起動を P0 のサポート外とする。
+- 認証なしでの利用は loopback 限定でのみ許容する。
+
+### 10.4 保持と消去
+
+- アプリは画像、映像、ランドマークを意図的にファイルへ書き込まない。
+- アップロード後は EXIF orientation だけを適用し、その他のメタデータと元ファイル名を引き継がない。
+- Stop、Reset、入力切替、接続切断で、track、frame queue、upload bytes、ResultStore、EMA を適切に解放する。
+- `@st.cache_data` で画像・ランドマーク・結果をキャッシュしない。
+- OS の swap、ブラウザ内部キャッシュ、クラッシュダンプまで完全に制御できないことは About に明示する。
+
+### 10.5 ログ
+
+- ログに画像 bytes、base64、ランドマーク配列、元ファイル名、EXIF、顔埋め込み、属性推定、スコアを含めない。
+- `event_code`、例外種別、匿名 session short ID、処理時間、モデル版のみを許可する。
+- ローカルログは 5MB × 3 世代を上限とする。既定レベルは WARNING。
+- UI にはスタックトレースを出さず、診断用 event ID と回復手順を表示する。
+
+### 10.6 モデル供給網
+
+- モデル manifest に `name`、`version`、`url`、`size`、`sha256`、`license`、`input_contract` を固定する。
+- HTTPS と許可ドメインを必須とし、任意 URL 入力を提供しない。
+- 一時ファイルへ取得し、hash 検証成功後に atomic rename する。
+- 1 byte でも異なるモデルはロードしない。失敗時は旧検証済み版を保持する。
+- 起動時の黙示ダウンロード、黙示更新、自動切替を禁止する。
+- モデル更新時は変更点と容量を表示し、履歴を新しい segment に分ける。
+
+### 10.7 禁止用途と表示ガードレール
+
+- 医療、採用、保険、教育、監視、本人確認、人物評価への利用禁止を About と初回確認に明記する。
+- スコアの高低を感情的に祝福・警告しない。
+- 人物間比較、平均顔との比較、ランキング、SNS 向け競争機能を実装しない。
+- 画像は本人、または明示的な権限・同意を得た人物のものに限定する。
+- 未成年者を対象とする利用は P0 の想定外とし、専用の同意・保護設計なしに推奨しない。
+
+### 10.8 属性推定拡張の追加条件
+
+年齢・外見に基づく二値分類は、次をすべて満たすまで有効化してはならない。
+
+1. コア対称性機能から完全に分離され、既定 OFF である。
+2. 対象、目的、出力、誤差、既知の偏りを別途説明し、明示同意を得る。
+3. `gender` ではなく `model_apparent_sex_class` 等、モデル出力であることが分かる名称を用い、`unknown` を許容する。
+4. 年齢は断定値ではなく参考レンジとして扱う。
+5. 属性ごとに `observed_at`、`is_cached`、TTL、モデル版を表示・出力する。
+6. 肌色、年齢帯、眼鏡、髭、頭部被覆、照明、カメラ等の slice 評価と limitations をモデルカードで開示する。
+7. 顔埋め込みを生成・保持せず、必要な検出・属性コンポーネントだけをロードする。
+8. モデルと学習データのライセンスが想定用途を許可している。
+
+InsightFace の公開学習済みモデルは非商用研究用途の条件があり、コア MVP へ含めない。さらに MediaPipe は `opencv-contrib-python`、InsightFace Python package は `opencv-python` を要求し、両方が同じ `cv2` namespace を提供する。P2 では ONNX Runtime を直接使う adapter を第一候補とし、検証済み fork または scoped dependency exclusion は ADR と全 OS smoke test を伴う暫定策とする。
+
+## 11. 非機能要件
+
+### 11.1 測定プロファイル
+
+| Profile | OS / Arch | Browser | 用途 |
+|---|---|---|---|
+| R1 | macOS 14+ / Apple Silicon | Chrome current / previous | 主基準 |
+| R2 | Windows 11 / x64 | Edge current / previous | 主基準 |
+| R3 | Ubuntu 22.04+ / x64 | Chrome current / previous | CI・互換性 |
+
+入力は 1280×720、映像のみ、モデル準備済み、30 秒 warm-up 後、5 分間を測定する。CPU、メモリ、温度、電源モードを結果に記録する。macOS Intel は現行 MediaPipe wheel の対象外であるため P0 非対応とする。
+
+### 11.2 要件一覧
+
+| ID | 分類 | MUST 条件 |
+|---|---|---|
+| NFR-001 | 表示性能 | R1/R2 で表示映像 p50 15fps 以上 |
+| NFR-002 | 分析性能 | R1/R2 で有効分析 p50 8fps 以上、capture から結果確定まで p95 300ms 以下 |
+| NFR-003 | UI 更新 | 結果パネルは 4〜5Hz。映像 fps、分析 fps、UI Hz を別々に計測する |
+| NFR-004 | 静止画 | warm 状態の 12MP 以下入力を p95 2 秒以内に処理する |
+| NFR-005 | 起動 | モデル準備済みで READY まで p95 10 秒以内 |
+| NFR-006 | メモリ | 30 分 soak 後の RSS 1.5GB 以下、warm-up 後の増加 10% 以下、無制限 queue なし |
+| NFR-007 | スレッド安全 | 推論器・履歴・EMA・設定・ResultStore をセッション間で共有しない。共有資源は immutable または明示 lock 付き |
+| NFR-008 | セッション隔離 | 2 タブ同時利用で frame ID、履歴、設定、状態、エクスポートが混在しない |
+| NFR-009 | ローカル限定 | `127.0.0.1` 以外に listen せず、同一 LAN の別端末から接続できない |
+| NFR-010 | オフライン | モデル準備後、非 loopback DNS/TCP/UDP 通信 0 件で全 P0 フローが完走する |
+| NFR-011 | 入力安全 | 偽装、破損、巨大、アニメーション画像をプロセス継続可能な形で拒否する |
+| NFR-012 | 再現性 | lock、model hash、metric version、config fingerprint から結果条件を特定できる |
+| NFR-013 | 数値安全 | NaN/Inf、zero eye distance、不正係数・重みを UI と出力へ流さない |
+| NFR-014 | 品質 | `domain` 90%、全体 80% 以上の line coverage。分岐とプロパティテストを重視する |
+| NFR-015 | 型 | アプリコードで strict 型チェック。未型付け外部 module の ignore は module 別 override のみ |
+| NFR-016 | アクセシビリティ | §5.4 を満たし、主要フローをキーボードで完了できる |
+| NFR-017 | 可用性 | 単一フレーム失敗で stream を停止せず、連続 3 回失敗時に回復操作を提示する |
+| NFR-018 | 依存安全 | lock 更新は専用 PR とし、OS matrix、実モデル smoke、脆弱性・ライセンス確認を通す |
+| NFR-019 | 終了処理 | Stop / disconnect 後 2 秒以内に track と worker が停止し、残留 thread がない |
+| NFR-020 | 後方互換 | `schema_version` の破壊的変更は major、追加互換は minor、修正は patch を上げる |
+
+## 12. 受け入れ基準
+
+### 12.1 機能・UX
+
+- **AC-FLOW-01**: 新規ユーザーが、プライバシー確認から Camera または Image の有効結果まで到達できる。
+- **AC-STATE-01**: 0 顔、1 顔、2 顔、姿勢外、安定待ち、正常、処理失敗の系列が仕様どおり遷移し、各理由コードが行動可能な UI 文言に対応する。
+- **AC-FACE-01**: 2 顔以上では誰のスコアも表示せず、履歴と EMA を継続しない。
+- **AC-INPUT-01**: 偽装拡張子、巨大画像、animated 画像、truncate JPEG、壊れた PNG を安全に拒否し、その後の正常分析が継続できる。
+- **AC-EXPORT-01**: CSV と JSON の同一レコードが同じ意味を持ち、各行から model、metric、config、segment を特定できる。
+- **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
+
+### 12.2 プライバシー・セキュリティ
+
+- **AC-PRIV-01**: 明示同意前にカメラ track を要求せず、Stop / Reset / disconnect で指定メモリ参照を解放する。
+- **AC-PRIV-02**: モデル準備後に外向き通信を遮断し、Camera、Image、分析、エクスポートを完走する。非 loopback 通信は 0 件。
+- **AC-SEC-01**: 同一 LAN の別端末から接続できず、CORS / XSRF が有効である。
+- **AC-LOG-01**: 正常、破損画像、推論例外のログに §10.5 の禁止データがない。
+- **AC-MODEL-01**: 1 byte 改変モデルは hash 不一致でロードされず、部分取得ファイルを正式版として扱わない。
+- **AC-MODEL-02**: 起動だけでは更新確認・取得を行わず、切替失敗時に旧版を維持する。
+- **AC-SESSION-01**: 2 タブで異なる入力・設定を同時使用しても状態と履歴が混在しない。
+
+### 12.3 指標・性能
+
+- **AC-SCORE-01**: 完全対称な合成点群は許容差内で 100、単一部位の摂動は当該部位値を単調に低下させる。
+- **AC-SCORE-02**: 平行移動、一様 scale、roll、鏡映に対する不変性が `1e-6` の許容差内で成立する。
+- **AC-SCORE-03**: zero eye distance、欠損、NaN/Inf、範囲外点ではスコアを出さない。
+- **AC-SCORE-04**: 固定評価セットで感度係数を凍結し、根拠と分布をモデル／指標カードに記録する。
+- **AC-PERF-01**: §11 の基準で fps、遅延、静止画時間、メモリの全条件を満たす。
+- **AC-SOAK-01**: 30 分連続稼働後に queue の増大、track 残留、worker 残留、顕著な memory leak がない。
+
+---
+
+# Part II — Technical Design
+
+## 13. 技術方針
+
+### 13.1 採用スタック
+
+| 区分 | P0 採用 | 方針 |
+|---|---|---|
+| Runtime | Python 3.12.x | `.python-version` と `requires-python` を一致させる |
+| Package / build | uv + `uv_build` | `uv.lock` を正本とし、日常的な一括 upgrade はしない |
+| UI | Streamlit | native layout、theme、status、fragment を優先 |
+| Camera | streamlit-webrtc | 映像のみ、loopback、外部 ICE なし |
+| Landmark | MediaPipe Tasks Face Landmarker | 478 点、CPU、モデル manifest 固定 |
+| Image | OpenCV contrib + Pillow | `cv2` provider は 1 distribution のみ、OpenCV 5 は検証まで除外 |
+| Models / config | Pydantic v2 + pydantic-settings | 境界の検証と immutable revision |
+| Numeric / export | NumPy + Pandas | domain の幾何と CSV 生成 |
+| Quality | Ruff, mypy, pytest, Hypothesis, pytest-cov | lint、strict 型、例・性質ベーステスト |
+| Security | pip-audit 相当 + SBOM / license inventory | 更新 PR の gate |
+
+バージョン範囲は互換性 spike で決め、正確な解決版は `uv.lock` のみを正本とする。2026-07 の候補は Streamlit 1.x、streamlit-webrtc 0.75 系、MediaPipe 0.10.35 系、OpenCV 4.x である。0.x 依存は minor 変更をまたぐ無制限な下限指定を避ける。
+
+### 13.2 対応環境
+
+- MUST: macOS 14+ / Apple Silicon、Windows 11 / x64、Ubuntu 22.04+ / x64
+- MAY: Windows 11 / ARM64（実機試験後）
+- 非対応: macOS Intel、32-bit OS、Python 3.13+、モバイルブラウザでのカメラ分析
+
+`[tool.uv].required-environments` で、サポート対象に wheel がない解決を lock 時に失敗させる。OS 対応は「ライブラリが公称している」だけでなく、CI とリリース前実機試験の通過を条件とする。
+
+### 13.3 依存の重要判断
+
+1. MediaPipe の現行 Python 依存は `opencv-contrib-python` を要求する。
+2. OpenCV の各 wheel は同じ `cv2` namespace を提供するため、複数 flavor を同一環境へ入れない。
+3. コア MVP から InsightFace を外すことで、`opencv-python` との二重導入と非商用モデル問題を回避する。
+4. OpenCV 5 系は compatibility matrix が通るまで `<5` とする。
+5. NumPy を「resolver 任せ」にせず、lock 更新 PR でサポート OS とモデル推論を検証する。
+
+### 13.4 キャッシュとセッション
+
+- Face Landmarker のような可変・thread safety 未保証の推論器は、session scope で生成し、終了時に `close()` する。
+- process global で共有してよいのは、immutable な manifest、検証済み model path、明示的に thread-safe と確認した資源のみ。
+- 履歴、EMA、frame ID、設定、ResultStore、worker、状態機械は session scope とする。
+- UI 層の composition root だけが Streamlit cache API を使用し、domain / application / adapter へ Streamlit を import しない。
+
+## 14. アーキテクチャ
+
+### 14.1 スタイル
+
+古典的 MVC の対応付けではなく、軽量な Ports and Adapters を採用する。
+
+```mermaid
+flowchart LR
+    UI["ui / Streamlit"] --> APP["application / use cases"]
+    APP --> CORE["domain / pure geometry"]
+    APP --> PORTS["ports / Protocols"]
+    MP["adapter / MediaPipe"] --> PORTS
+    EX["adapter / export"] --> PORTS
+    MS["adapter / model store"] --> PORTS
+    BOOT["composition root"] --> UI
+    BOOT --> MP
+    BOOT --> EX
+    BOOT --> MS
+```
+
+依存は内側へ向ける。`application` は MediaPipe、OpenCV、Streamlit の具象型ではなく、`LandmarkProvider`、`ModelStore`、`Exporter` 等の `Protocol` に依存する。
+
+FastAPI 化では domain / application と adapter の一部を再利用できるが、transport、resource lifecycle、session、認証、入力制限は別設計とする。「UI を差し替えるだけ」とは扱わない。
+
+### 14.2 コンポーネント責務
+
+| コンポーネント | 責務 | 禁止 |
+|---|---|---|
+| `domain.geometry` | 座標正規化、鏡映、TLS 中心線 | I/O、モデル、Streamlit import |
+| `domain.symmetry` | RMS、スコア、重み統合、EMA | global state、時刻取得 |
+| `application.analyzer` | 1 入力の品質判定と分析 orchestration | UI 描画、モデル自動取得 |
+| `application.session` | 状態遷移、segment、履歴、reset | `st.session_state` 直接操作 |
+| `ports` | 外部境界の `Protocol` / DTO | 具象ライブラリ依存 |
+| `adapters.mediapipe` | RGB→MediaPipe、姿勢、landmark DTO | スコア計算、UI 文言 |
+| `adapters.model_store` | manifest、取得、hash、atomic install | 任意 URL、黙示更新 |
+| `adapters.export` | JSON / CSV schema | 画像・landmark の出力 |
+| `ui` | 入力、表示、theme、ユーザー操作 | 幾何計算、推論の実装 |
+
+cross-thread DTO は immutable とし、Pydantic の `frozen=True`、`extra="forbid"`、有限値検証、または frozen dataclass を用いる。hot path での不要な再検証は benchmark 後に避ける。
+
+### 14.3 リアルタイム処理
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Callback as WebRTC callback
+    participant Gate as FrameScheduler(capacity=1)
+    participant Analyzer
+    participant Store as SessionRuntimeStore
+    participant UI as st.fragment(200ms)
+
+    Browser->>Callback: VideoFrame(frame_id, monotonic_ts)
+    Callback->>Gate: try_acquire()
+    alt analyzer available
+        Gate->>Analyzer: analyze current frame
+        Analyzer-->>Store: publish immutable result
+        Analyzer-->>Callback: result for same frame_id
+        Callback-->>Browser: matching overlay frame
+    else analyzer busy
+        Callback-->>Browser: raw frame + processing badge
+    end
+    UI->>Store: snapshot latest + chart sample
+    Store-->>UI: immutable snapshot
+```
+
+要件:
+
+- WebRTC callback は別スレッドで動作し、`st.*` と `st.session_state` に触れない。
+- 同時 in-flight 分析はセッションあたり 1。待ち queue を作らず、処理中に来たフレームは分析を省略する。
+- bbox、landmark、中心線は同じ `frame_id` の結果にだけ描画する。古い幾何を新しい顔へ重ねない。
+- `SessionRuntimeStore` は lock で最新結果と bounded history を保護する。UI は immutable snapshot だけを読む。
+- UI は `st.fragment(run_every="200ms")` 相当で更新し、`while ctx.state.playing` でメイン実行を占有しない。
+- MediaPipe は realtime で `RunningMode.VIDEO` + 単調増加 timestamp + `detect_for_video` を用いる。`LIVE_STREAM.detect_async` の二重非同期化は P0 で採用しない。
+- 静止画は別の `RunningMode.IMAGE` instance + `detect` を用いる。異なる running mode の instance を兼用しない。
+- `on_video_ended` は thread-safe な終了 signal を発行し、frame 参照と store を破棄する。そこで Streamlit API を呼ばない。
+
+P2 の属性推定を追加する場合は、critical path から分離した capacity 1 の worker とし、フレーム数ではなく `attribute_interval_ms` で制御する。対象 segment / ephemeral track が一致しない結果は破棄する。
+
+### 14.4 エラーと回復
+
+- adapter 例外は `AnalysisFailure(code, recoverable, event_id)` へ変換し、domain へ例外型を漏らさない。
+- 単一フレーム失敗は `analysis_status=ERROR` と null score を publish し、stream を継続する。
+- 連続 3 回失敗したら circuit breaker を開き、再接続／画像モード／モデル再検証を案内する。
+- Out-of-order timestamp は処理せず `FRAME_ORDER_ERROR` として計数する。
+- 設定 revision は 1 分析の開始時に 1 回だけ snapshot し、途中変更を同じ結果へ混在させない。
+
+## 15. 設定仕様
+
+### 15.1 ユーザー向け設定
+
+| 設定 | 既定 | 範囲 / 動作 |
+|---|---:|---|
+| 入力 | Camera | Camera / Image |
+| 表示ミラー | ON | 表示だけ反転。分析座標は常に非ミラー |
+| landmark 表示 | OFF | bbox、中心線は ON |
+| trend window | 60 秒 | 15 / 30 / 60 / 120 秒 |
+| 壁時計を export | OFF | ON 時だけ `captured_at` を出力 |
+
+### 15.2 Advanced 設定
+
+| 設定 | 初期候補 | 検証 |
+|---|---:|---|
+| `yaw_inner_deg` / `yaw_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` |
+| `pitch_inner_deg` / `pitch_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` |
+| `roll_inner_deg` / `roll_outer_deg` | 25 / 28 | `0 < inner < outer ≤ 45` |
+| `valid_frames_to_ok` | 5 | 1〜30 |
+| `face_area_min` / `max` | 0.12 / 0.55 | `0 < min < max < 1` |
+| `ema_tau_seconds` | 0.4 | 0.05〜5.0 |
+| `history_capacity` | 3,000 | 100〜20,000 |
+| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 |
+| `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 |
+
+- scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。
+- 基本ユーザーには検出信頼度、角度閾値、係数、model path を常時表示しない。
+- 設定モデルは immutable。UI 入力から新しい instance を生成し、成功後に atomic swap する。
+
+## 16. リポジトリ構成
+
+```text
+face-symmetry-lab/
+├── .python-version
+├── .streamlit/
+│   └── config.toml
+├── pyproject.toml
+├── uv.lock
+├── README.md
+├── LICENSE
+├── NOTICE
+├── configs/
+│   ├── model-manifest.json
+│   └── metrics/
+│       └── symmetry-2d-v1.json
+├── docs/
+│   ├── requirements.md
+│   ├── technical-design.md
+│   ├── development-guide.md
+│   ├── model-lifecycle.md
+│   ├── threat-model.md
+│   └── adr/
+├── scripts/
+│   ├── bootstrap_models.py
+│   └── verify_offline.py
+├── src/face_symmetry_lab/
+│   ├── __init__.py
+│   ├── domain/
+│   │   ├── models.py
+│   │   ├── landmarks.py
+│   │   ├── geometry.py
+│   │   └── symmetry.py
+│   ├── application/
+│   │   ├── ports.py
+│   │   ├── analyzer.py
+│   │   ├── state_machine.py
+│   │   └── session.py
+│   ├── adapters/
+│   │   ├── inference/mediapipe_landmarker.py
+│   │   ├── io/model_store.py
+│   │   └── export/session_exporter.py
+│   ├── runtime/
+│   │   ├── frame_scheduler.py
+│   │   └── session_store.py
+│   └── ui/
+│       ├── app.py
+│       ├── composition.py
+│       ├── camera.py
+│       ├── components.py
+│       └── copy.py
+└── tests/
+    ├── unit/
+    ├── property/
+    ├── contract/
+    ├── integration/
+    ├── e2e/
+    ├── performance/
+    └── fixtures/
+        ├── synthetic/
+        └── licensed/
+```
+
+本書は移行用の一体版である。リポジトリでは PRD、技術設計、開発手順、モデル運用、脅威モデルを上記のとおり分割し、同じ要件を複数ファイルへコピーせず ID で参照する。
+
+## 17. プロジェクト設定例
+
+以下は互換性 spike の出発点であり、採用前に全 target environment で lock と smoke test を行う。
+
+```toml
+[project]
+name = "face-symmetry-lab"
+version = "0.1.0"
+description = "Local-first facial landmark symmetry explorer"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "streamlit>=1.58,<2",
+  "streamlit-webrtc>=0.75,<0.76",
+  "mediapipe>=0.10.35,<0.11",
+  "opencv-contrib-python>=4.12,<5",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.9,<3",
+  "numpy>=2,<3",
+  "pandas>=2.2,<3",
+  "pillow>=11,<13",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.12,<1",
+  "mypy>=1.16,<2",
+  "pytest>=8,<9",
+  "pytest-cov>=6,<7",
+  "hypothesis>=6,<7",
+  "pytest-benchmark>=5,<6",
+  "pip-audit>=2,<3",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'win32' and platform_machine == 'AMD64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "mediapipe.*", "streamlit_webrtc.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "model: fixed real-model test",
+  "e2e: browser or media-track integration",
+  "performance: reference-device benchmark",
+]
+```
+
+`uv.lock` が exact version の正本である。上記下限が実際にサポート可能かは lowest-direct test または明示的な互換性試験で確認する。
+
+## 18. Streamlit ローカル設定
+
+リポジトリへ `.streamlit/config.toml` を含める。
+
+```toml
+[server]
+address = "127.0.0.1"
+enableCORS = true
+enableXsrfProtection = true
+maxUploadSize = 10
+enableStaticServing = false
+disconnectedSessionTTL = 30
+
+[browser]
+serverAddress = "localhost"
+gatherUsageStats = false
+
+[client]
+showErrorDetails = "none"
+toolbarMode = "minimal"
+
+[theme]
+baseRadius = "medium"
+buttonRadius = "full"
+showWidgetBorder = true
+```
+
+light / dark の色 token は `.streamlit/config.toml` の theme table で追加定義し、独自コンポーネントは theme CSS variables を利用する。
+
+---
+
+# Part III — Delivery & Operations
+
+## 19. 開発開始手順
+
+uv 自体は公式手順で導入済みであることを前提とする。シェルへ直接流し込む install command は本書へ複製せず、公式手順を参照する。
+
+```bash
+uv init --package face-symmetry-lab
+cd face-symmetry-lab
+uv python pin 3.12
+
+uv add "streamlit>=1.58,<2" "streamlit-webrtc>=0.75,<0.76" \
+  "mediapipe>=0.10.35,<0.11" "opencv-contrib-python>=4.12,<5" \
+  "pydantic>=2.11,<3" "pydantic-settings>=2.9,<3" \
+  "numpy>=2,<3" "pandas>=2.2,<3" "pillow>=11,<13"
+
+uv add --dev ruff mypy pytest pytest-cov hypothesis pytest-benchmark pip-audit
+uv sync --frozen
+uv run python scripts/bootstrap_models.py --verify
+uv run streamlit run src/face_symmetry_lab/ui/app.py
+```
+
+モデル bootstrap は、manifest を表示してユーザー確認を得る対話モードと、CI 用の `--accept-manifest` を持つ。どちらも hash 検証を省略できない。
+
+## 20. 日常コマンドと依存更新
+
+```bash
+uv sync --frozen
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy src tests
+uv run pytest -m "not model and not e2e and not performance"
+uv run pytest -m model
+uv run pip-audit
+uv build
+```
+
+依存更新は専用 branch / PR で 1 パッケージ群ずつ行う。
+
+```bash
+uv lock --upgrade-package <package-name>
+uv sync --frozen
+```
+
+一括 `uv lock --upgrade` を日常手順に含めない。更新 PR は lock diff、release notes、脆弱性、ライセンス、3 OS smoke、モデル推論、OpenCV provider 数を確認し、問題時は前 lock へ戻せるようにする。
+
+## 21. テスト戦略
+
+### 21.1 テスト層
+
+| 層 | 常時 CI | 内容 |
+|---|:---:|---|
+| Unit | Yes | 式、validation、状態遷移、export formatting |
+| Property | Yes | 変換不変性、単調性、有限値、左右 map の整合 |
+| Adapter contract | Yes | RGB/BGR、pose 符号、model manifest、schema |
+| Integration / golden | Yes | 固定 asset と許諾 fixture の推論、許容差比較 |
+| Model smoke | Main / scheduled | 正式 OS で load + 1 image + hash verification |
+| E2E | Main / release | synthetic media track、開始、HOLD、OK、Stop、解放 |
+| Privacy / security | Main / release | offline、listen address、malformed image、log scan |
+| Performance / soak | Release | §11 の参照端末、5 分測定、30 分 soak |
+
+### 21.2 Domain テスト
+
+- 合成完全対称点群が許容差内で 100 になる。
+- 片側の口点だけを段階的にずらすと、mouth が単調低下し、他部位への影響が規定範囲内である。
+- 平行移動、roll、一様 scale、鏡映で結果が許容差内に保たれる。
+- 左右対応 map に重複、自己対応、範囲外 index がない。
+- midline を動かした合成点群で、TLS が本来の非対称を過度に吸収しないことを確認する。
+- zero eye distance、欠損、NaN/Inf、極端座標、負の係数、不正 weight を拒否する。
+- OS をまたぐ数値比較は bit 完全一致ではなく `pytest.approx` と事前定義した `atol` / `rtol` を用いる。
+
+### 21.3 状態・並行性テスト
+
+- `HOLD → 5 valid → OK → 1 outer-invalid → HOLD` の系列。
+- NO_FACE、MULTI_FACE、ERROR、入力切替、設定更新、時間切れで EMA と segment が正しく reset される。
+- out-of-order frame、scheduler busy、history overflow で上限を超えない。
+- 2 タブ、並列 callback、設定更新中の分析で snapshot が混ざらない。
+- Stop、disconnect、再開で model instance、worker、track が規定どおり close / recreate される。
+
+### 21.4 Fixture 方針
+
+- repo 内の既定 fixture は合成 landmark と、再配布可能な synthetic image を優先する。
+- 実在人物由来の画像・landmark は顔由来データとして扱い、同意、用途、保存期間、再配布ライセンスを `tests/fixtures/licensed/README.md` に記録する。
+- 実在 fixture を public repo へ置くことを既定にしない。
+
+### 21.5 CI
+
+- Pull request: Ubuntu / Python 3.12 で format、lint、type、unit、property、contract、build。
+- Main: macOS arm64、Windows x64、Linux x64 で `uv sync --frozen` と model smoke。
+- Scheduled: 固定 model URL / hash、offline integration、脆弱性、SBOM、license inventory。
+- Release: R1 / R2 実機 E2E、アクセシビリティ、性能、soak、外向き通信 0 件。
+
+`model` マーカーを通常 CI から除外するだけで終わらせず、main または scheduled job で必ず実行する。
+
+## 22. モデルライフサイクル
+
+### 22.1 P0 推論 asset
+
+- アプリ repository の manifest と hash を信頼の起点とする。
+- model asset、landmark map、metric config は独立に version を持つ。
+- セッション中の hot swap は行わず、更新は次回セッションから反映する。
+- 更新は opt-in、atomic install、旧版保持、rollback 可能を条件とする。
+
+### 22.2 学習コードの分離
+
+学習が必要になった場合は `face-symmetry-lab-training` 等の別 repository、または依存を分離した uv workspace を用いる。学習環境はモデルに応じて CPU / GPU を選び、アプリの lock に PyTorch / CUDA を混入させない。
+
+アプリへ渡す成果物は次に限定する。
+
+- ONNX または採用 runtime のモデルファイル
+- model card JSON
+- sha256 または署名付き manifest
+- 固定評価レポート
+- 入力・前処理 contract と golden vector
+
+### 22.3 Model card 必須項目
+
+- name、version、created_at、owner、intended use、prohibited use
+- dataset provenance、license、同意根拠、保持・削除方針
+- subject-disjoint train / validation / test split
+- 入力 shape、dtype、color order、normalization、landmark / feature version
+- 全体指標と slice 指標、信頼区間、採用 threshold
+- known limitations、OOD behavior、fallback、revocation、rollback
+- export opset、runtime version、provider、model sha256
+
+### 22.4 正面判定モデル
+
+正面判定モデルは P2 とし、ルールベースを fallback として残す。
+
+- ラベルは「対称性分析に足る正面か」を複数評価者が判定し、一致率と解決手順を記録する。
+- yaw / pitch の現行閾値だけから作ったラベルで現行ルールを模倣しない。
+- 同一人物の連続 frame を異なる split へ入れない。
+- 対称性スコアや左右差特徴を入力に使わない。非対称な顔を HOLD にして見かけのスコアを上げる target leakage を避ける。
+- F1 だけでなく、false-OK、false-HOLD、OK 復帰時間、1 分あたり状態反転数、確率校正、p95 latency を gate にする。
+- 低信頼・OOD は `HOLD` に倒す。
+
+## 23. 実装マイルストーン
+
+| M | 内容 | Exit criteria |
+|---|---|---|
+| M0 | Compatibility & metric spike | 3 OS lock、model hash、OpenCV 1 provider、pose 規約、metric 係数案、正式対応環境を確認 |
+| M1 | Static core | Image 入力、品質判定、4 部位＋全体、schema、unit/property test が完成 |
+| M2 | Realtime | WebRTC、session runtime、状態機械、overlay、Stop/cleanup、E2E が完成 |
+| M3 | Product UI | 初回フロー、responsive layout、trend、settings、export、About、A11y が完成 |
+| M4 | Release hardening | offline、security、3 OS、performance、soak、license/SBOM、user test が合格 |
+| M5 | P1 quality | 照度・ぼけ gate、session summary、3D 正規化評価、日本語／英語 |
+| M6 | Research extension | 正面分類器、必要性が承認された場合のみ属性推定を別 gate で追加 |
+
+M0 の完了前に UI 本実装へ進まない。特に感度係数が未校正のまま 0〜100 を製品表示しない。
+
+## 24. リスク登録簿
+
+| ID | リスク | P/I | Trigger | 対策 | Owner |
+|---|---|---|---|---|---|
+| R-01 | スコアが美的・医学的評価と誤解される | H/H | ユーザーテストで誤答 | 中立文言、禁止用途、品質値分離、比較機能禁止 | Product |
+| R-02 | 姿勢・照明・camera 差が顔差より大きい | H/H | 再撮影差が目標超過 | 品質 gate、校正 fixture、metric version、相対比較限定 | ML/QA |
+| R-03 | TLS 中心線が非対称を吸収する | M/H | synthetic 検証で感度低下 | 中心線点と robust 法を比較し指標版更新 | ML |
+| R-04 | MediaPipe / OpenCV wheel 非互換 | M/H | lock / import failure | upper bound、required-environments、3 OS smoke | Eng |
+| R-05 | `cv2` provider 二重導入 | M/H | dependency inventory で 2 件 | Core から InsightFace 除外、CI gate | Eng |
+| R-06 | WebRTC 0.x API 変更 | M/M | minor update | narrow range、adapter 封じ込め、更新 PR | Eng |
+| R-07 | LAN へ誤公開 | L/H | bind address 変更 | committed config、startup assertion、AC-SEC-01 | Security |
+| R-08 | model 取得元改ざん・停止 | M/H | hash mismatch / timeout | pinned URL/hash、atomic install、mirror を ADR 管理 | Security |
+| R-09 | 複数顔・人物交代で履歴混在 | M/H | face count 変化 | multi-face stop、reset、segment | Product/Eng |
+| R-10 | CPU 過負荷・thermal throttling | M/M | p95 / soak 未達 | drop frames、480p fallback、thread 数固定 | Eng/QA |
+| R-11 | 属性推定の差別・誤認・license 違反 | H/H | P2 要望発生 | 既定除外、別同意、model card、legal gate | Product/Legal |
+| R-12 | 実在 fixture の無断保持 | L/H | provenance 不明 | synthetic 優先、licensed inventory、削除手順 | QA/Privacy |
+
+P/I は Probability / Impact の Low, Medium, High。各 Owner は実チームの担当者名へ置き換える。
+
+## 25. リリース前の未決事項
+
+| ID | 決定事項 | 期限 | 完了条件 |
+|---|---|---|---|
+| OD-01 | 部位別感度係数と calibration set | M0 | 分布、感度、再撮影差を評価し `symmetry-2d-v1.json` を凍結 |
+| OD-02 | R1 / R2 の実機型番 | M0 | 調達可能な端末を固定し benchmark 手順へ記録 |
+| OD-03 | MediaPipe asset の version / license / hash | M0 | manifest、NOTICE、取得元を review |
+| OD-04 | pose 行列変換と符号 | M0 | ADR と合成回転 contract test が承認済み |
+| OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認 |
+| OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
+| OD-07 | 属性推定の必要性 | M6 前 | 対称性コアでは満たせない明確な user need と法務承認がある |
+
+## 26. トレーサビリティ
+
+| Product goal | Requirements | Acceptance / test |
+|---|---|---|
+| 外部送信なし | FR-002, FR-003, NFR-009, NFR-010 | AC-PRIV-01, AC-PRIV-02, AC-SEC-01 |
+| 初見で結果へ到達 | FR-001〜010, UX §4〜6 | AC-FLOW-01, user task test |
+| 誤帰属を防ぐ | FR-008, §6, §8.8 | AC-FACE-01, AC-SESSION-01 |
+| 指標を再現できる | FR-011, FR-020, §8, §9 | AC-SCORE-01〜04, AC-EXPORT-01 |
+| リアルタイムで安定 | FR-012〜016, NFR-001〜006 | AC-PERF-01, AC-SOAK-01 |
+| 安全な入力 | FR-006, FR-007, NFR-011 | AC-INPUT-01 |
+| 中立でアクセス可能 | UX §5, §10.7, NFR-016 | AC-A11Y-01, copy review |
+| supply chain を固定 | FR-002, FR-020, §10.6 | AC-MODEL-01, AC-MODEL-02 |
+
+## 27. Done の定義
+
+MVP は次をすべて満たしたときのみ Done とする。
+
+- P0 の FR / NFR / AC がすべて合格している。
+- OD-01〜06 が解決され、ADR または設定 bundle に反映されている。
+- R1 / R2 で性能・soak、3 OS で lock・model smoke が合格している。
+- 外向き通信 0、loopback 限定、画像非永続化、ログ非保持を検証している。
+- model / metric / schema / config / app / lock の版を結果から追跡できる。
+- ユーザーテストで成功指標を満たし、結果の意味を誤解させない。
+- README、NOTICE、model card、threat model、操作説明が実装と一致している。
+
+---
+
+## 参考一次資料
+
+- [Streamlit `st.fragment`](https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment)
+- [Streamlit `st.cache_resource`](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_resource)
+- [Streamlit `config.toml`](https://docs.streamlit.io/develop/api-reference/configuration/config.toml)
+- [Streamlit theming](https://docs.streamlit.io/develop/concepts/configuration/theming)
+- [streamlit-webrtc repository and threading notes](https://github.com/whitphx/streamlit-webrtc)
+- [MediaPipe Face Landmarker Python API](https://ai.google.dev/edge/api/mediapipe/python/mp/tasks/vision/FaceLandmarker)
+- [MediaPipe package metadata / wheels](https://pypi.org/project/mediapipe/)
+- [MediaPipe Python requirements](https://raw.githubusercontent.com/google-ai-edge/mediapipe/master/requirements.txt)
+- [OpenCV Python wheel selection notes](https://pypi.org/project/opencv-contrib-python/)
+- [InsightFace Python package and model license](https://github.com/deepinsight/insightface/blob/master/python-package/README.md)
+- [InsightFace package dependency metadata](https://raw.githubusercontent.com/deepinsight/insightface/master/python-package/setup.py)
+- [uv project initialization](https://docs.astral.sh/uv/concepts/projects/init/)
+- [uv build backend](https://docs.astral.sh/uv/concepts/build-backend/)
+- [uv resolution and required environments](https://docs.astral.sh/uv/concepts/resolution/)
