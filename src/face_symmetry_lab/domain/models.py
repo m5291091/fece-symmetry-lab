@@ -27,3 +27,10 @@ class AnalysisState(BaseModel):
     # =None: ディフォルトでNoneが入る
     # reason: 上記の型を持つ変数
     reason: Optional[ReasonCode] = None
+
+class SymmetryScore(BaseModel):
+    contour: float  # 輪郭のスコア
+    eyes: float     # 目のスコア
+    nose: float     # 鼻のスコア
+    mouth: float    # 口のスコア
+    overall: float  # 全体のスコア
