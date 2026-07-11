@@ -34,3 +34,7 @@ class SymmetryScore(BaseModel):
     nose: float     # 鼻のスコア
     mouth: float    # 口のスコア
     overall: float  # 全体のスコア
+
+class AnalysisResult(BaseModel):
+    state: AnalysisState # 分析状態
+    score: Optional[SymmetryScore] = None # スコア
