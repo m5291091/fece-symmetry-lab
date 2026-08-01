@@ -15,6 +15,10 @@ from face_symmetry_lab.application.image_input import (
     decode_uploaded_image,
 )
 from face_symmetry_lab.domain.models import AGE_BANDS, AgeEstimate
+from face_symmetry_lab.ui.camera import (
+    release_session_pipeline,
+    render_camera_section,
+)
 
 APP_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_AGE_MODEL = APP_ROOT / "models" / "age_mobilenetv2_utkface_v1.onnx"
@@ -22,6 +26,9 @@ AGE_MODEL_VERSION = "age-mobilenetv2-utkface/1.0.0"
 ESTIMATOR_STATE_KEY = "age_estimator"
 ESTIMATOR_PATH_KEY = "age_estimator_path"
 RESULT_STATE_KEY = "age_estimate"
+INPUT_MODE_STATE_KEY = "input_mode"
+INPUT_MODE_CAMERA = "Camera"
+INPUT_MODE_IMAGE = "Image"
 
 
 def _configured_model_path() -> Path:
@@ -75,34 +82,8 @@ def _render_age_result(estimate: AgeEstimate) -> None:
         )
 
 
-def render_app() -> None:
-    st.set_page_config(
-        page_title="Face Symmetry Lab",
-        page_icon="🪞",
-        layout="wide",
-    )
-    st.title("Face Symmetry Lab")
-    st.caption("Local processing · 画像非保存 · 研究用")
-    st.write(
-        "顔の左右差と、モデルが推定した参考年齢帯を端末内で確認するアプリです。"
-        "現在の実装マイルストーンでは、年齢帯の静止画推論を先行提供しています。"
-    )
-
-    with st.expander("利用前に確認してください", expanded=True):
-        consent_privacy = st.checkbox(
-            "画像は端末内のメモリだけで処理され、アプリは保存・外部送信しません。"
-        )
-        consent_research = st.checkbox(
-            "結果は研究上の参考値であり、実年齢・医学的状態・人物の価値を示しません。"
-        )
-        consent_rights = st.checkbox(
-            "本人の画像、または分析する明示的な権限・同意がある画像だけを使用します。"
-        )
-
-    consented = consent_privacy and consent_research and consent_rights
-    if not consented:
-        st.info("3 項目を確認すると、画像を選択できます。")
-        return
+def _render_image_section() -> None:
+    st.subheader("静止画からの参考年齢帯")
 
     model_path = _configured_model_path()
     if model_path.is_file():
@@ -164,6 +145,57 @@ def render_app() -> None:
         "左右差の静止画分析は次の M1 実装です。"
         "年齢帯推論とは独立した結果・失敗状態として接続します。"
     )
+
+
+def _switch_input_mode() -> None:
+    """FR-004: drop the previous input's runtime state when the mode changes."""
+    release_session_pipeline()
+    _clear_session_result()
+
+
+def render_app() -> None:
+    st.set_page_config(
+        page_title="Face Symmetry Lab",
+        page_icon="🪞",
+        layout="wide",
+    )
+    st.title("Face Symmetry Lab")
+    st.caption("Local processing · 画像非保存 · 研究用")
+    st.write(
+        "顔のランドマークと、モデルが推定した参考年齢帯を端末内で確認するアプリです。"
+        "現在の実装マイルストーンでは、リアルタイムのランドマーク表示と"
+        "静止画の年齢帯推論を提供しています。左右差スコアはまだ算出しません。"
+    )
+
+    with st.expander("利用前に確認してください", expanded=True):
+        consent_privacy = st.checkbox(
+            "映像と画像は端末内のメモリだけで処理され、アプリは保存・外部送信しません。"
+        )
+        consent_research = st.checkbox(
+            "結果は研究上の参考値であり、実年齢・医学的状態・人物の価値を示しません。"
+        )
+        consent_rights = st.checkbox(
+            "本人の映像・画像、または分析する明示的な権限・同意があるものだけを使用します。"
+        )
+
+    consented = consent_privacy and consent_research and consent_rights
+    if not consented:
+        st.info("3 項目を確認すると、カメラまたは画像を選択できます。")
+        return
+
+    input_mode = st.radio(
+        "入力方法",
+        options=(INPUT_MODE_CAMERA, INPUT_MODE_IMAGE),
+        horizontal=True,
+        key=INPUT_MODE_STATE_KEY,
+        on_change=_switch_input_mode,
+    )
+
+    if input_mode == INPUT_MODE_CAMERA:
+        render_camera_section()
+    else:
+        release_session_pipeline()
+        _render_image_section()
 
 
 if __name__ == "__main__":
