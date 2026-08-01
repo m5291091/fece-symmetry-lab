@@ -8,7 +8,6 @@ touches Streamlit state (§14.3).
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final
@@ -27,11 +26,7 @@ from face_symmetry_lab.application.realtime import (
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.domain.landmarks import TrackingStatus
-
-APP_ROOT = Path(__file__).resolve().parents[3]
-LANDMARKER_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_LANDMARKER_PATH"
-DEFAULT_LANDMARKER_MODEL = APP_ROOT / "models" / "face_landmarker.task"
-LANDMARKER_MODEL_VERSION = "mediapipe-face-landmarker/1.0.0"
+from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
@@ -58,12 +53,6 @@ _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
 VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
 
-def configured_landmarker_path() -> Path:
-    """Resolve the local Face Landmarker asset. Never downloads it."""
-    configured = os.environ.get(LANDMARKER_PATH_ENV_VAR)
-    return Path(configured).expanduser() if configured else DEFAULT_LANDMARKER_MODEL
-
-
 def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrameCallback:
     """Adapt the realtime pipeline to the streamlit-webrtc frame callback."""
 
@@ -87,7 +76,7 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
 def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     landmarker = MediaPipeFaceLandmarker(
         model_path=model_path,
-        model_version=LANDMARKER_MODEL_VERSION,
+        model_version=landmark_asset().version,
     )
     return RealtimeLandmarkPipeline(landmarker=landmarker)
 
@@ -125,23 +114,13 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
         st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
 
 
-def _render_missing_model(model_path: Path) -> None:
-    st.warning(
-        "ランドマークモデルが未配置です。"
-        "MediaPipe Face Landmarker の `face_landmarker.task` を "
-        f"`{model_path}` に配置するか、環境変数 `{LANDMARKER_PATH_ENV_VAR}` で指定してください。"
-        "アプリは自動取得しません。"
-    )
-
-
 def render_camera_section() -> None:
     """Render the realtime landmark preview. Call only after consent."""
     st.subheader("リアルタイム ランドマーク表示")
     st.caption("映像は端末内のメモリだけで処理され、保存も外部送信もしません。")
 
-    model_path = configured_landmarker_path()
-    if not model_path.is_file():
-        _render_missing_model(model_path)
+    model_path = resolve_ready_landmarker()
+    if model_path is None:
         return
 
     try:
@@ -149,8 +128,6 @@ def render_camera_section() -> None:
     except LandmarkDetectionError as error:
         st.error(str(error))
         return
-
-    st.caption(f"model: {LANDMARKER_MODEL_VERSION}")
 
     context = webrtc_streamer(
         key=WEBRTC_KEY,

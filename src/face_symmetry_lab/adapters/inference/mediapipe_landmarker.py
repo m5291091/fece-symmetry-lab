@@ -35,16 +35,22 @@ class FrameOrderError(LandmarkDetectionError):
 
 
 class _Detector(Protocol):
-    def detect_for_video(self, image: Any, timestamp_ms: int) -> Any: ...
-
     def close(self) -> None: ...
 
 
-DetectorFactory = Callable[[Path], _Detector]
+class _VideoDetector(_Detector, Protocol):
+    def detect_for_video(self, image: Any, timestamp_ms: int) -> Any: ...
+
+
+class _ImageDetector(_Detector, Protocol):
+    def detect(self, image: Any) -> Any: ...
+
+
+DetectorFactory = Callable[[Path], Any]
 ImageFactory = Callable[[NDArray[np.uint8]], Any]
 
 
-def _default_detector_factory(model_path: Path) -> _Detector:
+def _create_detector(model_path: Path, running_mode_name: str) -> Any:
     try:
         from mediapipe.tasks.python import BaseOptions
         from mediapipe.tasks.python.vision import (
@@ -58,13 +64,21 @@ def _default_detector_factory(model_path: Path) -> _Detector:
     try:
         options = FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(model_path)),
-            running_mode=RunningMode.VIDEO,
+            running_mode=getattr(RunningMode, running_mode_name),
             num_faces=MAX_TRACKED_FACES,
         )
-        detector: _Detector = FaceLandmarker.create_from_options(options)
+        return FaceLandmarker.create_from_options(options)
     except Exception as error:
         raise LandmarkDetectionError("ランドマークモデルを初期化できません。") from error
-    return detector
+
+
+def _default_detector_factory(model_path: Path) -> Any:
+    return _create_detector(model_path, "VIDEO")
+
+
+def _default_image_detector_factory(model_path: Path) -> Any:
+    # §14.3: still images need their own IMAGE-mode instance.
+    return _create_detector(model_path, "IMAGE")
 
 
 def _default_image_factory(rgb_image: NDArray[np.uint8]) -> Any:
@@ -81,7 +95,64 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-class MediaPipeFaceLandmarker:
+def _to_landmark_frame(result: Any, frame_id: int) -> LandmarkFrame:
+    """Convert a MediaPipe result without ever ranking or picking a face."""
+    faces = list(getattr(result, "face_landmarks", []) or [])
+    points: tuple[tuple[float, float], ...] = ()
+    if len(faces) == 1:
+        points = tuple((float(point.x), float(point.y)) for point in faces[0])
+
+    try:
+        return build_landmark_frame(
+            frame_id=frame_id,
+            face_count=len(faces),
+            points=points,
+        )
+    except LandmarkError as error:
+        raise LandmarkDetectionError("ランドマーク出力が不正です。") from error
+
+
+class _LandmarkerBase:
+    """Shared model identity and lifecycle for both running modes."""
+
+    def __init__(
+        self,
+        *,
+        model_path: Path,
+        model_version: str,
+        detector_factory: DetectorFactory,
+        image_factory: ImageFactory,
+    ) -> None:
+        if not model_path.is_file():
+            raise LandmarkDetectionError("ランドマークモデルが見つかりません。")
+        self._model_version = model_version
+        self._model_sha256 = _file_sha256(model_path)
+        self._image_factory = image_factory
+        self._detector: Any | None = detector_factory(model_path)
+
+    @property
+    def model_version(self) -> str:
+        return self._model_version
+
+    @property
+    def model_sha256(self) -> str:
+        return self._model_sha256
+
+    def _active_detector(self, rgb_image: NDArray[np.uint8]) -> Any:
+        detector = self._detector
+        if detector is None:
+            raise LandmarkDetectionError("ランドマーク推論は停止済みです。")
+        if rgb_image.dtype != np.uint8 or rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
+            raise LandmarkDetectionError("ランドマーク推論には uint8 の RGB 画像が必要です。")
+        return detector
+
+    def close(self) -> None:
+        detector, self._detector = self._detector, None
+        if detector is not None:
+            detector.close()
+
+
+class MediaPipeFaceLandmarker(_LandmarkerBase):
     """Local Face Landmarker adapter running in ``RunningMode.VIDEO``."""
 
     def __init__(
@@ -92,21 +163,13 @@ class MediaPipeFaceLandmarker:
         detector_factory: DetectorFactory = _default_detector_factory,
         image_factory: ImageFactory = _default_image_factory,
     ) -> None:
-        if not model_path.is_file():
-            raise LandmarkDetectionError("ランドマークモデルが見つかりません。")
-        self._model_version = model_version
-        self._model_sha256 = _file_sha256(model_path)
-        self._image_factory = image_factory
-        self._detector: _Detector | None = detector_factory(model_path)
+        super().__init__(
+            model_path=model_path,
+            model_version=model_version,
+            detector_factory=detector_factory,
+            image_factory=image_factory,
+        )
         self._last_timestamp_ms = -1
-
-    @property
-    def model_version(self) -> str:
-        return self._model_version
-
-    @property
-    def model_sha256(self) -> str:
-        return self._model_sha256
 
     def detect_video(
         self,
@@ -115,11 +178,7 @@ class MediaPipeFaceLandmarker:
         frame_id: int,
         timestamp_ms: int,
     ) -> LandmarkFrame:
-        detector = self._detector
-        if detector is None:
-            raise LandmarkDetectionError("ランドマーク推論は停止済みです。")
-        if rgb_image.dtype != np.uint8 or rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
-            raise LandmarkDetectionError("ランドマーク推論には uint8 の RGB 画像が必要です。")
+        detector: _VideoDetector = self._active_detector(rgb_image)
         if timestamp_ms <= self._last_timestamp_ms:
             raise FrameOrderError("フレームの時刻が単調増加していません。")
 
@@ -129,21 +188,36 @@ class MediaPipeFaceLandmarker:
         except Exception as error:
             raise LandmarkDetectionError("ランドマークを検出できませんでした。") from error
 
-        faces = list(getattr(result, "face_landmarks", []) or [])
-        points: tuple[tuple[float, float], ...] = ()
-        if len(faces) == 1:
-            points = tuple((float(point.x), float(point.y)) for point in faces[0])
+        return _to_landmark_frame(result, frame_id)
 
+
+class MediaPipeImageLandmarker(_LandmarkerBase):
+    """Local Face Landmarker adapter running in ``RunningMode.IMAGE``.
+
+    Still images are stateless: no timestamp, no tracking history, and a
+    separate instance from the video landmarker (§14.3).
+    """
+
+    def __init__(
+        self,
+        *,
+        model_path: Path,
+        model_version: str,
+        detector_factory: DetectorFactory = _default_image_detector_factory,
+        image_factory: ImageFactory = _default_image_factory,
+    ) -> None:
+        super().__init__(
+            model_path=model_path,
+            model_version=model_version,
+            detector_factory=detector_factory,
+            image_factory=image_factory,
+        )
+
+    def detect(self, rgb_image: NDArray[np.uint8], *, frame_id: int = 0) -> LandmarkFrame:
+        detector: _ImageDetector = self._active_detector(rgb_image)
         try:
-            return build_landmark_frame(
-                frame_id=frame_id,
-                face_count=len(faces),
-                points=points,
-            )
-        except LandmarkError as error:
-            raise LandmarkDetectionError("ランドマーク出力が不正です。") from error
+            result = detector.detect(self._image_factory(rgb_image))
+        except Exception as error:
+            raise LandmarkDetectionError("ランドマークを検出できませんでした。") from error
 
-    def close(self) -> None:
-        detector, self._detector = self._detector, None
-        if detector is not None:
-            detector.close()
+        return _to_landmark_frame(result, frame_id)

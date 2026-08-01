@@ -1,5 +1,4 @@
 from fractions import Fraction
-from pathlib import Path
 
 import av
 import numpy as np
@@ -7,11 +6,9 @@ import numpy as np
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_frame
 from face_symmetry_lab.ui.camera import (
-    DEFAULT_LANDMARKER_MODEL,
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
     build_video_frame_callback,
-    configured_landmarker_path,
 )
 
 
@@ -31,20 +28,6 @@ class StubLandmarker:
 
     def close(self) -> None:
         return None
-
-
-def test_default_landmarker_path_points_at_the_local_models_directory(monkeypatch) -> None:
-    monkeypatch.delenv("FACE_SYMMETRY_LAB_LANDMARKER_PATH", raising=False)
-
-    assert configured_landmarker_path() == DEFAULT_LANDMARKER_MODEL
-    assert DEFAULT_LANDMARKER_MODEL.name.endswith(".task")
-
-
-def test_landmarker_path_can_be_overridden_with_a_local_path(monkeypatch, tmp_path: Path) -> None:
-    model_path = tmp_path / "face_landmarker.task"
-    monkeypatch.setenv("FACE_SYMMETRY_LAB_LANDMARKER_PATH", str(model_path))
-
-    assert configured_landmarker_path() == model_path
 
 
 def test_webrtc_configuration_uses_no_external_ice_servers() -> None:

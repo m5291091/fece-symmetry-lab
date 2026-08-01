@@ -6,6 +6,10 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
+from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
+    LandmarkDetectionError,
+    MediaPipeImageLandmarker,
+)
 from face_symmetry_lab.adapters.inference.onnx_age_estimator import (
     AgeInferenceError,
     OnnxAgeEstimator,
@@ -14,11 +18,14 @@ from face_symmetry_lab.application.image_input import (
     ImageInputError,
     decode_uploaded_image,
 )
+from face_symmetry_lab.application.still_image import detect_still_image_landmarks
+from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.models import AGE_BANDS, AgeEstimate
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
     render_camera_section,
 )
+from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
 
 APP_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_AGE_MODEL = APP_ROOT / "models" / "age_mobilenetv2_utkface_v1.onnx"
@@ -29,6 +36,17 @@ RESULT_STATE_KEY = "age_estimate"
 INPUT_MODE_STATE_KEY = "input_mode"
 INPUT_MODE_CAMERA = "Camera"
 INPUT_MODE_IMAGE = "Image"
+IMAGE_LANDMARKER_STATE_KEY = "image_landmarker"
+IMAGE_LANDMARKER_PATH_KEY = "image_landmarker_path"
+
+_IMAGE_STATUS_MESSAGES = {
+    TrackingStatus.NO_FACE: (
+        "顔を検出できませんでした。明るさ、顔の大きさ、向きを確認してください。"
+    ),
+    TrackingStatus.SINGLE_FACE: "1 名の顔を検出しました。",
+    TrackingStatus.MULTI_FACE: "2 名以上が写っています。1 名だけの写真を使用してください。",
+    TrackingStatus.ERROR: "この画像を処理できませんでした。",
+}
 
 
 def _configured_model_path() -> Path:
@@ -82,8 +100,79 @@ def _render_age_result(estimate: AgeEstimate) -> None:
         )
 
 
+def _session_image_landmarker(model_path: Path) -> MediaPipeImageLandmarker:
+    """Keep one IMAGE-mode landmarker per session, separate from the video one."""
+    fingerprint = str(model_path.resolve())
+    if (
+        st.session_state.get(IMAGE_LANDMARKER_PATH_KEY) != fingerprint
+        or IMAGE_LANDMARKER_STATE_KEY not in st.session_state
+    ):
+        release_image_landmarker()
+        st.session_state[IMAGE_LANDMARKER_STATE_KEY] = MediaPipeImageLandmarker(
+            model_path=model_path,
+            model_version=landmark_asset().version,
+        )
+        st.session_state[IMAGE_LANDMARKER_PATH_KEY] = fingerprint
+    landmarker = st.session_state[IMAGE_LANDMARKER_STATE_KEY]
+    if not isinstance(landmarker, MediaPipeImageLandmarker):
+        raise LandmarkDetectionError("ランドマーク推論を初期化できません。")
+    return landmarker
+
+
+def release_image_landmarker() -> None:
+    """Release the still-image landmarker (FR-004, §10.4)."""
+    landmarker = st.session_state.pop(IMAGE_LANDMARKER_STATE_KEY, None)
+    st.session_state.pop(IMAGE_LANDMARKER_PATH_KEY, None)
+    if isinstance(landmarker, MediaPipeImageLandmarker):
+        landmarker.close()
+
+
+def _render_image_landmarks(rgb: np.ndarray) -> None:
+    """Detect and draw landmarks for one uploaded photo (stateless, §8.7)."""
+    st.subheader("静止画のランドマーク")
+    model_path = resolve_ready_landmarker()
+    if model_path is None:
+        return
+
+    try:
+        result = detect_still_image_landmarks(_session_image_landmarker(model_path), rgb)
+    except LandmarkDetectionError as error:
+        st.error(str(error))
+        return
+
+    preview_column, status_column = st.columns([7, 5])
+    with preview_column:
+        st.image(result.preview, caption="検出したランドマーク", width="stretch")
+    with status_column:
+        st.write(_IMAGE_STATUS_MESSAGES[result.frame.status])
+        st.metric("検出した顔の数", result.frame.face_count)
+        st.metric("ランドマーク点数", result.landmark_count)
+        st.caption("この結果は顔の位置情報であり、左右差スコアや年齢帯とは無関係です。")
+
+
 def _render_image_section() -> None:
-    st.subheader("静止画からの参考年齢帯")
+    uploaded = st.file_uploader(
+        "JPEG / PNG の顔写真",
+        type=["jpg", "jpeg", "png"],
+        help="1 名だけが写る写真を想定しています。上限 10MB / 12MP。",
+        on_change=_clear_session_result,
+    )
+    if uploaded is None:
+        st.info("写真を選ぶと、ランドマーク検出と参考年齢帯を別々に表示します。")
+        return
+
+    try:
+        decoded = decode_uploaded_image(uploaded.getvalue())
+    except ImageInputError as error:
+        st.error(str(error))
+        return
+
+    rgb = np.asarray(decoded.rgb, dtype=np.uint8)
+    _render_image_landmarks(rgb)
+
+    st.divider()
+    st.subheader("モデル推定の参考年齢帯")
+    st.caption(f"入力画像 {decoded.width} × {decoded.height}")
 
     model_path = _configured_model_path()
     if model_path.is_file():
@@ -95,24 +184,8 @@ def _render_image_section() -> None:
             "`FACE_SYMMETRY_LAB_AGE_MODEL_PATH` を設定してください。"
         )
 
-    uploaded = st.file_uploader(
-        "単一の顔を中心に切り抜いた JPEG / PNG",
-        type=["jpg", "jpeg", "png"],
-        help="UTKFace-Cropped と同等の顔 crop を想定しています。上限 10MB / 12MP。",
-        on_change=_clear_session_result,
-    )
-    if uploaded is None:
-        return
-
-    try:
-        decoded = decode_uploaded_image(uploaded.getvalue())
-    except ImageInputError as error:
-        st.error(str(error))
-        return
-
-    preview_column, result_column = st.columns([7, 5])
-    with preview_column:
-        st.image(decoded.rgb, caption=f"{decoded.width} × {decoded.height}", width="stretch")
+    action_column, result_column = st.columns([7, 5])
+    with action_column:
         analyze = st.button(
             "年齢帯を推定",
             type="primary",
@@ -125,9 +198,7 @@ def _render_image_section() -> None:
     if analyze:
         try:
             estimator = _session_estimator(model_path)
-            st.session_state[RESULT_STATE_KEY] = estimator.estimate(
-                np.asarray(decoded.rgb, dtype=np.uint8)
-            )
+            st.session_state[RESULT_STATE_KEY] = estimator.estimate(rgb)
         except AgeInferenceError as error:
             _clear_session_result()
             st.error(str(error))
@@ -142,14 +213,15 @@ def _render_image_section() -> None:
     st.divider()
     st.subheader("左右差分析")
     st.info(
-        "左右差の静止画分析は次の M1 実装です。"
-        "年齢帯推論とは独立した結果・失敗状態として接続します。"
+        "左右差スコアの算出は次の実装です。"
+        "ランドマーク検出・年齢帯推論とは独立した結果・失敗状態として接続します。"
     )
 
 
 def _switch_input_mode() -> None:
     """FR-004: drop the previous input's runtime state when the mode changes."""
     release_session_pipeline()
+    release_image_landmarker()
     _clear_session_result()
 
 

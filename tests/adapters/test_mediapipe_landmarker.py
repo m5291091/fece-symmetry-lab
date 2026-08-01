@@ -10,6 +10,7 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     FrameOrderError,
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
+    MediaPipeImageLandmarker,
 )
 
 
@@ -158,3 +159,118 @@ def test_detection_after_close_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(LandmarkDetectionError, match="停止"):
         landmarker.detect_video(_rgb(), frame_id=1, timestamp_ms=0)
+
+
+class FakeImageDetector:
+    def __init__(self, faces: list[list[SimpleNamespace]]) -> None:
+        self.faces = faces
+        self.calls = 0
+        self.closed = False
+        self.error: Exception | None = None
+
+    def detect(self, image: Any) -> SimpleNamespace:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(face_landmarks=self.faces)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _image_landmarker(tmp_path: Path, detector: FakeImageDetector) -> MediaPipeImageLandmarker:
+    return MediaPipeImageLandmarker(
+        model_path=_model_file(tmp_path),
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: detector,
+        image_factory=lambda rgb: rgb,
+    )
+
+
+def test_image_mode_returns_the_single_faces_landmarks(tmp_path: Path) -> None:
+    detector = FakeImageDetector([_face((0.4, 0.6), (0.6, 0.6))])
+    landmarker = _image_landmarker(tmp_path, detector)
+
+    frame = landmarker.detect(_rgb())
+
+    assert frame.face_count == 1
+    assert frame.points == ((0.4, 0.6), (0.6, 0.6))
+    assert detector.calls == 1
+
+
+def test_image_mode_reports_no_face(tmp_path: Path) -> None:
+    landmarker = _image_landmarker(tmp_path, FakeImageDetector([]))
+
+    assert landmarker.detect(_rgb()).face_count == 0
+
+
+def test_image_mode_does_not_pick_a_face_when_several_are_present(tmp_path: Path) -> None:
+    detector = FakeImageDetector([_face((0.2, 0.2)), _face((0.8, 0.8))])
+    landmarker = _image_landmarker(tmp_path, detector)
+
+    frame = landmarker.detect(_rgb())
+
+    assert frame.face_count == 2
+    assert frame.points == ()
+
+
+def test_image_mode_rejects_non_rgb_input(tmp_path: Path) -> None:
+    landmarker = _image_landmarker(tmp_path, FakeImageDetector([]))
+
+    with pytest.raises(LandmarkDetectionError, match="RGB"):
+        landmarker.detect(np.zeros((8, 8), dtype=np.uint8))
+
+
+def test_image_mode_wraps_detector_failures(tmp_path: Path) -> None:
+    detector = FakeImageDetector([])
+    detector.error = RuntimeError("graph failure")
+    landmarker = _image_landmarker(tmp_path, detector)
+
+    with pytest.raises(LandmarkDetectionError, match="ランドマーク"):
+        landmarker.detect(_rgb())
+
+
+def test_image_mode_requires_an_existing_model(tmp_path: Path) -> None:
+    with pytest.raises(LandmarkDetectionError, match="モデル"):
+        MediaPipeImageLandmarker(
+            model_path=tmp_path / "missing.task",
+            model_version="face-landmarker/1.0.0",
+            detector_factory=lambda _: FakeImageDetector([]),
+        )
+
+
+def test_image_mode_close_releases_the_detector(tmp_path: Path) -> None:
+    detector = FakeImageDetector([])
+    landmarker = _image_landmarker(tmp_path, detector)
+
+    landmarker.close()
+
+    assert detector.closed is True
+    with pytest.raises(LandmarkDetectionError, match="停止"):
+        landmarker.detect(_rgb())
+
+
+def test_video_and_image_landmarkers_are_separate_instances(tmp_path: Path) -> None:
+    """§14.3: a VIDEO instance must never be reused for still images."""
+    model_path = _model_file(tmp_path)
+    video_detector = FakeDetector([])
+    image_detector = FakeImageDetector([])
+
+    video = MediaPipeFaceLandmarker(
+        model_path=model_path,
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: video_detector,
+        image_factory=lambda rgb: rgb,
+    )
+    image = MediaPipeImageLandmarker(
+        model_path=model_path,
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: image_detector,
+        image_factory=lambda rgb: rgb,
+    )
+
+    video.close()
+
+    assert video_detector.closed is True
+    assert image_detector.closed is False
+    assert image.model_sha256 == video.model_sha256

@@ -1,0 +1,16 @@
+{
+  "manifest_version": "1.0.0",
+  "models": [
+    {
+      "name": "face_landmarker",
+      "version": "mediapipe-face-landmarker/float16-1",
+      "filename": "face_landmarker.task",
+      "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "size_bytes": 3758596,
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "input_contract": "RGB uint8 image; 478 normalized landmarks; CPU delegate"
+    }
+  ]
+}
