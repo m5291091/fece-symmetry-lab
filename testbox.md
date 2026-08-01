@@ -28,7 +28,7 @@
 | `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
 | `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
 | `tests/adapters/test_mediapipe_segmenter.py` | Image Segmenter contract（VIDEO）、frame order、shape/finite検証、close | FR-027, §14.3b, AC-DISPLAY-01 |
-| `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
+| `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、取得再試行、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
 | `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件 | FR-011, FR-020, AC-SCORE-04 |
 | `tests/adapters/test_session_exporter.py` | CSV / JSON の同値性、manifest、ファイル名 | FR-017, AC-EXPORT-01 |
 | `tests/model/test_real_landmarker.py` | 実 `.task` asset の load・検出・スコア smoke（未配置時は skip） | FR-002, FR-009, FR-011, §21.1 |

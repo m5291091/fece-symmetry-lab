@@ -241,6 +241,27 @@ def test_truncated_downloads_are_rejected(tmp_path: Path) -> None:
         store.install(asset)
 
 
+def test_a_transient_size_mismatch_is_retried(tmp_path: Path) -> None:
+    asset = load_manifest(_manifest_file(tmp_path))[0]
+    attempts = 0
+
+    def transient_response(url: str) -> Iterator[bytes]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            yield b"temporary upstream error response"
+            return
+        yield PAYLOAD
+
+    store = ModelStore(models_dir=tmp_path / "models", downloader=transient_response)
+
+    installed = store.install(asset)
+
+    assert attempts == 2
+    assert installed.read_bytes() == PAYLOAD
+    assert store.status(asset) is InstallStatus.READY
+
+
 def test_a_tampered_installed_file_is_detected_without_reinstalling(tmp_path: Path) -> None:
     asset = load_manifest(_manifest_file(tmp_path))[0]
     models_dir = tmp_path / "models"

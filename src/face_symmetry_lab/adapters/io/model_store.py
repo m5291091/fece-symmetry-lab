@@ -37,6 +37,7 @@ MAX_MODEL_BYTES: Final[int] = 512 * 1024 * 1024
 
 _CHUNK_BYTES: Final[int] = 1024 * 1024
 _TEMP_SUFFIX: Final[str] = ".part"
+_DOWNLOAD_ATTEMPTS: Final[int] = 3
 
 
 class ModelStoreError(RuntimeError):
@@ -227,34 +228,51 @@ class ModelStore:
         return asset_status(self.path_for(asset), asset)
 
     def install(self, asset: ModelAsset) -> Path:
-        """Download, verify, and atomically install. Explicit action only."""
+        """Download, verify, and atomically install. Explicit action only.
+
+        A model host or intermediary can occasionally return a short error page
+        or terminate a response early. Retry those unverified responses, while
+        preserving the rule that only an exact size and sha256 match is ever
+        installed.
+        """
         destination = self.path_for(asset)
         self._models_dir.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(destination.name + _TEMP_SUFFIX)
 
-        digest = sha256()
-        received = 0
-        try:
-            with temporary.open("wb") as handle:
-                for chunk in self._downloader(asset.url):
-                    received += len(chunk)
-                    if received > asset.size_bytes:
-                        raise ModelStoreError("取得サイズが manifest と一致しません。")
-                    digest.update(chunk)
-                    handle.write(chunk)
-        except ModelStoreError:
-            temporary.unlink(missing_ok=True)
-            raise
-        except Exception as error:
-            temporary.unlink(missing_ok=True)
-            raise ModelStoreError(f"モデルを取得できませんでした: {asset.name}") from error
+        for attempt in range(_DOWNLOAD_ATTEMPTS):
+            digest = sha256()
+            received = 0
+            try:
+                with temporary.open("wb") as handle:
+                    for chunk in self._downloader(asset.url):
+                        received += len(chunk)
+                        if received > asset.size_bytes:
+                            raise ModelStoreError(
+                                "取得サイズが manifest と一致しません"
+                                f"（expected={asset.size_bytes}, received={received}）。"
+                            )
+                        digest.update(chunk)
+                        handle.write(chunk)
 
-        if received != asset.size_bytes:
-            temporary.unlink(missing_ok=True)
-            raise ModelStoreError("取得サイズが manifest と一致しません。")
-        if digest.hexdigest() != asset.sha256:
-            temporary.unlink(missing_ok=True)
-            raise ModelStoreError("取得したモデルの sha256 が manifest と一致しません。")
+                if received != asset.size_bytes:
+                    raise ModelStoreError(
+                        "取得サイズが manifest と一致しません"
+                        f"（expected={asset.size_bytes}, received={received}）。"
+                    )
+                if digest.hexdigest() != asset.sha256:
+                    raise ModelStoreError("取得したモデルの sha256 が manifest と一致しません。")
+            except ModelStoreError:
+                temporary.unlink(missing_ok=True)
+                if attempt == _DOWNLOAD_ATTEMPTS - 1:
+                    raise
+                continue
+            except Exception as error:
+                temporary.unlink(missing_ok=True)
+                if attempt == _DOWNLOAD_ATTEMPTS - 1:
+                    raise ModelStoreError(f"モデルを取得できませんでした: {asset.name}") from error
+                continue
 
-        os.replace(temporary, destination)
-        return destination
+            os.replace(temporary, destination)
+            return destination
+
+        raise AssertionError("download retry loop exited unexpectedly")
