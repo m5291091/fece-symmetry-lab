@@ -1,12 +1,12 @@
 # Face Symmetry Lab
 
-## プロダクト要件定義・技術仕様・開発ガイド v3.1
+## プロダクト要件定義・技術仕様・開発ガイド v3.2
 
 | 項目 | 内容 |
 |---|---|
 | ステータス | MVP 実装ベースライン（M0 未決事項あり） |
-| 版 | v3.1 |
-| 更新日 | 2026-07-30 |
+| 版 | v3.2 |
+| 更新日 | 2026-08-01 |
 | 想定リポジトリ | `face-symmetry-lab` |
 | 配布形態 | ローカル Streamlit アプリ |
 | 基準ランタイム | Python 3.13 |
@@ -16,7 +16,7 @@
 
 ---
 
-## 0. v3.1 の設計判断
+## 0. v3.2 の設計判断
 
 v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナーの研究成果を最終アプリへ接続するため、次を変更する。
 
@@ -30,6 +30,7 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 8. **ネットワーク境界を明示する。** localhost 実行時は STUN/TURN を使わず、モデル取得は明示操作・固定 URL・sha256 検証を必須にする。
 9. **性能要件に測定条件を持たせる。** 「15fps」を単独で掲げず、入力、端末プロファイル、測定区間、パーセンタイルを定義する。
 10. **要件・受け入れ基準・テストの対応を一本化する。** 各要件に ID、優先度、検証方法を付ける。
+11. **リアルタイムの主要数値を映像内にも表示する。** カメラから視線を外さず撮影条件を調整できるよう、状態、全体・部位別左右差、姿勢角を高コントラストのオーバーレイで示す。同じ情報は画面テキストにも残す。
 
 ---
 
@@ -268,7 +269,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-010 | P0 | 品質ゲート | 姿勢、顔サイズ、連続安定性を必須判定し、照度・ぼけは P0 では警告、P1 で評価後にゲート化できる |
 | FR-011 | P0 | 対称性指標 | §8 の手順で輪郭、目、鼻、口、全体を 0〜100 で算出し、範囲外値を拒否する |
 | FR-012 | P0 | 平滑化 | 表示用全体値に EMA を適用し、生値を別保持する。リセット条件は §8.8 に従う |
-| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態を表示し、ランドマーク表示は切替可能にする |
+| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態、全体・部位別左右差、姿勢角をカメラ映像内に高コントラストで表示し、ランドマーク表示は切替可能にする。欠測は `—` とし、同じ情報を画面テキストでも提供する |
 | FR-014 | P0 | 結果表示 | 全体値、4 部位、姿勢、品質状態、比較上の注意を 1 画面に表示する |
 | FR-015 | P0 | トレンド | 直近 60 秒を既定表示し、欠測を 0 点として結ばず空白で表す |
 | FR-016 | P0 | セッション履歴 | 上限 3,000 件のリングバッファに数値結果のみ保持し、上限到達時は古い順に破棄する |
@@ -308,7 +309,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - MediaPipe の顔変換行列から 3×3 部分を取り出し、極分解で scale / shear を除いた回転行列を用いる。
 - アプリ規約は intrinsic Y-X-Z とし、`yaw > 0` は鼻が非ミラー画像の右へ、`pitch > 0` は上へ、`roll > 0` は時計回りへ動く向きとする。
 - adapter は MediaPipe 座標から上記規約への変換を 1 箇所で行う。UI の「左／右」案内だけはミラー表示の有無に合わせる。
-- ±10° の単軸合成回転と既知 fixture で符号、軸順、degree 変換を contract test する。
+- ±10° の単軸合成回転で符号、軸順、degree 変換を contract test する。加えて、同意を得た実写の単軸 yaw / pitch / roll 映像で表示符号を確認し、映像・landmark を保存せず集計結果だけを ADR に記録する。
 
 変換行列の規約が採用 MediaPipe asset と合わない場合、推測で補正せず ADR と `metric_version` を更新する。
 
@@ -391,11 +392,11 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 
 「数値のみ」は匿名を意味しない。エクスポート前に、顔由来の派生データであることと共有時の注意を表示する。
 
-### 9.2 レコードスキーマ v1
+### 9.2 レコードスキーマ v1.1
 
 | フィールド | 型 | 規約 |
 |---|---|---|
-| `schema_version` | string | 例: `1.0.0` |
+| `schema_version` | string | 例: `1.1.0` |
 | `session_id` | UUID string | 起動セッション内のランダム値。端末・人物を識別しない |
 | `segment_id` | UUID string | 指標に影響する設定変更ごとに更新 |
 | `frame_id` | int | セッション内で単調増加 |
@@ -415,6 +416,7 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 | `score_mouth_raw` | float / null | `OK` のみ、0〜100 |
 | `score_overall_raw` | float / null | `OK` のみ、0〜100 |
 | `score_overall_smooth` | float / null | EMA 初期化後のみ |
+| `distance_contour_raw` / `distance_eyes_raw` / `distance_nose_raw` / `distance_mouth_raw` | float / null | `OK` のみ。§8.5 の正規化 RMS。校正可能性のため保持し、landmark 座標は含めない |
 | `age_band` | string / null | `0-9`〜`70+` の 8 区分。断定年齢ではない |
 | `age_confidence` | float / null | 選択クラスの softmax 確率。精度や正しさそのものではない |
 | `age_prob_0_9` ... `age_prob_70_plus` | float / null | 8 クラス確率。存在時は合計 1 |
@@ -442,7 +444,7 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 ```json
 {
   "manifest": {
-    "schema_version": "1.0.0",
+    "schema_version": "1.1.0",
     "app_version": "0.1.0",
     "lock_digest": "...",
     "session_id": "uuid",
@@ -1144,7 +1146,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | OD-01 | 部位別感度係数と calibration set | M0 | 分布、感度、再撮影差を評価し `symmetry-2d-v1.json` を凍結 |
 | OD-02 | R1 / R2 の実機型番 | M0 | 調達可能な端末を固定し benchmark 手順へ記録 |
 | OD-03 | MediaPipe asset の version / license / hash | M0 | manifest、NOTICE、取得元を review |
-| OD-04 | pose 行列変換と符号 | M0 | ADR と合成回転 contract test が承認済み |
+| OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
 | OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
 | OD-07 | 年齢帯モデルの配布 asset | M0 | ONNX export parity、hash、license、model card、8 class slice 評価が承認済み |

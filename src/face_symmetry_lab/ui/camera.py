@@ -17,18 +17,28 @@ import numpy as np
 import streamlit as st
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
+from face_symmetry_lab import __version__
+from face_symmetry_lab.adapters.export.session_exporter import (
+    csv_bytes,
+    export_filename,
+    json_bytes,
+)
 from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+from face_symmetry_lab.adapters.io.model_store import file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.realtime import (
     PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
+from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
+from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics
 from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
 from face_symmetry_lab.ui.scores import render_scores
 
@@ -46,6 +56,7 @@ PIPELINE_STATE_KEY = "landmark_pipeline"
 
 #: §11 NFR-003: the result panel refreshes at 4-5 Hz, independent of video fps.
 STATUS_REFRESH_INTERVAL = "200ms"
+LOCK_PATH = Path(__file__).resolve().parents[3] / "uv.lock"
 
 _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
     TrackingStatus.NO_FACE: "顔が見つかりません。カメラの正面に入ってください。",
@@ -63,7 +74,8 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
     def callback(frame: av.VideoFrame) -> av.VideoFrame:
         try:
             rgb = np.asarray(frame.to_ndarray(format="rgb24"), dtype=np.uint8)
-            painted = pipeline.process(rgb)
+            painted, analysis = pipeline.process_with_analysis(rgb)
+            painted = draw_camera_metrics(painted, analysis)
             annotated = av.VideoFrame.from_ndarray(painted, format="rgb24")
         except Exception:
             # Returning the source frame keeps the preview alive (NFR-017).
@@ -78,13 +90,25 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
 
 
 def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
+    config = load_metric_config()
     landmarker = MediaPipeFaceLandmarker(
         model_path=model_path,
         model_version=landmark_asset().version,
     )
+    analyzer = FrameAnalyzer(config=config)
+    recorder = SessionRecorder(
+        metric_config=config,
+        thresholds=analyzer.thresholds,
+        tau_seconds=DEFAULT_TAU_SECONDS,
+        landmark_model_version=landmarker.model_version,
+        landmark_model_sha256=landmarker.model_sha256,
+        app_version=__version__,
+        lock_digest=file_sha256(LOCK_PATH),
+    )
     return RealtimeLandmarkPipeline(
         landmarker=landmarker,
-        analyzer=FrameAnalyzer(config=load_metric_config()),
+        analyzer=analyzer,
+        recorder=recorder,
     )
 
 
@@ -108,6 +132,7 @@ def release_session_pipeline() -> None:
 def _render_status_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     """Poll the immutable snapshot at 5 Hz without blocking the main script."""
     _render_snapshot(pipeline.snapshot())
+    _render_export_panel(pipeline)
 
 
 def _render_snapshot(snapshot: PipelineSnapshot) -> None:
@@ -125,10 +150,46 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
         render_scores(snapshot.analysis)
 
 
+def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    bundle = pipeline.export_bundle()
+    if bundle is None or not bundle.records:
+        return
+
+    st.divider()
+    st.subheader("セッションデータのエクスポート")
+    st.warning(
+        "姿勢・左右差などの顔由来の派生データを含みます。"
+        "共有先と利用目的を確認してから保存してください。"
+    )
+    revision = bundle.manifest.config_revisions[-1]
+    st.caption(
+        f"{len(bundle.records)} 件 · metric {bundle.manifest.metric_version} · "
+        f"config {revision.fingerprint[:12]}…"
+    )
+    csv_column, json_column = st.columns(2)
+    csv_column.download_button(
+        "CSV を保存",
+        data=csv_bytes(bundle),
+        file_name=export_filename(bundle, "csv"),
+        mime="text/csv",
+        key="download_session_csv",
+    )
+    json_column.download_button(
+        "JSON を保存",
+        data=json_bytes(bundle),
+        file_name=export_filename(bundle, "json"),
+        mime="application/json",
+        key="download_session_json",
+    )
+
+
 def render_camera_section() -> None:
     """Render the realtime landmark preview. Call only after consent."""
     st.subheader("リアルタイム ランドマーク表示")
-    st.caption("映像は端末内のメモリだけで処理され、保存も外部送信もしません。")
+    st.caption(
+        "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
+        "状態・左右差・姿勢の数値はカメラ映像の左上にも表示します。"
+    )
 
     model_path = resolve_ready_landmarker()
     if model_path is None:
@@ -157,7 +218,7 @@ def render_camera_section() -> None:
 
     st.caption("カメラ映像は `STOP` で停止します。")
     controls = st.columns(2)
-    if controls[0].button("スコアと平滑化をリセット", key="reset_analysis"):
+    if controls[0].button("スコア・履歴・平滑化をリセット", key="reset_analysis"):
         pipeline.reset_analysis()
         st.rerun()
     if controls[1].button("推論を停止してモデルを解放", key="release_landmarker"):

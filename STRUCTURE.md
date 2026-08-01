@@ -16,6 +16,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
+| Session history / export records | `src/face_symmetry_lab/application/session.py` |
+| CSV / JSON export adapter | `src/face_symmetry_lab/adapters/export/session_exporter.py` |
 | Still-image landmarks | `src/face_symmetry_lab/application/still_image.py` |
 | Runtime ports | `src/face_symmetry_lab/application/ports.py` |
 | Pinned model manifest | `configs/model-manifest.json` |
@@ -41,6 +43,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Analysis DTO | `domain/models.py` | `tests/domain/test_models.py` | FR-008, FR-011 |
 | Landmark DTO / pixel mapping | `domain/landmarks.py` | `tests/domain/test_landmarks.py` | FR-008, FR-009 |
 | Landmark overlay painting | `domain/overlay.py` | `tests/domain/test_overlay.py` | FR-013 |
+| Export record DTO | `domain/export.py` | `tests/domain/test_export.py` | FR-017, NFR-020 |
 | Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
 | Normalization / TLS midline | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, AC-SCORE-02 |
 | Symmetry scoring | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01 |
@@ -49,17 +52,20 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Age-band mapping | `domain/age.py` | `tests/domain/test_age.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
+| Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
 | Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
 | Latest-frame-wins gate | `runtime/frame_scheduler.py` | `tests/runtime/test_frame_scheduler.py` | NFR-006, NFR-007 |
 | Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
 | ONNX age inference | `adapters/inference/onnx_age_estimator.py` | `tests/adapters/test_onnx_age_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
+| CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
 | Score presentation | `ui/scores.py` | UI / E2E tests は未整備 | FR-014, §5.3 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
 | Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, NFR-009 |
+| Camera numeric overlay | `ui/camera_overlay.py` | `tests/ui/test_camera_overlay.py` | FR-013, FR-014 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Streamlit flow | `ui/app.py` | future UI / E2E tests | AC-FLOW-01, AC-AGE-02 |
 
@@ -72,7 +78,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `3a3651533b8cfca0c45e019bf8201517e008502454672afd25b1af7310a3ffed`_
+_File-list SHA-256: `1cf29044aa7618fce6e0df9938e04cca686db6687deb0130bb125aa0d475ad02`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -90,9 +96,11 @@ face-symmetry-lab/
 - `docs/`
   - `adr/`
     - `0001-age-estimation-runtime.md`
+    - `0002-head-pose-coordinate-signs.md`
   - `model-cards/`
     - `age-mobilenetv2-utkface-v1.md`
     - `mediapipe-face-landmarker-v1.md`
+    - `symmetry-2d-v1.md`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
@@ -103,19 +111,21 @@ face-symmetry-lab/
 - `src/`
   - `face_symmetry_lab/`
     - `adapters/`
+      - `export/`
+        - … (2 files)
       - `inference/`
         - … (3 files)
       - `io/`
         - … (3 files)
       - … (1 files)
     - `application/`
-      - … (7 files)
+      - … (8 files)
     - `domain/`
-      - … (10 files)
+      - … (11 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
-      - … (5 files)
+      - … (6 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -124,15 +134,18 @@ face-symmetry-lab/
     - `test_metric_config.py`
     - `test_model_store.py`
     - `test_onnx_age_estimator.py`
+    - `test_session_exporter.py`
   - `application/`
     - `test_analyzer.py`
     - `test_image_input.py`
     - `test_quality.py`
     - `test_realtime.py`
+    - `test_session.py`
     - `test_still_image.py`
   - `domain/`
     - `__init__.py`
     - `test_age.py`
+    - `test_export.py`
     - `test_geometry.py`
     - `test_landmarks.py`
     - `test_metrics.py`
@@ -152,6 +165,7 @@ face-symmetry-lab/
   - `ui/`
     - `test_app.py`
     - `test_camera.py`
+    - `test_camera_overlay.py`
     - `test_model_setup.py`
   - `__init__.py`
   - `test_cli.py`

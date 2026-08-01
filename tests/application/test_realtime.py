@@ -6,12 +6,14 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     FrameOrderError,
     LandmarkDetectionError,
 )
+from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.landmarks import (
     LandmarkFrame,
     TrackingStatus,
     build_landmark_frame,
 )
+from face_symmetry_lab.domain.models import AnalysisState, Status
 
 
 class FakeLandmarker:
@@ -53,6 +55,46 @@ class StepClock:
         value = self.now
         self.now += self.step
         return value
+
+
+class StubAnalyzer:
+    def __init__(self) -> None:
+        self.reset_calls = 0
+
+    def analyze(self, frame: LandmarkFrame, *, at: float) -> AnalysisOutcome:
+        return AnalysisOutcome(
+            frame_id=frame.frame_id,
+            state=AnalysisState(status=Status.HOLD),
+            symmetry=None,
+            overall_smooth=None,
+            pose=frame.pose,
+            face_area_ratio=frame.face_area_ratio,
+            metric_version="metric/test",
+            landmark_map_version="map/test",
+            sensitivity_frozen=False,
+        )
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+
+
+class RecorderSpy:
+    def __init__(self) -> None:
+        self.analysis_frames: list[int] = []
+        self.error_frames: list[int] = []
+        self.reset_calls = 0
+
+    def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
+        self.analysis_frames.append(frame.frame_id)
+
+    def append_error(self, *, frame_id: int, **kwargs) -> None:
+        self.error_frames.append(frame_id)
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+
+    def export_bundle(self) -> str:
+        return "bundle"
 
 
 def _rgb(height: int = 20, width: int = 20) -> NDArray[np.uint8]:
@@ -131,6 +173,18 @@ def test_a_busy_analyzer_returns_the_raw_frame_instead_of_queueing() -> None:
     assert annotated.sum() == 0
     assert landmarker.calls == []
     assert pipeline.snapshot().dropped_frames == 1
+
+
+def test_a_dropped_frame_never_receives_the_previous_numeric_overlay_result() -> None:
+    pipeline = _pipeline(FakeLandmarker(), analyzer=StubAnalyzer())
+    _, first_analysis = pipeline.process_with_analysis(_rgb())
+
+    with pipeline.scheduler.slot():
+        raw, dropped_analysis = pipeline.process_with_analysis(_rgb())
+
+    assert first_analysis is not None
+    assert dropped_analysis is None
+    assert raw.sum() == 0
 
 
 def test_detection_failures_keep_the_stream_running() -> None:
@@ -212,3 +266,39 @@ def test_non_rgb_frames_are_returned_untouched() -> None:
 
     assert result.shape == (20, 20)
     assert pipeline.snapshot().status is TrackingStatus.ERROR
+
+
+def test_successful_analysis_is_added_to_the_session_export_history() -> None:
+    recorder = RecorderSpy()
+    pipeline = _pipeline(
+        FakeLandmarker(),
+        analyzer=StubAnalyzer(),
+        recorder=recorder,
+    )
+
+    pipeline.process(_rgb())
+
+    assert recorder.analysis_frames == [1]
+    assert pipeline.export_bundle() == "bundle"
+
+
+def test_detection_errors_are_added_without_stopping_future_export() -> None:
+    landmarker = FakeLandmarker()
+    landmarker.error = LandmarkDetectionError("boom")
+    recorder = RecorderSpy()
+    pipeline = _pipeline(landmarker, recorder=recorder)
+
+    pipeline.process(_rgb())
+
+    assert recorder.error_frames == [1]
+
+
+def test_reset_clears_the_export_history_together_with_analysis_state() -> None:
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+
+    pipeline.reset_analysis()
+
+    assert analyzer.reset_calls == 1
+    assert recorder.reset_calls == 1

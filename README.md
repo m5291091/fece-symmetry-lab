@@ -12,6 +12,8 @@ Face Symmetry Lab は、顔の左右差とモデル推定の参考年齢帯を�
 - 単一顔ポリシー（0 顔・2 顔以上では点を描かない）
 - 姿勢推定（yaw / pitch / roll）と撮影品質ゲート、OK / HOLD のヒステリシス
 - 輪郭・目・鼻・口・全体の左右差スコア（実験値）と時間ベース EMA
+- リアルタイム映像内の高コントラストな左右差・姿勢数値オーバーレイ
+- `metric_version` / `config_fingerprint` / 正規化 RMS 距離付き CSV・JSON エクスポート
 - 版管理された左右対応マップと指標バンドル（`configs/metrics/`）
 - 固定 manifest と SHA-256 検証によるモデル準備
 - UTKFace 8 年代分類 MobileNetV2 の ONNX Runtime 推論境界
@@ -72,6 +74,20 @@ uv run python scripts/derive_landmark_map.py --write   # 再導出して凍結�
 
 品質ゲート（姿勢・顔サイズ・連続安定性）を通らないフレームではスコアを出さず、
 `HOLD` の理由を行動可能な文言で表示します。欠測は 0 点に置き換えません。
+
+カメラ分析中は、画面左上に状態、全体・4部位の左右差、yaw / pitch / roll を表示します。
+同じ数値は画面下のテキスト領域でも確認できます。1件以上の分析結果があると、
+セッションデータを CSV または JSON で保存できます。画像やlandmark座標は含めず、
+校正に必要な部位別正規化 RMS、`metric_version`、`config_fingerprint` を含めます。
+
+## OD-01 / OD-04 の検証状態
+
+OD-01 の固定評価セットと、OD-04 の同意済み実写単軸映像はリポジトリに含めません。
+現時点では実データが未提供のため、`sensitivity_frozen` は `false` のままです。
+収集条件と完了判定は
+[指標カード](docs/model-cards/symmetry-2d-v1.md) と
+[姿勢ADR](docs/adr/0002-head-pose-coordinate-signs.md) に記録しています。
+実データなしに係数や符号確認結果を完了扱いにはしません。
 
 ## 年齢帯モデル
 

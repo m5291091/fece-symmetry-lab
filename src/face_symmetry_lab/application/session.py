@@ -1,0 +1,291 @@
+"""Session-scoped numeric history and reproducibility metadata (§9, §14.2)."""
+
+from __future__ import annotations
+
+import json
+import threading
+from collections import deque
+from collections.abc import Mapping
+from datetime import datetime
+from hashlib import sha256
+from typing import cast
+from uuid import uuid4
+
+from pydantic import JsonValue
+
+from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.application.quality import QualityThresholds
+from face_symmetry_lab.domain.export import (
+    ConfigRevision,
+    ExportManifest,
+    ExportRecord,
+    InputMode,
+    ModelIdentity,
+    SessionExport,
+)
+from face_symmetry_lab.domain.landmarks import LandmarkFrame
+from face_symmetry_lab.domain.metrics import MetricConfig
+from face_symmetry_lab.domain.models import AgeEstimate, ReasonCode, Status
+
+DEFAULT_HISTORY_CAPACITY = 3_000
+
+
+def build_config_settings(
+    config: MetricConfig,
+    thresholds: QualityThresholds,
+    *,
+    tau_seconds: float,
+) -> dict[str, JsonValue]:
+    """Return the normalized settings whose digest defines comparability."""
+    return {
+        "metric_version": config.metric_version,
+        "landmark_map_version": config.landmark_map_version,
+        "sensitivity": cast(dict[str, JsonValue], dict(config.sensitivity)),
+        "weights": cast(dict[str, JsonValue], dict(config.weights)),
+        "sensitivity_frozen": config.sensitivity_frozen,
+        "yaw_inner_deg": thresholds.yaw_inner_deg,
+        "yaw_outer_deg": thresholds.yaw_outer_deg,
+        "pitch_inner_deg": thresholds.pitch_inner_deg,
+        "pitch_outer_deg": thresholds.pitch_outer_deg,
+        "roll_inner_deg": thresholds.roll_inner_deg,
+        "roll_outer_deg": thresholds.roll_outer_deg,
+        "face_area_min": thresholds.face_area_min,
+        "face_area_max": thresholds.face_area_max,
+        "valid_frames_to_ok": thresholds.valid_frames_to_ok,
+        "ema_tau_seconds": tau_seconds,
+    }
+
+
+def config_fingerprint(settings: Mapping[str, object]) -> str:
+    """Hash canonical JSON so key order and formatting cannot change identity."""
+    canonical = json.dumps(
+        dict(settings),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
+
+
+class SessionRecorder:
+    """Thread-safe bounded history shared by a session's callback and UI."""
+
+    def __init__(
+        self,
+        *,
+        metric_config: MetricConfig,
+        thresholds: QualityThresholds,
+        tau_seconds: float,
+        landmark_model_version: str,
+        landmark_model_sha256: str,
+        app_version: str,
+        lock_digest: str,
+        history_capacity: int = DEFAULT_HISTORY_CAPACITY,
+    ) -> None:
+        if history_capacity < 1:
+            raise ValueError("history_capacity は 1 以上である必要があります。")
+        self._metric_config = metric_config
+        self._settings = build_config_settings(
+            metric_config,
+            thresholds,
+            tau_seconds=tau_seconds,
+        )
+        self._fingerprint = config_fingerprint(self._settings)
+        self._landmark_model_version = landmark_model_version
+        self._landmark_model_sha256 = landmark_model_sha256
+        self._app_version = app_version
+        self._lock_digest = lock_digest
+        self._session_id = str(uuid4())
+        self._segment_id = str(uuid4())
+        self._config_revision = 1
+        self._records: deque[ExportRecord] = deque(maxlen=history_capacity)
+        self._lock = threading.Lock()
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def segment_id(self) -> str:
+        with self._lock:
+            return self._segment_id
+
+    @property
+    def config_revision(self) -> int:
+        with self._lock:
+            return self._config_revision
+
+    def append_analysis(
+        self,
+        frame: LandmarkFrame,
+        outcome: AnalysisOutcome,
+        *,
+        elapsed_ms: int,
+        processing_ms: float,
+        pipeline_latency_ms: float | None = None,
+        input_mode: InputMode = InputMode.CAMERA,
+        captured_at: datetime | None = None,
+    ) -> ExportRecord:
+        symmetry = outcome.symmetry
+        pose = outcome.pose
+        with self._lock:
+            record = ExportRecord(
+                session_id=self._session_id,
+                segment_id=self._segment_id,
+                frame_id=frame.frame_id,
+                elapsed_ms=elapsed_ms,
+                captured_at=captured_at,
+                input_mode=input_mode,
+                analysis_status=outcome.state.status,
+                reason_codes=outcome.state.reason_codes,
+                warning_codes=outcome.state.warning_codes,
+                face_count=frame.face_count,
+                yaw_deg=pose.yaw_deg if pose is not None else None,
+                pitch_deg=pose.pitch_deg if pose is not None else None,
+                roll_deg=pose.roll_deg if pose is not None else None,
+                face_area_ratio=outcome.face_area_ratio,
+                score_contour_raw=(symmetry.part("contour") if symmetry is not None else None),
+                score_eyes_raw=symmetry.part("eyes") if symmetry is not None else None,
+                score_nose_raw=symmetry.part("nose") if symmetry is not None else None,
+                score_mouth_raw=symmetry.part("mouth") if symmetry is not None else None,
+                score_overall_raw=symmetry.overall if symmetry is not None else None,
+                score_overall_smooth=outcome.overall_smooth,
+                distance_contour_raw=(
+                    symmetry.distance("contour") if symmetry is not None else None
+                ),
+                distance_eyes_raw=(symmetry.distance("eyes") if symmetry is not None else None),
+                distance_nose_raw=(symmetry.distance("nose") if symmetry is not None else None),
+                distance_mouth_raw=(symmetry.distance("mouth") if symmetry is not None else None),
+                landmark_model_version=self._landmark_model_version,
+                landmark_model_sha256=self._landmark_model_sha256,
+                metric_version=outcome.metric_version,
+                app_version=self._app_version,
+                lock_digest=self._lock_digest,
+                config_revision=self._config_revision,
+                config_fingerprint=self._fingerprint,
+                processing_ms=processing_ms,
+                pipeline_latency_ms=(
+                    processing_ms if pipeline_latency_ms is None else pipeline_latency_ms
+                ),
+            )
+            self._records.append(record)
+        return record
+
+    def append_error(
+        self,
+        *,
+        frame_id: int,
+        elapsed_ms: int,
+        processing_ms: float,
+        pipeline_latency_ms: float | None = None,
+        input_mode: InputMode = InputMode.CAMERA,
+    ) -> ExportRecord:
+        with self._lock:
+            record = ExportRecord(
+                session_id=self._session_id,
+                segment_id=self._segment_id,
+                frame_id=frame_id,
+                elapsed_ms=elapsed_ms,
+                input_mode=input_mode,
+                analysis_status=Status.ERROR,
+                reason_codes=(ReasonCode.LOW_QUALITY,),
+                landmark_model_version=self._landmark_model_version,
+                landmark_model_sha256=self._landmark_model_sha256,
+                metric_version=self._metric_config.metric_version,
+                app_version=self._app_version,
+                lock_digest=self._lock_digest,
+                config_revision=self._config_revision,
+                config_fingerprint=self._fingerprint,
+                processing_ms=processing_ms,
+                pipeline_latency_ms=(
+                    processing_ms if pipeline_latency_ms is None else pipeline_latency_ms
+                ),
+            )
+            self._records.append(record)
+        return record
+
+    def records(self) -> tuple[ExportRecord, ...]:
+        with self._lock:
+            return tuple(self._records)
+
+    def attach_age_estimate(
+        self,
+        estimate: AgeEstimate,
+        *,
+        observed_elapsed_ms: int,
+    ) -> ExportRecord | None:
+        """Attach an independently produced age result to the latest record."""
+        with self._lock:
+            if not self._records:
+                return None
+            current = self._records[-1]
+            probabilities = estimate.probabilities
+            payload = current.model_dump(mode="python")
+            payload.update(
+                {
+                    "age_band": estimate.band.value,
+                    "age_confidence": estimate.confidence,
+                    "age_prob_0_9": probabilities[0],
+                    "age_prob_10_19": probabilities[1],
+                    "age_prob_20_29": probabilities[2],
+                    "age_prob_30_39": probabilities[3],
+                    "age_prob_40_49": probabilities[4],
+                    "age_prob_50_59": probabilities[5],
+                    "age_prob_60_69": probabilities[6],
+                    "age_prob_70_plus": probabilities[7],
+                    "age_observed_elapsed_ms": observed_elapsed_ms,
+                    "age_is_cached": estimate.is_cached,
+                    "age_model_version": estimate.model_version,
+                    "age_model_sha256": estimate.model_sha256,
+                }
+            )
+            enriched = ExportRecord.model_validate(payload)
+            self._records[-1] = enriched
+            return enriched
+
+    def export_bundle(self) -> SessionExport:
+        with self._lock:
+            records = tuple(self._records)
+            revision = self._config_revision
+            segment_settings = dict(self._settings)
+            age_models = tuple(
+                dict.fromkeys(
+                    (record.age_model_version, record.age_model_sha256)
+                    for record in records
+                    if record.age_model_version is not None and record.age_model_sha256 is not None
+                )
+            )
+        models = [
+            ModelIdentity(
+                name="face_landmarker",
+                version=self._landmark_model_version,
+                sha256=self._landmark_model_sha256,
+            )
+        ]
+        models.extend(
+            ModelIdentity(name="age_band", version=version, sha256=model_hash)
+            for version, model_hash in age_models
+        )
+        manifest = ExportManifest(
+            app_version=self._app_version,
+            lock_digest=self._lock_digest,
+            session_id=self._session_id,
+            models=tuple(models),
+            metric_version=self._metric_config.metric_version,
+            config_revisions=(
+                ConfigRevision(
+                    revision=revision,
+                    fingerprint=self._fingerprint,
+                    settings=segment_settings,
+                ),
+            ),
+        )
+        return SessionExport(manifest=manifest, records=records)
+
+    def reset(self) -> None:
+        """Clear history and begin a new comparison segment."""
+        with self._lock:
+            self._records.clear()
+            self._segment_id = str(uuid4())
+            self._config_revision += 1

@@ -3,8 +3,10 @@ from fractions import Fraction
 import av
 import numpy as np
 
+from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_frame
+from face_symmetry_lab.domain.models import AnalysisState, Status
 from face_symmetry_lab.ui.camera import (
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
@@ -27,6 +29,24 @@ class StubLandmarker:
         return build_landmark_frame(frame_id=frame_id, face_count=1, points=((0.5, 0.5),))
 
     def close(self) -> None:
+        return None
+
+
+class OverlayAnalyzer:
+    def analyze(self, frame: LandmarkFrame, *, at: float) -> AnalysisOutcome:
+        return AnalysisOutcome(
+            frame_id=frame.frame_id,
+            state=AnalysisState(status=Status.HOLD),
+            symmetry=None,
+            overall_smooth=None,
+            pose=None,
+            face_area_ratio=None,
+            metric_version="metric/test",
+            landmark_map_version="map/test",
+            sensitivity_frozen=False,
+        )
+
+    def reset(self) -> None:
         return None
 
 
@@ -71,6 +91,19 @@ def test_callback_draws_the_overlay_into_the_returned_frame() -> None:
     result = callback(source).to_ndarray(format="rgb24")
 
     assert result.sum() > 0
+
+
+def test_callback_draws_numeric_status_over_the_camera_image() -> None:
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=StubLandmarker(),
+        analyzer=OverlayAnalyzer(),  # type: ignore[arg-type]
+    )
+    callback = build_video_frame_callback(pipeline)
+    source = av.VideoFrame.from_ndarray(np.zeros((720, 1280, 3), dtype=np.uint8), format="rgb24")
+
+    result = callback(source).to_ndarray(format="rgb24")
+
+    assert result[:150, :500].sum() > 0
 
 
 def test_callback_never_raises_when_the_pipeline_fails() -> None:

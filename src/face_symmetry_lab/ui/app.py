@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import os
+import time
+from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
 import streamlit as st
 
+from face_symmetry_lab import __version__
+from face_symmetry_lab.adapters.export.session_exporter import (
+    csv_bytes,
+    export_filename,
+    json_bytes,
+)
 from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeImageLandmarker,
@@ -15,14 +23,21 @@ from face_symmetry_lab.adapters.inference.onnx_age_estimator import (
     OnnxAgeEstimator,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+from face_symmetry_lab.adapters.io.model_store import file_sha256
 from face_symmetry_lab.application.image_input import (
     ImageInputError,
     decode_uploaded_image,
 )
-from face_symmetry_lab.application.still_image import analyze_still_image
+from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.application.still_image import (
+    STILL_IMAGE_THRESHOLDS,
+    analyze_still_image,
+)
+from face_symmetry_lab.domain.export import InputMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
-from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.metrics import MetricConfig, MetricConfigError
 from face_symmetry_lab.domain.models import AGE_BANDS, AgeEstimate
+from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
     render_camera_section,
@@ -41,6 +56,8 @@ INPUT_MODE_CAMERA = "Camera"
 INPUT_MODE_IMAGE = "Image"
 IMAGE_LANDMARKER_STATE_KEY = "image_landmarker"
 IMAGE_LANDMARKER_PATH_KEY = "image_landmarker_path"
+IMAGE_RECORDER_STATE_KEY = "image_session_recorder"
+IMAGE_RECORDED_INPUT_KEY = "image_recorded_input"
 
 _IMAGE_STATUS_MESSAGES = {
     TrackingStatus.NO_FACE: (
@@ -77,6 +94,8 @@ def _session_estimator(model_path: Path) -> OnnxAgeEstimator:
 
 def _clear_session_result() -> None:
     st.session_state.pop(RESULT_STATE_KEY, None)
+    st.session_state.pop(IMAGE_RECORDER_STATE_KEY, None)
+    st.session_state.pop(IMAGE_RECORDED_INPUT_KEY, None)
 
 
 def _render_age_result(estimate: AgeEstimate) -> None:
@@ -130,22 +149,91 @@ def release_image_landmarker() -> None:
         landmarker.close()
 
 
-def _render_image_landmarks(rgb: np.ndarray) -> None:
+def _session_image_recorder(
+    landmarker: MediaPipeImageLandmarker,
+    config: MetricConfig,
+) -> SessionRecorder:
+    recorder = st.session_state.get(IMAGE_RECORDER_STATE_KEY)
+    if not isinstance(recorder, SessionRecorder):
+        recorder = SessionRecorder(
+            metric_config=config,
+            thresholds=STILL_IMAGE_THRESHOLDS,
+            tau_seconds=DEFAULT_TAU_SECONDS,
+            landmark_model_version=landmarker.model_version,
+            landmark_model_sha256=landmarker.model_sha256,
+            app_version=__version__,
+            lock_digest=file_sha256(APP_ROOT / "uv.lock"),
+        )
+        st.session_state[IMAGE_RECORDER_STATE_KEY] = recorder
+    return recorder
+
+
+def _render_image_export(recorder: SessionRecorder) -> None:
+    bundle = recorder.export_bundle()
+    if not bundle.records:
+        return
+    st.divider()
+    st.subheader("この画像の分析データをエクスポート")
+    st.warning(
+        "姿勢・左右差・参考年齢帯などの顔由来の派生データを含みます。"
+        "共有先と利用目的を確認してから保存してください。"
+    )
+    revision = bundle.manifest.config_revisions[-1]
+    st.caption(f"metric {bundle.manifest.metric_version} · config {revision.fingerprint[:12]}…")
+    csv_column, json_column = st.columns(2)
+    csv_column.download_button(
+        "CSV を保存",
+        data=csv_bytes(bundle),
+        file_name=export_filename(bundle, "csv"),
+        mime="text/csv",
+        key="download_image_csv",
+    )
+    json_column.download_button(
+        "JSON を保存",
+        data=json_bytes(bundle),
+        file_name=export_filename(bundle, "json"),
+        mime="application/json",
+        key="download_image_json",
+    )
+
+
+def _render_image_landmarks(
+    rgb: np.ndarray,
+    *,
+    input_fingerprint: str,
+) -> SessionRecorder | None:
     """Detect, draw, and score one uploaded photo (stateless, §8.7)."""
     st.subheader("静止画のランドマークと左右差")
     model_path = resolve_ready_landmarker()
     if model_path is None:
-        return
+        return None
 
     try:
+        config = load_metric_config()
+        landmarker = _session_image_landmarker(model_path)
+        started = time.monotonic()
         analysis = analyze_still_image(
-            _session_image_landmarker(model_path),
+            landmarker,
             rgb,
-            config=load_metric_config(),
+            config=config,
         )
+        processing_ms = (time.monotonic() - started) * 1000.0
     except (LandmarkDetectionError, MetricConfigError) as error:
         st.error(str(error))
-        return
+        return None
+
+    recorder = _session_image_recorder(landmarker, config)
+    if st.session_state.get(IMAGE_RECORDED_INPUT_KEY) != input_fingerprint:
+        if recorder.records():
+            recorder.reset()
+        recorder.append_analysis(
+            analysis.landmarks.frame,
+            analysis.outcome,
+            elapsed_ms=0,
+            processing_ms=processing_ms,
+            input_mode=InputMode.IMAGE,
+        )
+        st.session_state[IMAGE_RECORDED_INPUT_KEY] = input_fingerprint
 
     landmarks = analysis.landmarks
     preview_column, status_column = st.columns([7, 5])
@@ -156,6 +244,7 @@ def _render_image_landmarks(rgb: np.ndarray) -> None:
     with status_column:
         # Still images are stateless, so the raw value is shown directly (§8.7).
         render_scores(analysis.outcome, show_smoothed=False)
+    return recorder
 
 
 def _render_image_section() -> None:
@@ -169,14 +258,18 @@ def _render_image_section() -> None:
         st.info("写真を選ぶと、ランドマーク検出と参考年齢帯を別々に表示します。")
         return
 
+    uploaded_bytes = uploaded.getvalue()
     try:
-        decoded = decode_uploaded_image(uploaded.getvalue())
+        decoded = decode_uploaded_image(uploaded_bytes)
     except ImageInputError as error:
         st.error(str(error))
         return
 
     rgb = np.asarray(decoded.rgb, dtype=np.uint8)
-    _render_image_landmarks(rgb)
+    recorder = _render_image_landmarks(
+        rgb,
+        input_fingerprint=sha256(uploaded_bytes).hexdigest(),
+    )
 
     st.divider()
     st.subheader("モデル推定の参考年齢帯")
@@ -206,24 +299,23 @@ def _render_image_section() -> None:
     if analyze:
         try:
             estimator = _session_estimator(model_path)
-            st.session_state[RESULT_STATE_KEY] = estimator.estimate(rgb)
+            estimate = estimator.estimate(rgb)
+            st.session_state[RESULT_STATE_KEY] = estimate
+            if recorder is not None:
+                recorder.attach_age_estimate(estimate, observed_elapsed_ms=0)
         except AgeInferenceError as error:
             _clear_session_result()
             st.error(str(error))
 
     with result_column:
-        estimate = st.session_state.get(RESULT_STATE_KEY)
-        if isinstance(estimate, AgeEstimate):
-            _render_age_result(estimate)
+        session_estimate = st.session_state.get(RESULT_STATE_KEY)
+        if isinstance(session_estimate, AgeEstimate):
+            _render_age_result(session_estimate)
         else:
             st.info("モデル準備後に「年齢帯を推定」を押すと、8 年代の参考値を表示します。")
 
-    st.divider()
-    st.subheader("左右差分析")
-    st.info(
-        "左右差スコアの算出は次の実装です。"
-        "ランドマーク検出・年齢帯推論とは独立した結果・失敗状態として接続します。"
-    )
+    if recorder is not None:
+        _render_image_export(recorder)
 
 
 def _switch_input_mode() -> None:
@@ -243,8 +335,9 @@ def render_app() -> None:
     st.caption("Local processing · 画像非保存 · 研究用")
     st.write(
         "顔のランドマークと、モデルが推定した参考年齢帯を端末内で確認するアプリです。"
-        "現在の実装マイルストーンでは、リアルタイムのランドマーク表示と"
-        "静止画の年齢帯推論を提供しています。左右差スコアはまだ算出しません。"
+        "リアルタイム映像ではランドマーク、左右差スコア、姿勢角を重ねて表示し、"
+        "数値履歴を再現性メタデータ付きの CSV / JSON として保存できます。"
+        "感度係数の校正が完了するまでは、左右差の数値は同一条件での相対比較専用です。"
     )
 
     with st.expander("利用前に確認してください", expanded=True):

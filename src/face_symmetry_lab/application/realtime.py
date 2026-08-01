@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -18,6 +19,8 @@ from numpy.typing import NDArray
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
 from face_symmetry_lab.application.ports import LandmarkProvider
+from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.domain.export import SessionExport
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_POINT_COLOR,
@@ -57,6 +60,7 @@ class RealtimeLandmarkPipeline:
         *,
         landmarker: LandmarkProvider,
         analyzer: FrameAnalyzer | None = None,
+        recorder: SessionRecorder | None = None,
         scheduler: FrameScheduler | None = None,
         clock: Callable[[], float] = time.monotonic,
         point_color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
@@ -64,6 +68,7 @@ class RealtimeLandmarkPipeline:
     ) -> None:
         self._landmarker = landmarker
         self._analyzer = analyzer
+        self._recorder = recorder
         self.scheduler = scheduler if scheduler is not None else FrameScheduler()
         self._clock = clock
         self._point_color = point_color
@@ -77,18 +82,29 @@ class RealtimeLandmarkPipeline:
 
     def process(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Analyse one frame and return the image to send back to the browser."""
+        painted, _ = self.process_with_analysis(rgb_image)
+        return painted
+
+    def process_with_analysis(
+        self,
+        rgb_image: NDArray[np.uint8],
+    ) -> tuple[NDArray[np.uint8], AnalysisOutcome | None]:
+        """Return only the analysis belonging to this exact preview frame."""
         if self._closed:
-            return rgb_image
+            return rgb_image, None
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
             self._record_error()
-            return rgb_image
+            return rgb_image, None
 
         with self.scheduler.slot() as acquired:
             if not acquired:
-                return rgb_image
+                return rgb_image, None
             return self._analyse(rgb_image)
 
-    def _analyse(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    def _analyse(
+        self,
+        rgb_image: NDArray[np.uint8],
+    ) -> tuple[NDArray[np.uint8], AnalysisOutcome | None]:
         started = self._clock()
         self._frame_id += 1
         timestamp_ms = max(
@@ -111,8 +127,12 @@ class RealtimeLandmarkPipeline:
             )
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
-            self._record_error()
-            return rgb_image
+            self._record_error(
+                frame_id=self._frame_id,
+                elapsed_ms=timestamp_ms,
+                processing_ms=(self._clock() - started) * 1000.0,
+            )
+            return rgb_image, None
 
         analysis: AnalysisOutcome | None = None
         if self._analyzer is not None:
@@ -122,6 +142,27 @@ class RealtimeLandmarkPipeline:
                 # Scoring must never take the preview down with it.
                 analysis = None
 
+        finished = self._clock()
+        processing_ms = (finished - started) * 1000.0
+        if self._recorder is not None:
+            try:
+                if analysis is None:
+                    self._recorder.append_error(
+                        frame_id=frame.frame_id,
+                        elapsed_ms=timestamp_ms,
+                        processing_ms=processing_ms,
+                    )
+                else:
+                    self._recorder.append_analysis(
+                        frame,
+                        analysis,
+                        elapsed_ms=timestamp_ms,
+                        processing_ms=processing_ms,
+                    )
+            except Exception:
+                # Export bookkeeping is secondary to keeping the camera alive.
+                pass
+
         with self._state_lock:
             self._snapshot = PipelineSnapshot(
                 frame_id=frame.frame_id,
@@ -130,12 +171,18 @@ class RealtimeLandmarkPipeline:
                 landmark_count=len(frame.points),
                 dropped_frames=self.scheduler.dropped_frames,
                 consecutive_errors=0,
-                processing_ms=(self._clock() - started) * 1000.0,
+                processing_ms=processing_ms,
                 analysis=analysis,
             )
-        return painted
+        return painted, analysis
 
-    def _record_error(self) -> None:
+    def _record_error(
+        self,
+        *,
+        frame_id: int | None = None,
+        elapsed_ms: int | None = None,
+        processing_ms: float | None = None,
+    ) -> None:
         with self._state_lock:
             self._snapshot = replace(
                 self._snapshot,
@@ -144,6 +191,18 @@ class RealtimeLandmarkPipeline:
                 landmark_count=0,
                 consecutive_errors=self._snapshot.consecutive_errors + 1,
             )
+        if (
+            self._recorder is not None
+            and frame_id is not None
+            and elapsed_ms is not None
+            and processing_ms is not None
+        ):
+            with suppress(Exception):
+                self._recorder.append_error(
+                    frame_id=frame_id,
+                    elapsed_ms=elapsed_ms,
+                    processing_ms=processing_ms,
+                )
 
     def snapshot(self) -> PipelineSnapshot:
         """Return the latest immutable result for the UI thread."""
@@ -154,9 +213,17 @@ class RealtimeLandmarkPipeline:
         """Drop scores, smoothing, and hysteresis without stopping the stream."""
         if self._analyzer is not None:
             self._analyzer.reset()
+        if self._recorder is not None:
+            self._recorder.reset()
         self.scheduler.reset()
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
+
+    def export_bundle(self) -> SessionExport | None:
+        """Return an immutable export snapshot without exposing live history."""
+        if self._recorder is None:
+            return None
+        return self._recorder.export_bundle()
 
     def close(self) -> None:
         """Release the landmark runtime and stop accepting frames."""

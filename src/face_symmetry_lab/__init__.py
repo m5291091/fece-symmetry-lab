@@ -1,3 +1,11 @@
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("face-symmetry-lab")
+except PackageNotFoundError:
+    __version__ = "0.1.0"
+
+
 def main() -> None:
     """Launch the loopback-only Streamlit application."""
     import sys
