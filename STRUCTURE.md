@@ -19,6 +19,12 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Still-image landmarks | `src/face_symmetry_lab/application/still_image.py` |
 | Runtime ports | `src/face_symmetry_lab/application/ports.py` |
 | Pinned model manifest | `configs/model-manifest.json` |
+| Frozen metric bundle | `configs/metrics/symmetry-2d-v1.json` |
+| Landmark map derivation | `scripts/derive_landmark_map.py` |
+| Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
+| Quality gate / hysteresis | `src/face_symmetry_lab/application/quality.py` |
+| Frame analysis orchestration | `src/face_symmetry_lab/application/analyzer.py` |
+| Landmark model card | `docs/model-cards/mediapipe-face-landmarker-v1.md` |
 | Model store (hash + atomic install) | `src/face_symmetry_lab/adapters/io/model_store.py` |
 | Model preparation CLI | `scripts/bootstrap_models.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
@@ -35,12 +41,21 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Analysis DTO | `domain/models.py` | `tests/domain/test_models.py` | FR-008, FR-011 |
 | Landmark DTO / pixel mapping | `domain/landmarks.py` | `tests/domain/test_landmarks.py` | FR-008, FR-009 |
 | Landmark overlay painting | `domain/overlay.py` | `tests/domain/test_overlay.py` | FR-013 |
+| Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
+| Normalization / TLS midline | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, AC-SCORE-02 |
+| Symmetry scoring | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01 |
+| Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
+| Display smoothing | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, §8.7 |
 | Age-band mapping | `domain/age.py` | `tests/domain/test_age.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
+| Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
+| Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
 | Latest-frame-wins gate | `runtime/frame_scheduler.py` | `tests/runtime/test_frame_scheduler.py` | NFR-006, NFR-007 |
 | Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
 | ONNX age inference | `adapters/inference/onnx_age_estimator.py` | `tests/adapters/test_onnx_age_estimator.py` | FR-022〜024 |
+| Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
+| Score presentation | `ui/scores.py` | UI / E2E tests は未整備 | FR-014, §5.3 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
@@ -57,7 +72,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `5bdb56208424570efb03c0620e49f571e165a18b105e10d9bb65caaf6edff0a7`_
+_File-list SHA-256: `3a3651533b8cfca0c45e019bf8201517e008502454672afd25b1af7310a3ffed`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -69,15 +84,19 @@ face-symmetry-lab/
 - `.streamlit/`
   - `config.toml`
 - `configs/`
+  - `metrics/`
+    - `symmetry-2d-v1.json`
   - `model-manifest.json`
 - `docs/`
   - `adr/`
     - `0001-age-estimation-runtime.md`
   - `model-cards/`
     - `age-mobilenetv2-utkface-v1.md`
+    - `mediapipe-face-landmarker-v1.md`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
+  - `derive_landmark_map.py`
   - `export_age_model.py`
   - `generate_structure.py`
   - `verify.py`
@@ -87,33 +106,41 @@ face-symmetry-lab/
       - `inference/`
         - … (3 files)
       - `io/`
-        - … (2 files)
+        - … (3 files)
       - … (1 files)
     - `application/`
-      - … (5 files)
+      - … (7 files)
     - `domain/`
-      - … (5 files)
+      - … (10 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
-      - … (4 files)
+      - … (5 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
   - `adapters/`
     - `test_mediapipe_landmarker.py`
+    - `test_metric_config.py`
     - `test_model_store.py`
     - `test_onnx_age_estimator.py`
   - `application/`
+    - `test_analyzer.py`
     - `test_image_input.py`
+    - `test_quality.py`
     - `test_realtime.py`
     - `test_still_image.py`
   - `domain/`
     - `__init__.py`
     - `test_age.py`
+    - `test_geometry.py`
     - `test_landmarks.py`
+    - `test_metrics.py`
     - `test_models.py`
     - `test_overlay.py`
+    - `test_pose.py`
+    - `test_smoothing.py`
+    - `test_symmetry.py`
   - `model/`
     - `conftest.py`
     - `test_real_landmarker.py`
@@ -133,6 +160,7 @@ face-symmetry-lab/
 - `AGENTS.md`
 - `CLAUDE.md`
 - `CODEX.md`
+- `NOTICE`
 - `README.md`
 - `STRUCTURE.md`
 - `pyproject.toml`

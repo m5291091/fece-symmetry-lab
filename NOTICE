@@ -1,0 +1,70 @@
+Face Symmetry Lab
+=================
+
+This product bundles no model weights. Model assets are fetched by an explicit
+`scripts/bootstrap_models.py` run and verified against `configs/model-manifest.json`
+(SHA-256). The notices below cover the assets the manifest pins and the runtime
+dependencies whose licences require attribution.
+
+
+Model assets
+------------
+
+MediaPipe Face Landmarker (`face_landmarker.task`)
+  Version   : mediapipe-face-landmarker/float16-1
+  Source    : https://storage.googleapis.com/mediapipe-models/face_landmarker/
+              face_landmarker/float16/1/face_landmarker.task
+  SHA-256   : 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
+  Licence   : Apache License 2.0
+              https://www.apache.org/licenses/LICENSE-2.0
+  Copyright : Copyright 2023 The MediaPipe Authors
+  Card      : docs/model-cards/mediapipe-face-landmarker-v1.md
+  Notes     : Redistribution is permitted under Apache-2.0. This repository does
+              not redistribute the file; it is downloaded locally on request.
+
+Age-band MobileNetV2 (`age_mobilenetv2_utkface_v1.onnx`)
+  Licence   : not distributed with this repository. The weights are produced in a
+              separate training environment from UTKFace-derived data. UTKFace is
+              published for non-commercial research use only, so the resulting
+              model inherits that restriction and MUST NOT be redistributed here.
+  Card      : docs/model-cards/age-mobilenetv2-utkface-v1.md
+
+
+Derived configuration
+---------------------
+
+`configs/metrics/symmetry-2d-v1.json` contains a left/right landmark
+correspondence map derived from the MediaPipe Face Landmarker mesh topology by
+`scripts/derive_landmark_map.py`. It stores landmark indices only — no model
+weights and no face-derived data.
+
+
+Runtime dependencies
+--------------------
+
+Apache License 2.0
+  mediapipe, onnxruntime
+
+BSD 3-Clause
+  numpy, pandas, streamlit-webrtc (see each distribution for the full text)
+
+Apache License 2.0 / MIT
+  streamlit (Apache-2.0), pydantic (MIT)
+
+MIT-CMU
+  pillow
+
+Apache License 2.0
+  opencv-contrib-python (OpenCV itself is Apache-2.0 from 4.5.0 onward)
+
+The authoritative licence text for each dependency ships inside its distribution.
+Run `uv pip list` and inspect the installed metadata for the exact versions
+resolved by `uv.lock`.
+
+
+Excluded on purpose
+-------------------
+
+InsightFace pretrained models are licensed for non-commercial research use and
+are NOT part of this application's runtime (requirement.md §10.8). PyTorch and
+torchvision are training-side only and are kept out of the application lock.
