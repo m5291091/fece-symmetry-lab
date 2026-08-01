@@ -1,0 +1,66 @@
+import numpy as np
+import pytest
+
+from face_symmetry_lab.domain.landmarks import LandmarkError, build_landmark_frame
+from face_symmetry_lab.domain.overlay import draw_landmark_points
+
+
+def _blank(height: int = 20, width: int = 20) -> np.ndarray:
+    return np.zeros((height, width, 3), dtype=np.uint8)
+
+
+def test_landmarks_are_painted_at_the_expected_pixel() -> None:
+    frame = build_landmark_frame(frame_id=1, face_count=1, points=((0.5, 0.5),))
+
+    painted = draw_landmark_points(_blank(), frame, color=(0, 255, 0), radius=0)
+
+    assert tuple(painted[10, 10]) == (0, 255, 0)
+    assert painted.sum() == 255
+
+
+def test_radius_paints_a_square_neighbourhood() -> None:
+    frame = build_landmark_frame(frame_id=2, face_count=1, points=((0.5, 0.5),))
+
+    painted = draw_landmark_points(_blank(), frame, color=(255, 255, 255), radius=1)
+
+    assert np.all(painted[9:12, 9:12] == 255)
+    assert np.all(painted[0:8, 0:8] == 0)
+
+
+def test_source_image_is_never_mutated() -> None:
+    source = _blank()
+    frame = build_landmark_frame(frame_id=3, face_count=1, points=((0.5, 0.5),))
+
+    painted = draw_landmark_points(source, frame, color=(255, 0, 0), radius=1)
+
+    assert painted is not source
+    assert source.sum() == 0
+
+
+def test_frames_without_a_single_face_are_returned_unchanged() -> None:
+    source = _blank()
+    frame = build_landmark_frame(frame_id=4, face_count=0, points=())
+
+    painted = draw_landmark_points(source, frame)
+
+    assert painted.sum() == 0
+
+
+def test_points_on_the_border_are_clamped_instead_of_wrapping() -> None:
+    frame = build_landmark_frame(frame_id=5, face_count=1, points=((0.0, 0.0), (1.0, 1.0)))
+
+    painted = draw_landmark_points(_blank(4, 4), frame, color=(255, 255, 255), radius=2)
+
+    assert painted.shape == (4, 4, 3)
+    assert np.all(painted[0, 0] == 255)
+    assert np.all(painted[3, 3] == 255)
+    # A clamped brush must not bleed across to the opposite corners.
+    assert np.all(painted[0, 3] == 0)
+    assert np.all(painted[3, 0] == 0)
+
+
+def test_non_rgb_images_are_rejected() -> None:
+    frame = build_landmark_frame(frame_id=6, face_count=1, points=((0.5, 0.5),))
+
+    with pytest.raises(LandmarkError, match="RGB"):
+        draw_landmark_points(np.zeros((8, 8), dtype=np.uint8), frame)
