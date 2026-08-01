@@ -302,6 +302,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-023 | P0 | 年齢・性別の再現性 | `demographic_model_version`、`demographic_model_sha256`、推定年齢、性別2クラス確率、観測時刻、cache 状態を結果へ含める |
 | FR-024 | P0 | 年齢・性別の失敗分離 | モデルなし・不正出力・推論失敗でも左右差分析を継続し、年齢・性別区画だけに回復手順を示す |
 | FR-025 | P1 | 補正後の肌表面参考値 | 顔cropへ端末内のGray-worldホワイトバランスとrobust明度正規化を適用し、頬領域の色調均一性と局所テクスチャを独立した参考値として算出する。補正係数・指標版・未校正状態を記録し、肌色、疾患、健康、美的品質を推定せず、幾何の全体スコアへ混合しない |
+| FR-026 | P1 | 追跡ズーム | リアルタイムのVIDEOモードで、直前フレームの単一顔bboxを追跡し周辺を切り出して拡大した上でlandmark検出へ渡し、結果を元フレーム座標へ写像する。初回検出・顔見失い時は全体フレームへ復帰し、既定間隔ごとに全体フレームを再検査して2顔以上の出現を見逃さない |
 
 ---
 
@@ -319,7 +320,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 1. 顔数が 1 であること。
 2. 顔検出または presence の信頼度が設定閾値以上であること。
 3. 既定で `|yaw| ≤ 15°`、`|pitch| ≤ 15°`、`|roll| ≤ 25°` であること。
-4. 顔 bbox 面積比が既定範囲内であること。初期候補はフレーム面積の 12〜55% とし、実機評価で固定する。
+4. 顔 bbox 面積比が既定範囲内であること。初期候補はフレーム面積の 2〜55% とし、実機評価で固定する（下限は当初 12%、次に 5% だったが、いずれもPC webcamでは着席時に過剰なTOO_FAR誤拒否を招くことが利用者報告と実測で判明し、2%へ再緩和した。実機評価で再確定する）。
 5. §6.4 の安定条件を満たすこと。
 
 照度・ぼけは P0 では非ブロッキング警告とする。カメラ差が大きいため、固定 fixture と実機検証で誤拒否率を評価してから P1 でゲート昇格する。
@@ -645,6 +646,7 @@ flowchart LR
 - **AC-AGE-01**: 固定評価セットで派生ONNXと公式IRの参照runtimeとの年齢出力差が0.1年以内、性別確率差が`1e-4`以内で、出力順`[female, male]`が一致する。年齢MAEと性別accuracyをslice別に記録する。
 - **AC-AGE-02**: 元XML/BINの一方なし・hash不一致、派生ONNXなし・hash不一致、不正shape、18〜75外、NaN/Inf、推論例外の各場合に年齢・性別を表示せず、左右差分析は継続する。
 - **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
+- **AC-ZOOM-01**: リアルタイムの追跡ズームは、単一顔のbboxを追跡して検出入力を拡大しつつ、既定`zoom_recheck_interval_ms`ごとに全体フレームを再検査する。再検査で2顔以上を検出した場合は追跡状態を破棄して`MULTI_FACE`を報告し、顔を見失った場合は次フレームで全体フレーム検索へ復帰する。
 
 ### 12.2 プライバシー・セキュリティ
 
@@ -796,6 +798,16 @@ sequenceDiagram
 
 年齢・性別推定は critical path から分離した capacity 1 の worker とし、フレーム数ではなく `demographic_interval_ms` で制御する。対象 segment / ephemeral track が一致しない結果は破棄する。静止画 M1 では同一の検証済み face crop に対し同期実行してよい。
 
+#### 14.3a 追跡ズーム（FR-026, AC-ZOOM-01）
+
+PCのwebcamは、電話の自撮りより顔がフレームに占める面積比が小さくなりやすい（OD-05）。品質ゲートの下限緩和だけに頼らず、`LandmarkProvider`をラップする追跡ズームで検出入力自体の実効解像度を確保する。
+
+- 直前フレームで単一顔が確定した場合、そのbboxへ余白(`zoom_margin_ratio`)を加えた矩形を次フレームの切り出し窓とする。窓は`zoom_min_window`未満に縮まない（ジッターで過剰倍率にならないための下限）。
+- 切り出した画像は、長辺が`zoom_target_px`へ届くまで等方拡大する。ただし倍率は`zoom_max_scale`を超えない（ノイズを偽の精度として拡大しない）。
+- 検出結果のlandmark座標は、切り出し窓の位置・サイズを使って元フレームの正規化座標へ写像してから返す。品質ゲート、対称性指標、overlay描画は追跡ズームの有無を意識しない。
+- 初回検出時、または直前フレームで顔を見失った（`NO_FACE` / `MULTI_FACE`）場合は、次フレームを全体フレームで検索する。
+- 追跡ズーム中でも、`zoom_recheck_interval_ms`ごとに全体フレームでの検査を強制する。切り出し窓の外に第2の顔が入ってきても見逃さないため（FR-008は最大顔を黙って採点することを禁止する）。全体再検査で2顔以上が見つかれば追跡状態を破棄し`MULTI_FACE`を報告する。
+
 ### 14.4 エラーと回復
 
 - adapter 例外は `AnalysisFailure(code, recoverable, event_id)` へ変換し、domain へ例外型を漏らさない。
@@ -825,13 +837,18 @@ sequenceDiagram
 | `pitch_inner_deg` / `pitch_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` |
 | `roll_inner_deg` / `roll_outer_deg` | 25 / 28 | `0 < inner < outer ≤ 45` |
 | `valid_frames_to_ok` | 5 | 1〜30 |
-| `face_area_min` / `max` | 0.12 / 0.55 | `0 < min < max < 1` |
+| `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` |
 | `ema_tau_seconds` | 0.4 | 0.05〜5.0 |
 | `history_capacity` | 3,000 | 100〜20,000 |
 | `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 |
 | `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない |
 | `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 |
 | `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 |
+| `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026、現時点は内部既定のみ、UI未公開） |
+| `zoom_min_window` | 0.18 | 0 超〜1.0（同上） |
+| `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） |
+| `zoom_target_px` | 480 | 正の整数（同上） |
+| `zoom_max_scale` | 4.0 | 1.0 以上（同上） |
 
 - scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。
 - 基本ユーザーには検出信頼度、角度閾値、係数、model path を常時表示しない。
@@ -1191,7 +1208,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | OD-02 | R1 / R2 の実機型番 | M0 | 調達可能な端末を固定し benchmark 手順へ記録 |
 | OD-03 | MediaPipe asset の version / license / hash | M0 | manifest、NOTICE、取得元を review |
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
-| OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認 |
+| OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認。`face_area_min`はPC webcamでの過剰なTOO_FAR誤拒否を受け0.12→0.05→0.02へ段階的に暫定緩和済み（§8.2）だが、実機評価による最終確定は未完。小さい顔面積での landmark 精度低下（ノイズ増）とのtrade-offも未評価 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
 | OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済み公式XML/BINと派生ONNXについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み。固定入力parityは`scripts/verify_openvino_parity.py`で実測済み（年齢差最大0.205年、性別確率差最大5.88×10⁻³）だが目標gate（0.1年 / `1e-4`）未達のため、gate値の承認または変換改善が完了条件に残る（model card参照） |
 | OD-08 | 肌表面参考指標のcalibration set | M1 / M5 | 照明、影、化粧、髭、眼鏡、camera、再撮影差と補正gainを評価し、係数と利用範囲を指標カードへ記録 |
@@ -1205,7 +1222,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | 誤帰属を防ぐ | FR-008, §6, §8.8 | AC-FACE-01, AC-SESSION-01 |
 | 指標を再現できる | FR-011, FR-020, FR-025, §8, §9 | AC-SCORE-01〜04, AC-APPEARANCE-01, AC-EXPORT-01 |
 | 年齢・性別モデルをアプリへ接続 | FR-022〜024, §10.8, NFR-021 | AC-AGE-01, AC-AGE-02 |
-| リアルタイムで安定 | FR-012〜016, NFR-001〜006 | AC-PERF-01, AC-SOAK-01 |
+| リアルタイムで安定 | FR-012〜016, FR-026, NFR-001〜006 | AC-PERF-01, AC-SOAK-01, AC-ZOOM-01 |
 | 安全な入力 | FR-006, FR-007, NFR-011 | AC-INPUT-01 |
 | 中立でアクセス可能 | UX §5, §10.7, NFR-016 | AC-A11Y-01, copy review |
 | supply chain を固定 | FR-002, FR-020, §10.6 | AC-MODEL-01, AC-MODEL-02 |

@@ -20,6 +20,9 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     MediaPipeFaceLandmarker,
     MediaPipeImageLandmarker,
 )
+from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
+    TrackingZoomLandmarker,
+)
 from face_symmetry_lab.adapters.io.model_store import (
     DEFAULT_MANIFEST_PATH,
     DEFAULT_MODELS_DIR,
@@ -288,6 +291,44 @@ def test_image_and_video_running_modes_score_an_identical_frame_the_same(
     # Measured 0.0 on this fixture; a small tolerance absorbs future
     # non-determinism in MediaPipe's tracker without hiding a real regression.
     assert abs(still.outcome.overall_raw - settled.overall_raw) <= 1.0
+
+
+def test_tracking_zoom_keeps_detecting_a_small_in_frame_face_across_frames(
+    synthetic_face_rgb: NDArray[np.uint8],
+) -> None:
+    """FR-026: a PC-webcam-sized face must stay trackable frame over frame.
+
+    Places the synthetic face at ~35% of a larger canvas (well under the
+    face_area_min=0.02 gate on its own bbox), matching a normal seated PC
+    framing, and confirms the wrapped provider keeps a single-face lock and
+    produces sane remapped coordinates using the real Face Landmarker.
+    """
+    from PIL import Image
+
+    canvas_size = 900
+    face_size = round(canvas_size * 0.35)
+    resized_face = Image.fromarray(synthetic_face_rgb).resize((face_size, face_size))
+    canvas = Image.new("RGB", (canvas_size, canvas_size), (235, 230, 225))
+    offset = ((canvas_size - face_size) // 2, (canvas_size - face_size) // 2)
+    canvas.paste(resized_face, offset)
+    frame_rgb = np.asarray(canvas, dtype=np.uint8)
+
+    inner = MediaPipeFaceLandmarker(model_path=_installed_model(), model_version=_asset().version)
+    zoomer = TrackingZoomLandmarker(inner)
+    try:
+        results = [
+            zoomer.detect_video(frame_rgb, frame_id=index, timestamp_ms=index * 33)
+            for index in range(1, 6)
+        ]
+    finally:
+        zoomer.close()
+
+    assert [result.status for result in results] == [TrackingStatus.SINGLE_FACE] * 5
+    for result in results:
+        assert len(result.points) == FACE_LANDMARK_COUNT
+        assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in result.points)
+        assert result.width == canvas_size
+        assert result.height == canvas_size
 
 
 def test_the_head_pose_of_the_frontal_synthetic_face_is_near_zero(

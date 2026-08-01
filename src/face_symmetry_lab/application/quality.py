@@ -30,7 +30,13 @@ class QualityThresholds:
     pitch_outer_deg: float = 17.0
     roll_inner_deg: float = 25.0
     roll_outer_deg: float = 28.0
-    face_area_min: float = 0.12
+    #: §8.2 item 4, OD-05: a PC webcam frames a face far smaller than a phone
+    #: selfie at a comfortable sitting distance. Empirically, a relaxed
+    #: sitting posture with the upper body visible measures ratios as low as
+    #: ~0.02; 0.12, then 0.05, both still forced users to lean in
+    #: uncomfortably close. Still an initial candidate pending real-device
+    #: evaluation (OD-05).
+    face_area_min: float = 0.02
     face_area_max: float = 0.55
     valid_frames_to_ok: int = 5
 

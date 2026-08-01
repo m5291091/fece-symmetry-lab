@@ -27,6 +27,9 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
 )
+from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
+    TrackingZoomLandmarker,
+)
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
 from face_symmetry_lab.adapters.io.model_store import file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
@@ -101,6 +104,11 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         model_path=model_path,
         model_version=landmark_asset().version,
     )
+    # §14.3a: a PC webcam frames a face far smaller than a phone selfie, so
+    # crop-and-enlarge around the last detection before handing it to
+    # MediaPipe. The wrapper still reports `model_version`/`model_sha256`
+    # via the underlying `landmarker` reference below.
+    zoomed_landmarker = TrackingZoomLandmarker(landmarker)
     analyzer = FrameAnalyzer(config=config)
     recorder = SessionRecorder(
         metric_config=config,
@@ -113,7 +121,7 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
     )
     return RealtimeLandmarkPipeline(
-        landmarker=landmarker,
+        landmarker=zoomed_landmarker,
         analyzer=analyzer,
         recorder=recorder,
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,

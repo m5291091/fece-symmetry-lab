@@ -33,6 +33,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenVINO reference parity (OD-07, dev-only) | `scripts/verify_openvino_parity.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
+| Tracking-zoom landmark wrapper | `src/face_symmetry_lab/adapters/inference/tracking_zoom_landmarker.py` |
+| Tracking-zoom geometry | `src/face_symmetry_lab/domain/tracking_zoom.py` |
 | Age / gender adapter | `src/face_symmetry_lab/adapters/inference/opencv_demographic_estimator.py` |
 | Age / gender model card | `docs/model-cards/openvino-age-gender-retail-0013.md` |
 | Architecture decisions | `docs/adr/` |
@@ -60,6 +62,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
 | Latest-frame-wins gate | `runtime/frame_scheduler.py` | `tests/runtime/test_frame_scheduler.py` | NFR-006, NFR-007 |
 | Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
+| Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, AC-ZOOM-01 |
+| Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, AC-ZOOM-01 |
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
@@ -82,7 +86,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `1eb99864bc708ba3e4e39aba6240d15b9d10ef1a29c699e96cd34b049268a110`_
+_File-list SHA-256: `ccb0f2c0832d13f71cbfb64b01d7dca0ae1daee778768644a7949d3c33b8079c`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -119,14 +123,14 @@ face-symmetry-lab/
       - `export/`
         - … (2 files)
       - `inference/`
-        - … (3 files)
+        - … (4 files)
       - `io/`
         - … (3 files)
       - … (1 files)
     - `application/`
       - … (8 files)
     - `domain/`
-      - … (12 files)
+      - … (13 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
@@ -140,6 +144,7 @@ face-symmetry-lab/
     - `test_model_store.py`
     - `test_opencv_demographic_estimator.py`
     - `test_session_exporter.py`
+    - `test_tracking_zoom_landmarker.py`
   - `application/`
     - `test_analyzer.py`
     - `test_image_input.py`
@@ -160,6 +165,7 @@ face-symmetry-lab/
     - `test_skin_quality.py`
     - `test_smoothing.py`
     - `test_symmetry.py`
+    - `test_tracking_zoom.py`
   - `model/`
     - `conftest.py`
     - `test_demographic_conversion.py`

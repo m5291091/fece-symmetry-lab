@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import numpy as np
+import pytest
+from numpy.typing import NDArray
+
+from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
+    TrackingZoomLandmarker,
+)
+from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_frame
+from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
+
+#: A face fixed at this fraction of *whatever* image the fake receives, so
+#: geometry assertions stay independent of real detection content.
+_FACE_FRACTION = ((0.4, 0.4), (0.6, 0.4), (0.4, 0.6), (0.6, 0.6))
+
+
+class _FakeLandmarkProvider:
+    """Reports a canned result per call, ignoring pixel content."""
+
+    def __init__(self, modes: list[str]) -> None:
+        self._modes = list(modes)
+        self.received_shapes: list[tuple[int, int]] = []
+        self.closed = False
+
+    def detect_video(
+        self,
+        rgb_image: NDArray[np.uint8],
+        *,
+        frame_id: int,
+        timestamp_ms: int,
+    ) -> LandmarkFrame:
+        height, width = rgb_image.shape[:2]
+        self.received_shapes.append((height, width))
+        mode = self._modes.pop(0) if self._modes else "single"
+        if mode == "none":
+            return build_landmark_frame(frame_id=frame_id, face_count=0, width=width, height=height)
+        if mode == "multi":
+            return build_landmark_frame(frame_id=frame_id, face_count=2, width=width, height=height)
+        return build_landmark_frame(
+            frame_id=frame_id,
+            face_count=1,
+            points=_FACE_FRACTION,
+            width=width,
+            height=height,
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _blank(height: int = 800, width: int = 1000) -> NDArray[np.uint8]:
+    return np.zeros((height, width, 3), dtype=np.uint8)
+
+
+def test_the_first_frame_is_detected_on_the_full_frame_unscaled() -> None:
+    fake = _FakeLandmarkProvider(["single"])
+    zoomer = TrackingZoomLandmarker(fake)
+
+    result = zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+
+    assert fake.received_shapes == [(800, 1000)]
+    assert result.points == _FACE_FRACTION
+    assert result.width == 1000
+    assert result.height == 800
+
+
+def test_the_second_call_detects_on_a_cropped_and_enlarged_window() -> None:
+    fake = _FakeLandmarkProvider(["single", "single"])
+    policy = TrackingZoomPolicy(
+        margin_ratio=0.6, min_window_size=0.18, target_px=480, max_scale=4.0
+    )
+    zoomer = TrackingZoomLandmarker(fake, policy=policy)
+
+    zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+    second = zoomer.detect_video(_blank(800, 1000), frame_id=2, timestamp_ms=33)
+
+    # bbox (0.4,0.4)-(0.6,0.6) expanded by 0.6 margin -> window (0.34,0.34)-(0.66,0.66),
+    # a 320x256px crop on a 1000x800 frame, upscaled 1.5x (longest side 320 -> 480).
+    assert fake.received_shapes[1] == (384, 480)
+    # window(0.34..0.66) + 0.4*width(0.32) == 0.468; + 0.6*0.32 == 0.532.
+    expected = ((0.468, 0.468), (0.532, 0.468), (0.468, 0.532), (0.532, 0.532))
+    assert np.asarray(second.points) == pytest.approx(np.asarray(expected))
+    assert second.width == 1000
+    assert second.height == 800
+
+
+def test_losing_the_face_falls_back_to_the_full_frame_next_time() -> None:
+    fake = _FakeLandmarkProvider(["single", "none", "single"])
+    zoomer = TrackingZoomLandmarker(fake)
+
+    zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+    lost = zoomer.detect_video(_blank(800, 1000), frame_id=2, timestamp_ms=33)
+    recovered = zoomer.detect_video(_blank(800, 1000), frame_id=3, timestamp_ms=66)
+
+    assert lost.face_count == 0
+    assert lost.points == ()
+    # Recovery must search the whole frame again, not a stale crop.
+    assert fake.received_shapes[2] == (800, 1000)
+    assert recovered.points == _FACE_FRACTION
+
+
+def test_a_periodic_recheck_returns_to_the_full_frame_even_without_losing_the_face() -> None:
+    fake = _FakeLandmarkProvider(["single", "single", "single"])
+    policy = TrackingZoomPolicy(recheck_interval_ms=100)
+    zoomer = TrackingZoomLandmarker(fake, policy=policy)
+
+    zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+    zoomer.detect_video(_blank(800, 1000), frame_id=2, timestamp_ms=50)
+    zoomer.detect_video(_blank(800, 1000), frame_id=3, timestamp_ms=150)
+
+    assert fake.received_shapes[0] == (800, 1000)  # cold start
+    assert fake.received_shapes[1] != (800, 1000)  # zoomed, not yet due
+    assert fake.received_shapes[2] == (800, 1000)  # forced recheck at t=150
+
+
+def test_a_second_face_found_on_a_recheck_is_reported_and_tracking_is_dropped() -> None:
+    fake = _FakeLandmarkProvider(["single", "single", "multi", "single"])
+    policy = TrackingZoomPolicy(recheck_interval_ms=100)
+    zoomer = TrackingZoomLandmarker(fake, policy=policy)
+
+    zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+    zoomer.detect_video(_blank(800, 1000), frame_id=2, timestamp_ms=50)
+    multi = zoomer.detect_video(_blank(800, 1000), frame_id=3, timestamp_ms=150)
+    after = zoomer.detect_video(_blank(800, 1000), frame_id=4, timestamp_ms=200)
+
+    assert fake.received_shapes[2] == (800, 1000)  # the recheck saw the whole scene
+    assert multi.face_count == 2
+    assert multi.points == ()
+    # Tracking must not silently resume on the previous crop after a multi-face hit.
+    assert fake.received_shapes[3] == (800, 1000)
+    assert after.points == _FACE_FRACTION
+
+
+def test_close_closes_the_wrapped_provider() -> None:
+    fake = _FakeLandmarkProvider(["single"])
+    zoomer = TrackingZoomLandmarker(fake)
+
+    zoomer.close()
+
+    assert fake.closed is True

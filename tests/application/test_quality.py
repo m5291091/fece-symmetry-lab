@@ -43,13 +43,32 @@ def test_a_frontal_well_sized_face_passes_the_gate() -> None:
     assert evaluate_frame(_frame(), THRESHOLDS, strict=True) == ()
 
 
+def test_a_pc_webcam_arms_length_framing_is_not_rejected_as_too_far() -> None:
+    """A face occupying ~60% of frame width at a typical laptop-webcam
+
+    distance measures a bounding-box area ratio around 0.08 (confirmed
+    against the real Face Landmarker on a scaled synthetic face). Users must
+    not have to lean in far closer than that just to pass the gate.
+    """
+    assert evaluate_frame(_frame(area=0.08), THRESHOLDS, strict=True) == ()
+
+
+def test_a_seated_pc_webcam_framing_with_room_to_spare_is_not_rejected() -> None:
+    """A face at ~30% of frame width (typical relaxed sitting posture, upper
+
+    body visible) measures a ratio around 0.02. Still further than the
+    arms-length case above; must also pass.
+    """
+    assert evaluate_frame(_frame(area=0.02), THRESHOLDS, strict=True) == ()
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected"),
     [
         ({"yaw": 20.0}, ReasonCode.OFF_AXIS_YAW),
         ({"pitch": -20.0}, ReasonCode.OFF_AXIS_PITCH),
         ({"roll": 30.0}, ReasonCode.OFF_AXIS_ROLL),
-        ({"area": 0.02}, ReasonCode.TOO_FAR),
+        ({"area": 0.005}, ReasonCode.TOO_FAR),
         ({"area": 0.80}, ReasonCode.TOO_CLOSE),
     ],
 )
