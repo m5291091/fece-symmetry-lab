@@ -174,7 +174,11 @@ class FakeDemographicWorker:
         self.submitted: list[NDArray[np.uint8]] = []
         self.reset_calls = 0
         self.closed = False
+        self.due = True
         self._latest: tuple[DemographicEstimate, int] | None = None
+
+    def is_due(self) -> bool:
+        return self.due
 
     def submit(self, rgb_crop: NDArray[np.uint8]) -> None:
         self.submitted.append(rgb_crop)
@@ -670,6 +674,20 @@ def test_single_face_frames_submit_a_crop_to_the_demographic_worker() -> None:
     assert worker.submitted[0].shape[2] == 3
 
 
+def test_no_crop_is_built_while_the_worker_is_not_due() -> None:
+    """The worker's cadence is slower than the analysis cadence, so the
+
+    expensive crop must be skipped rather than built and discarded.
+    """
+    worker = FakeDemographicWorker()
+    worker.due = False
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert worker.submitted == []
+
+
 def test_multi_face_frames_do_not_submit_to_the_demographic_worker() -> None:
     worker = FakeDemographicWorker()
     pipeline = _pipeline(FakeLandmarker(face_count=2), demographic_worker=worker)
@@ -757,7 +775,7 @@ def test_demographic_estimate_is_attached_to_the_session_recorder() -> None:
     assert len(recorder.demographic_attachments) == 1
     attached_estimate, observed_elapsed_ms = recorder.demographic_attachments[0]
     assert attached_estimate.estimated_age_years == 30.0
-    assert observed_elapsed_ms is not None
+    assert observed_elapsed_ms >= 0
 
 
 def test_no_attachment_without_a_demographic_worker() -> None:

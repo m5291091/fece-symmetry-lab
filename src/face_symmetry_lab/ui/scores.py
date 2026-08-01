@@ -139,8 +139,18 @@ def render_scores(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> No
     st.caption(f"metric {outcome.metric_version} · landmark map {outcome.landmark_map_version}")
 
 
-def render_demographic_estimate(estimate: DemographicEstimate) -> None:
-    """Render the §10.8 age/gender reference panel (Image and Camera share this)."""
+def render_demographic_estimate(
+    estimate: DemographicEstimate,
+    *,
+    show_distribution: bool = True,
+) -> None:
+    """Render the §10.8 age/gender reference panel (Image and Camera share this).
+
+    `show_distribution` draws the two-class probability chart. The live camera
+    panel leaves it off: it repaints at 5 Hz while this value changes at most
+    once a second, and the chart costs far more than every other element here
+    combined. The same numbers stay available as text either way.
+    """
     st.subheader("モデル推定の参考年齢・参考性別")
     age_column, gender_column = st.columns(2)
     age_column.metric("参考年齢", f"{estimate.estimated_age_years:.1f}歳")
@@ -149,14 +159,18 @@ def render_demographic_estimate(estimate: DemographicEstimate) -> None:
         f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
         "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
     )
-    st.bar_chart(
-        {
-            "モデルラベル": ["female", "male"],
-            "モデル出力": list(estimate.gender_probabilities),
-        },
-        x="モデルラベル",
-        y="モデル出力",
-    )
+    if show_distribution:
+        st.bar_chart(
+            {
+                "モデルラベル": ["female", "male"],
+                "モデル出力": list(estimate.gender_probabilities),
+            },
+            x="モデルラベル",
+            y="モデル出力",
+        )
+    else:
+        female, male = estimate.gender_probabilities
+        st.caption(f"モデル出力 female {female:.3f} / male {male:.3f}")
     if estimate.is_cached:
         st.caption("同一区間内の直近推論を再表示しています。")
     with st.expander("モデル情報"):

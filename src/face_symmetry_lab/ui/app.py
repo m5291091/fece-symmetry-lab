@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import streamlit as st
-from streamlit.delta_generator import DeltaGenerator
 
 from face_symmetry_lab import __version__
 from face_symmetry_lab.adapters.export.session_exporter import (
@@ -32,6 +31,7 @@ from face_symmetry_lab.application.image_input import (
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.still_image import (
     STILL_IMAGE_THRESHOLDS,
+    StillImageAnalysis,
     analyze_still_image,
 )
 from face_symmetry_lab.domain.export import InputMode
@@ -179,43 +179,23 @@ def _render_image_export(recorder: SessionRecorder) -> None:
     )
 
 
-def _render_image_landmarks(
+def _analyze_uploaded_image(
     rgb: np.ndarray,
     *,
     input_fingerprint: str,
-) -> tuple[SessionRecorder | None, LandmarkFrame | None, DeltaGenerator | None]:
-    """Detect, draw, and score one uploaded photo (stateless, §8.7).
+    model_path: Path,
+    show_midline: bool,
+) -> tuple[SessionRecorder, StillImageAnalysis]:
+    """Detect, score, and record one uploaded photo (stateless, §8.7).
 
-    Returns the score-side column so the caller can append the age/gender
-    panel into the same column, keeping every result beside the photo
-    instead of in a separate section the user has to scroll to.
+    Draws nothing: the caller owns layout, so a failure here can never take
+    an unrelated panel down with it.
     """
-    st.subheader("静止画のランドマークと左右差")
-    model_path = resolve_ready_landmarker()
-    if model_path is None:
-        return None, None, None
-
-    show_midline = st.toggle(
-        "顔の中心線を表示",
-        value=True,
-        key="image_midline_enabled",
-        help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
-    )
-
-    try:
-        config = load_metric_config()
-        landmarker = _session_image_landmarker(model_path)
-        started = time.monotonic()
-        analysis = analyze_still_image(
-            landmarker,
-            rgb,
-            config=config,
-            show_midline=show_midline,
-        )
-        processing_ms = (time.monotonic() - started) * 1000.0
-    except (LandmarkDetectionError, MetricConfigError) as error:
-        st.error(str(error))
-        return None, None, None
+    config = load_metric_config()
+    landmarker = _session_image_landmarker(model_path)
+    started = time.monotonic()
+    analysis = analyze_still_image(landmarker, rgb, config=config, show_midline=show_midline)
+    processing_ms = (time.monotonic() - started) * 1000.0
 
     recorder = _session_image_recorder(landmarker, config)
     if st.session_state.get(IMAGE_RECORDED_INPUT_KEY) != input_fingerprint:
@@ -229,19 +209,67 @@ def _render_image_landmarks(
             input_mode=InputMode.IMAGE,
         )
         st.session_state[IMAGE_RECORDED_INPUT_KEY] = input_fingerprint
+    return recorder, analysis
 
-    landmarks = analysis.landmarks
-    preview_column, status_column = st.columns([7, 5], gap="large")
-    with preview_column:
-        st.image(landmarks.preview, caption="検出したランドマーク", width="stretch")
-        st.caption(
-            f"{_IMAGE_STATUS_MESSAGES[landmarks.frame.status]} "
-            f"入力 {rgb.shape[1]} × {rgb.shape[0]} · ランドマーク点数 {landmarks.landmark_count}"
-        )
-    with status_column:
-        # Still images are stateless, so the raw value is shown directly (§8.7).
-        render_scores(analysis.outcome, show_smoothed=False)
-    return recorder, landmarks.frame, status_column
+
+def _render_image_demographic_panel(
+    rgb: np.ndarray,
+    *,
+    landmark_frame: LandmarkFrame | None,
+    recorder: SessionRecorder | None,
+) -> None:
+    """Age/gender panel for the still-image flow (§10.8).
+
+    FR-024 keeps this independent of the symmetry side: it renders even when
+    landmark detection failed, explaining what is missing instead of silently
+    disappearing.
+    """
+    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
+
+    age_input: np.ndarray | None = None
+    if landmark_frame is not None:
+        try:
+            age_input = extract_face_crop(rgb, landmark_frame)
+        except ImageInputError:
+            age_input = None
+
+    demographic_model = resolve_ready_demographic()
+    analyze_column, reset_column = st.columns(2)
+    analyze = analyze_column.button(
+        "参考年齢・参考性別を推定",
+        type="primary",
+        disabled=demographic_model is None or age_input is None,
+        width="stretch",
+    )
+    if reset_column.button("結果をリセット", width="stretch"):
+        _clear_session_result()
+        st.rerun()
+
+    if analyze and demographic_model is not None and age_input is not None:
+        onnx_path, model_version = demographic_model
+        try:
+            estimate = _session_estimator(onnx_path, model_version).estimate(age_input)
+            st.session_state[RESULT_STATE_KEY] = estimate
+            if recorder is not None:
+                recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
+        except Exception as error:
+            # Invariant 12: an age/gender failure must not stop the symmetry
+            # side, so nothing beyond this panel may see the exception.
+            _clear_session_result()
+            message = (
+                str(error)
+                if isinstance(error, DemographicInferenceError)
+                else "年齢・性別を推定できませんでした。"
+            )
+            st.error(message)
+
+    session_estimate = st.session_state.get(RESULT_STATE_KEY)
+    if isinstance(session_estimate, DemographicEstimate):
+        render_demographic_estimate(session_estimate)
+    elif age_input is None:
+        st.info("単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。")
+    else:
+        st.info("ボタンを押すと、18〜75歳向けの参考値を表示します。")
 
 
 def _render_image_section() -> None:
@@ -263,61 +291,52 @@ def _render_image_section() -> None:
         return
 
     rgb = np.asarray(decoded.rgb, dtype=np.uint8)
-    recorder, landmark_frame, result_column = _render_image_landmarks(
-        rgb,
-        input_fingerprint=sha256(uploaded_bytes).hexdigest(),
-    )
+    st.subheader("静止画のランドマークと左右差")
+    model_path = resolve_ready_landmarker()
 
-    age_input: np.ndarray | None = None
-    if landmark_frame is not None:
+    recorder: SessionRecorder | None = None
+    analysis: StillImageAnalysis | None = None
+    if model_path is not None:
+        show_midline = st.toggle(
+            "顔の中心線を表示",
+            value=True,
+            key="image_midline_enabled",
+            help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+        )
         try:
-            age_input = extract_face_crop(rgb, landmark_frame)
-        except ImageInputError:
-            age_input = None
+            recorder, analysis = _analyze_uploaded_image(
+                rgb,
+                input_fingerprint=sha256(uploaded_bytes).hexdigest(),
+                model_path=model_path,
+                show_midline=show_midline,
+            )
+        except (LandmarkDetectionError, MetricConfigError) as error:
+            st.error(str(error))
 
-    demographic_model = resolve_ready_demographic()
-    model_ready = demographic_model is not None
-
-    # Rendered into the same column as the symmetry scores (§5.1): every
-    # result stays beside the photo instead of in a section below it.
-    if result_column is not None:
-        with result_column:
-            st.divider()
+    # §5.1: photo on the left, every result beside it, so nothing the user
+    # needs to compare lives in a section further down the page.
+    preview_column, status_column = st.columns([7, 5], gap="large")
+    with preview_column:
+        if analysis is None:
+            st.info("ランドマークを表示できません。")
+        else:
+            landmarks = analysis.landmarks
+            st.image(landmarks.preview, caption="検出したランドマーク", width="stretch")
             st.caption(
-                "runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳"
+                f"{_IMAGE_STATUS_MESSAGES[landmarks.frame.status]} "
+                f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
+                f"ランドマーク点数 {landmarks.landmark_count}"
             )
-            analyze_column, reset_column = st.columns(2)
-            analyze = analyze_column.button(
-                "参考年齢・参考性別を推定",
-                type="primary",
-                disabled=not model_ready or age_input is None,
-                width="stretch",
-            )
-            if reset_column.button("結果をリセット", width="stretch"):
-                _clear_session_result()
-                st.rerun()
-
-            if analyze:
-                try:
-                    if demographic_model is None:
-                        raise DemographicInferenceError("検証済みの年齢・性別モデルがありません。")
-                    onnx_path, model_version = demographic_model
-                    estimator = _session_estimator(onnx_path, model_version)
-                    if age_input is None:
-                        raise DemographicInferenceError("単一顔のcropを作成できません。")
-                    estimate = estimator.estimate(age_input)
-                    st.session_state[RESULT_STATE_KEY] = estimate
-                    if recorder is not None:
-                        recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
-                except DemographicInferenceError as error:
-                    _clear_session_result()
-                    st.error(str(error))
-
-            session_estimate = st.session_state.get(RESULT_STATE_KEY)
-            if isinstance(session_estimate, DemographicEstimate):
-                render_demographic_estimate(session_estimate)
-            else:
-                st.info("ボタンを押すと、18〜75歳向けの参考値を表示します。")
+    with status_column:
+        if analysis is not None:
+            # Still images are stateless, so the raw value is shown directly (§8.7).
+            render_scores(analysis.outcome, show_smoothed=False)
+            st.divider()
+        _render_image_demographic_panel(
+            rgb,
+            landmark_frame=analysis.landmarks.frame if analysis is not None else None,
+            recorder=recorder,
+        )
 
     if recorder is not None:
         _render_image_export(recorder)

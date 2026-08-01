@@ -2,6 +2,7 @@ import threading
 from datetime import UTC, datetime
 
 import numpy as np
+import pytest
 from numpy.typing import NDArray
 
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
@@ -179,7 +180,44 @@ def test_a_result_completing_after_close_is_discarded() -> None:
 
 
 def test_negative_interval_is_rejected_at_construction() -> None:
-    import pytest
-
     with pytest.raises(ValueError):
         DemographicWorker(estimator=ScriptedEstimator([]), interval_ms=-1)
+
+
+def test_is_due_tracks_the_cadence_without_consuming_it() -> None:
+    clock = ManualClock()
+    estimator = ScriptedEstimator([_estimate(), _estimate()])
+    worker = DemographicWorker(estimator=estimator, interval_ms=1000, clock=clock)
+
+    assert worker.is_due() is True
+    assert worker.is_due() is True  # advisory only: asking never claims the slot
+
+    thread = worker.submit(_crop())
+    assert thread is not None
+    thread.join(timeout=2)
+
+    assert worker.is_due() is False
+    clock.advance(1.1)
+    assert worker.is_due() is True
+
+
+def test_is_due_is_false_while_an_inference_is_running() -> None:
+    estimator = BlockingEstimator(_estimate())
+    worker = DemographicWorker(estimator=estimator, interval_ms=0, clock=ManualClock())
+
+    thread = worker.submit(_crop())
+    assert thread is not None
+    estimator.started.wait(timeout=2)
+
+    assert worker.is_due() is False
+
+    estimator.release.set()
+    thread.join(timeout=2)
+
+
+def test_is_due_is_false_after_close() -> None:
+    worker = DemographicWorker(estimator=ScriptedEstimator([]), clock=ManualClock())
+
+    worker.close()
+
+    assert worker.is_due() is False

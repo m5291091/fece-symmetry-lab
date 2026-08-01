@@ -15,6 +15,26 @@ class DemographicEstimator(Protocol):
     def estimate(self, rgb_image: NDArray[np.uint8]) -> DemographicEstimate: ...
 
 
+class DemographicSampler(Protocol):
+    """Boundary for off-critical-path age/gender sampling (§14.3).
+
+    The realtime pipeline only ever offers a crop and reads whatever the
+    sampler has finished; it never waits for an inference. ``latest`` pairs
+    the estimate with a version token that changes only on a fresh result,
+    which is what distinguishes a new observation from a redisplay.
+    """
+
+    def is_due(self) -> bool: ...
+
+    def submit(self, rgb_crop: NDArray[np.uint8]) -> object: ...
+
+    def latest(self) -> tuple[DemographicEstimate, int] | None: ...
+
+    def reset(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
 class LandmarkProvider(Protocol):
     """Boundary implemented by local landmark runtimes running on video."""
 

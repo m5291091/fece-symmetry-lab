@@ -60,9 +60,11 @@ from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomError, TrackingZoomPolicy
 from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics
 from face_symmetry_lab.ui.model_setup import (
+    configured_demographic_path,
     configured_segmenter_path,
+    demographic_asset,
+    demographic_model_status,
     landmark_asset,
-    resolve_ready_demographic,
     resolve_ready_landmarker,
     segmenter_asset,
     segmenter_status,
@@ -139,13 +141,19 @@ def _build_segmenter() -> MediaPipeSegmenter | None:
 
 
 def _build_demographic_worker() -> DemographicWorker | None:
-    """Age/gender inference is optional (§14.3, FR-024): never blocks the camera."""
-    demographic_model = resolve_ready_demographic()
-    if demographic_model is None:
+    """Age/gender inference is optional (§14.3, FR-024): never blocks the camera.
+
+    Uses the silent status query rather than `resolve_ready_demographic`,
+    which renders its own status block — a builder must not paint UI.
+    """
+    path = configured_demographic_path()
+    if demographic_model_status(path) is not InstallStatus.READY:
         return None
-    onnx_path, model_version = demographic_model
     try:
-        estimator = OpenCvDemographicEstimator(onnx_path=onnx_path, model_version=model_version)
+        estimator = OpenCvDemographicEstimator(
+            onnx_path=path,
+            model_version=demographic_asset().version,
+        )
     except DemographicInferenceError:
         return None
     return DemographicWorker(estimator=estimator)
@@ -238,7 +246,11 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
 
         if snapshot.demographic_estimate is not None:
             st.divider()
-            render_demographic_estimate(snapshot.demographic_estimate)
+            # No chart: this fragment repaints at 5 Hz (§11 NFR-003).
+            render_demographic_estimate(
+                snapshot.demographic_estimate,
+                show_distribution=False,
+            )
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -384,18 +396,19 @@ def render_camera_section() -> None:
             help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
         )
     with demographic_column:
-        demographic_model_ready = resolve_ready_demographic() is not None
+        # Gated on the worker this pipeline actually holds, so the toggle can
+        # never claim the feature is live while no worker exists.
         show_demographics = st.toggle(
             "年齢・性別の参考値を表示",
             value=True,
             key="camera_demographic_enabled",
-            disabled=not demographic_model_ready,
+            disabled=not pipeline.has_demographic_worker,
             help=(
                 "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
                 "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
             ),
         )
-        if not demographic_model_ready:
+        if not pipeline.has_demographic_worker:
             st.caption("年齢・性別モデルが未配置のため使用できません。")
     pipeline.set_midline_enabled(show_midline)
     pipeline.set_demographic_enabled(show_demographics)

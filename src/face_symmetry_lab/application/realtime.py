@@ -18,9 +18,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
-from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.image_input import ImageInputError, extract_face_crop
-from face_symmetry_lab.application.ports import LandmarkProvider, SegmentationProvider
+from face_symmetry_lab.application.ports import (
+    DemographicSampler,
+    LandmarkProvider,
+    SegmentationProvider,
+)
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.domain.export import SessionExport
@@ -67,7 +70,7 @@ class PipelineSnapshot:
     processing_ms: float = 0.0
     #: Present only when an analyzer is attached and the frame was scored.
     analysis: AnalysisOutcome | None = None
-    #: §14.3, FR-022〜024: produced off-cadence by a `DemographicWorker`.
+    #: §14.3, FR-022〜024: produced off-cadence by a `DemographicSampler`.
     demographic_estimate: DemographicEstimate | None = None
 
     @property
@@ -86,7 +89,7 @@ class RealtimeLandmarkPipeline:
         recorder: SessionRecorder | None = None,
         scheduler: FrameScheduler | None = None,
         segmenter: SegmentationProvider | None = None,
-        demographic_worker: DemographicWorker | None = None,
+        demographic_worker: DemographicSampler | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
         geometry_ttl_ms: int = DEFAULT_GEOMETRY_TTL_MS,
@@ -111,8 +114,9 @@ class RealtimeLandmarkPipeline:
         self._segmenter = segmenter
         self._demographic_worker = demographic_worker
         self._demographic_enabled = True
-        self._demographic_version = 0
-        self._demographic_observed_elapsed_ms: int | None = None
+        #: (version, elapsed_ms when that version was first displayed), or
+        #: None before any result. One field, so the two can never disagree.
+        self._demographic_seen: tuple[int, int] | None = None
         self.scheduler = scheduler if scheduler is not None else FrameScheduler()
         self._clock = clock
         self._point_color = point_color
@@ -134,6 +138,9 @@ class RealtimeLandmarkPipeline:
         self._state_lock = threading.Lock()
         self._sample_lock = threading.Lock()
         self._overlay_lock = threading.Lock()
+        # Kept apart from `_overlay_lock` so that lock keeps meaning "display
+        # settings and cached overlay pixels" only.
+        self._demographic_lock = threading.Lock()
         self._cached_geometry: LandmarkFrame | None = None
         self._cached_geometry_at: float | None = None
         self._cached_mask: NDArray[np.float32] | None = None
@@ -379,6 +386,13 @@ class RealtimeLandmarkPipeline:
             self._cached_mask = None
             self._cached_mask_at = None
 
+    def _active_demographic_worker(self) -> DemographicSampler | None:
+        """Return the worker only while the user has age/gender display on."""
+        if self._demographic_worker is None:
+            return None
+        with self._demographic_lock:
+            return self._demographic_worker if self._demographic_enabled else None
+
     def _submit_demographic_sample(
         self,
         rgb_image: NDArray[np.uint8],
@@ -386,13 +400,12 @@ class RealtimeLandmarkPipeline:
     ) -> None:
         """Hand a single-face crop to the off-critical-path worker (§14.3).
 
-        Age/gender inference never blocks this WebRTC callback thread: the
-        worker itself decides, on its own cadence, whether to actually run.
+        Age/gender inference never blocks this WebRTC callback thread. The
+        worker's cadence is far slower than the analysis cadence, so ask it
+        first — otherwise most frames would pay for a crop it discards.
         """
-        with self._overlay_lock:
-            worker = self._demographic_worker
-            enabled = self._demographic_enabled
-        if worker is None or not enabled or not frame.has_single_face:
+        worker = self._active_demographic_worker()
+        if worker is None or not frame.has_single_face or not worker.is_due():
             return
         try:
             crop = extract_face_crop(rgb_image, frame)
@@ -410,25 +423,20 @@ class RealtimeLandmarkPipeline:
         (this exact frame) from a redisplay of the same segment's last
         result, since the worker runs far less often than analysis frames.
         """
-        with self._overlay_lock:
-            worker = self._demographic_worker
-            enabled = self._demographic_enabled
-        if worker is None or not enabled:
+        worker = self._active_demographic_worker()
+        if worker is None:
             return None
         latest = worker.latest()
         if latest is None:
             return None
         estimate, version = latest
-        with self._overlay_lock:
-            if version != self._demographic_version:
-                self._demographic_version = version
-                self._demographic_observed_elapsed_ms = timestamp_ms
-                resolved = estimate
-            else:
-                resolved = estimate.model_copy(update={"is_cached": True})
-            observed_elapsed_ms = self._demographic_observed_elapsed_ms
-        assert observed_elapsed_ms is not None
-        return resolved, observed_elapsed_ms
+        with self._demographic_lock:
+            seen = self._demographic_seen
+            if seen is None or seen[0] != version:
+                self._demographic_seen = (version, timestamp_ms)
+                return estimate, timestamp_ms
+            observed_elapsed_ms = seen[1]
+        return estimate.model_copy(update={"is_cached": True}), observed_elapsed_ms
 
     def _record_error(
         self,
@@ -490,9 +498,8 @@ class RealtimeLandmarkPipeline:
         """New comparison segment: drop the cached estimate (§8.8, FR-023)."""
         if self._demographic_worker is not None:
             self._demographic_worker.reset()
-        with self._overlay_lock:
-            self._demographic_version = 0
-            self._demographic_observed_elapsed_ms = None
+        with self._demographic_lock:
+            self._demographic_seen = None
 
     def apply_advanced_settings(
         self,
@@ -537,9 +544,19 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             self._background_mode = mode
 
+    @property
+    def has_demographic_worker(self) -> bool:
+        """Whether age/gender inference is available for this session.
+
+        Fixed when the pipeline is built, so the UI can gate its toggle on
+        the worker that actually exists rather than re-resolving the model
+        and disagreeing with it.
+        """
+        return self._demographic_worker is not None
+
     def set_demographic_enabled(self, enabled: bool) -> None:
         """Toggle age/gender inference (§15.1, default ON) thread-safely."""
-        with self._overlay_lock:
+        with self._demographic_lock:
             self._demographic_enabled = bool(enabled)
 
     def export_bundle(self) -> SessionExport | None:
