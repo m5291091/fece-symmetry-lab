@@ -6,7 +6,7 @@
 | version | source `open-model-zoo/2023.0/FP16` / runtime `FP16-onnx-v1` |
 | upstream | Open Model Zoo / Intel |
 | asset release | Open Model Zoo 2023.0 / FP16 |
-| status | 公式IR・派生ONNXのmanifest登録、変換再現test、OpenCV smoke済み。公式IR parity、slice評価、3 OS smokeは未完（OD-07 open） |
+| status | 公式IR・派生ONNXのmanifest登録、変換再現test、OpenCV smoke済み。公式IR固定入力parityは実測済みだが目標gate未達、slice評価、3 OS smokeは未完（OD-07 open） |
 | runtime | `opencv-contrib-python` DNN / CPU |
 | format | source: OpenVINO IR XML + BIN / runtime: ONNX opset 13 |
 | license | Apache-2.0。条件に従う商用利用・改変・再配布が可能 |
@@ -53,7 +53,25 @@
 
 固定URL、元IRと派生ONNXのsize・個別SHA-256、変換recipe、license inventoryのmanifest登録は完了した。モデル取得・変換は引き続き明示操作だけに限定する。macOS Apple Siliconでは変換再現testとOpenCV実モデルsmokeが成功した。一般リリースには次が残る。
 
-1. 固定評価で参照runtimeとの年齢差0.1年以内、性別確率差`1e-4`以内。
+1. 固定評価で参照runtimeとの年齢差0.1年以内、性別確率差`1e-4`以内。 **未達（下記実測を参照、OD-07 open）。**
 2. 年齢・性別・肌色・撮影条件slice評価とlimitations。
 3. Windows / Ubuntuを含む3 OS runtime確認。
 4. 非公開の内部validation datasetについて、学習データのlicense・同意根拠・保持方針を確認できない制約の法務判断。
+
+### OpenVINO参照runtime固定入力parity（OD-07実測）
+
+`scripts/verify_openvino_parity.py`は、manifest固定済みの公式OpenVINO IR（`openvino.Core`、CPU）と、アプリが実行する派生ONNX（`cv2.dnn.readNetFromONNX`、`opencv-contrib-python==5.0.0.93`）へ同一の固定合成tensor（seed `20260801`、飽和端・一様乱数・正規乱数・肌色勾配の14件、`1×3×62×62` BGR float32）を入力し、`fc3_a`（×100年）と`prob`の差を比較する。`openvino`はアプリのruntime lockへ加えないため、この評価は`uv run scripts/verify_openvino_parity.py`が作る独立環境（`openvino==2026.2.1`、`numpy==2.4.6`）でだけ実行し、`pyproject.toml` / `uv.lock`は変更しない。
+
+macOS Apple Silicon、`openvino==2026.2.1`での実測（2026-08-01、manifest固定済みasset、n=14）:
+
+| 指標 | 実測値（最大） | 目標gate | 判定 |
+|---|---:|---:|---|
+| 年齢差 | 0.205年 | 0.1年以内 | 不合格 |
+| 性別確率差 | 5.88×10⁻³ | 1×10⁻⁴以内 | 不合格 |
+
+全14件中、年齢差は4件、性別確率差は14件全てが目標gateを超過した。差は入力ごとに変動し、単一の異常値ではなく変換全体に分布する（詳細は`tests/model/test_openvino_parity.py`実行時の出力を参照）。目標値は現行のIR→ONNX変換では未達であり、次のいずれかをOD-07の完了条件として承認する必要がある。
+
+- 変換精度を追加調査・改善し、目標値0.1年 / `1e-4`を達成する。
+- 実測分布に基づく新しいgate値（例: 年齢0.25年以内、性別確率1×10⁻²以内）へ本カードとOD-07を更新し、根拠として本測定を記録する。
+
+3 OS runtime確認とslice評価が残る限り、いずれの場合もOD-07とM0は未完のままとする。

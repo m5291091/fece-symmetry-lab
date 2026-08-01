@@ -1193,7 +1193,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
 | OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
-| OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済み公式XML/BINと派生ONNXについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み |
+| OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済み公式XML/BINと派生ONNXについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み。固定入力parityは`scripts/verify_openvino_parity.py`で実測済み（年齢差最大0.205年、性別確率差最大5.88×10⁻³）だが目標gate（0.1年 / `1e-4`）未達のため、gate値の承認または変換改善が完了条件に残る（model card参照） |
 | OD-08 | 肌表面参考指標のcalibration set | M1 / M5 | 照明、影、化粧、髭、眼鏡、camera、再撮影差と補正gainを評価し、係数と利用範囲を指標カードへ記録 |
 
 ## 26. トレーサビリティ

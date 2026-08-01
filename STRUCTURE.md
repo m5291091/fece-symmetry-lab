@@ -30,6 +30,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Landmark model card | `docs/model-cards/mediapipe-face-landmarker-v1.md` |
 | Model store (hash + atomic install) | `src/face_symmetry_lab/adapters/io/model_store.py` |
 | Model preparation CLI | `scripts/bootstrap_models.py` |
+| OpenVINO reference parity (OD-07, dev-only) | `scripts/verify_openvino_parity.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
 | Age / gender adapter | `src/face_symmetry_lab/adapters/inference/opencv_demographic_estimator.py` |
@@ -66,6 +67,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
+| OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, NFR-009 |
 | Camera numeric overlay | `ui/camera_overlay.py` | `tests/ui/test_camera_overlay.py` | FR-013, FR-014 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
@@ -80,7 +82,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `32b9dc9c5c9040c22954b7422c0f36fd4d73c534d51a260044970125ebcdb4e2`_
+_File-list SHA-256: `1eb99864bc708ba3e4e39aba6240d15b9d10ef1a29c699e96cd34b049268a110`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -110,6 +112,7 @@ face-symmetry-lab/
   - `derive_landmark_map.py`
   - `generate_structure.py`
   - `verify.py`
+  - `verify_openvino_parity.py`
 - `src/`
   - `face_symmetry_lab/`
     - `adapters/`
@@ -160,6 +163,7 @@ face-symmetry-lab/
   - `model/`
     - `conftest.py`
     - `test_demographic_conversion.py`
+    - `test_openvino_parity.py`
     - `test_real_demographic.py`
     - `test_real_landmarker.py`
   - `repository/`

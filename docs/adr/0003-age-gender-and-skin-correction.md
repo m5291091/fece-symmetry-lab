@@ -26,5 +26,5 @@ cameraの自動露出・white balance・HDR・ISPは端末とbrowserごとに異
 
 - 既存schemaの8年齢確率field削除は破壊的変更なので、schemaを2.0.0へ上げる。
 - 公開モデルの年齢平均誤差6.99年、性別accuracy 95.80%は内部validation datasetの値であり、本アプリで別途fixed/slice評価が必要になる。
-- 公式IRからONNXへの逆変換はOpenVINO公式変換APIの対象外なので、この固定graphで用いる演算だけを明示変換する。上流graph変更時は暗黙追従せず、変換contractとparityを再承認する。
+- 公式IRからONNXへの逆変換はOpenVINO公式変換APIの対象外なので、この固定graphで用いる演算だけを明示変換する。上流graph変更時は暗黙追従せず、変換contractとparityを再承認する。`scripts/verify_openvino_parity.py`（`openvino`を独立環境へ限定するPEP 723 dev script）による固定入力parityの実測では、目標gate（年齢差0.1年 / 性別確率差`1e-4`）を現行変換が満たさないことが判明した（詳細はmodel card）。OD-07はgate値の承認または変換精度改善のいずれかが決着するまで未完とする。
 - camera補正は撮影条件差を軽減できるが、物理的な色校正やcamera固有ISPの逆変換ではない。OD-08完了まで肌表面参考値は相対比較専用かつ未校正とする。

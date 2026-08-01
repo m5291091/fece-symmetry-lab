@@ -30,6 +30,7 @@
 | `tests/model/test_real_landmarker.py` | 実 `.task` asset の load・検出・スコア smoke（未配置時は skip） | FR-002, FR-009, FR-011, §21.1 |
 | `tests/model/test_demographic_conversion.py` | 検証済み公式IRからmanifest固定ONNXを決定的に再生成（asset／変換tool未配置時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §10.6, §21.1 |
 | `tests/model/test_real_demographic.py` | manifest検証済み派生ONNXのOpenCV DNN load・出力shape smoke（未配置／runtime不備時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §21.1 |
+| `tests/model/test_openvino_parity.py` | OpenVINO参照runtimeと派生ONNXの固定入力parity（OD-07数値ゲート、openvino未導入時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, OD-07, §21.1 |
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
 | `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、sample 間の直近数値表示、frame callback | FR-005, FR-013, NFR-006, NFR-009, AC-PRIV-02 |
 | `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示 | FR-013, FR-014, AC-A11Y-01 |
