@@ -30,6 +30,7 @@ def metric_overlay_lines(
     """Format the same score and pose data exposed by the text panel (§5.4)."""
     symmetry = outcome.symmetry
     overall = outcome.overall_smooth
+    raw = outcome.overall_raw
     if overall is None and symmetry is not None:
         overall = symmetry.overall
     parts = {
@@ -38,9 +39,14 @@ def metric_overlay_lines(
     }
     pose = outcome.pose
     skin_quality = outcome.skin_quality
+    #: Surfaces the EMA gap (§8.7) live so a jump between a photo and the
+    #: camera view can be told apart from smoothing lag instead of guessed at.
+    overall_line = f"OVERALL {_number(overall)}"
+    if raw is not None:
+        overall_line += f" · RAW {_number(raw)}"
     return (
         f"{'LIVE SAMPLE' if current_sample else 'LAST SAMPLE'} | {outcome.state.status.value}",
-        f"OVERALL {_number(overall)}",
+        overall_line,
         " ".join(
             (
                 f"C {_number(parts['contour'])}",

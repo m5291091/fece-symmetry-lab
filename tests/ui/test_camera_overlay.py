@@ -47,10 +47,19 @@ def test_overlay_lines_put_scores_and_pose_in_the_camera_view() -> None:
     lines = metric_overlay_lines(_outcome())
 
     assert lines[0] == "LIVE SAMPLE | OK"
-    assert "OVERALL 81.2" in lines
+    assert "OVERALL 81.2 · RAW 81.5" in lines
     assert any("C 80.0" in line for line in lines)
     assert any("YAW +1.2" in line for line in lines)
     assert any("SKIN REF 74.0" in line for line in lines)
+
+
+def test_overlay_exposes_the_raw_pre_smoothing_score_next_to_the_smoothed_one() -> None:
+    """The live camera panel must show the EMA gap, not only the smoothed value."""
+    outcome = _outcome()
+    lines = metric_overlay_lines(outcome)
+
+    assert outcome.overall_smooth != outcome.overall_raw
+    assert any(line.startswith("OVERALL") and "RAW" in line for line in lines)
 
 
 def test_overlay_labels_reused_numbers_as_the_last_sample() -> None:

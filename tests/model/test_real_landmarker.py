@@ -235,6 +235,61 @@ def test_a_drawn_symmetric_face_scores_higher_than_a_skewed_one(
         assert distorted.outcome.overall_raw <= balanced.outcome.overall_raw
 
 
+def test_image_and_video_running_modes_score_an_identical_frame_the_same(
+    synthetic_face_rgb: NDArray[np.uint8],
+) -> None:
+    """§14.3: IMAGE and VIDEO use separate detector instances.
+
+    A user-reported gap between the still-image score and the live camera
+    score raised the question of whether the two MediaPipe running modes
+    themselves diverge. Feeding VIDEO mode the same unchanging frame
+    repeatedly (so its internal tracker settles) and comparing against IMAGE
+    mode isolates that one variable from camera noise, motion, and capture
+    conditions, which still-image uploads and live video otherwise never
+    share.
+    """
+    from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+    from face_symmetry_lab.application.analyzer import FrameAnalyzer
+    from face_symmetry_lab.application.still_image import (
+        STILL_IMAGE_THRESHOLDS,
+        analyze_still_image,
+    )
+
+    config = load_metric_config()
+
+    image_landmarker = MediaPipeImageLandmarker(
+        model_path=_installed_model(), model_version=_asset().version
+    )
+    try:
+        still = analyze_still_image(image_landmarker, synthetic_face_rgb, config=config)
+    finally:
+        image_landmarker.close()
+
+    video_landmarker = MediaPipeFaceLandmarker(
+        model_path=_installed_model(), model_version=_asset().version
+    )
+    try:
+        analyzer = FrameAnalyzer(config=config, thresholds=STILL_IMAGE_THRESHOLDS)
+        settled = None
+        for index in range(15):
+            frame = video_landmarker.detect_video(
+                synthetic_face_rgb, frame_id=index, timestamp_ms=index * 33
+            )
+            settled = analyzer.analyze(frame, at=index * 0.033)
+    finally:
+        video_landmarker.close()
+
+    assert still.outcome.state.status is Status.OK, still.outcome.state.reason_codes
+    assert settled is not None and settled.state.status is Status.OK, (
+        settled.state.reason_codes if settled is not None else None
+    )
+    assert still.outcome.overall_raw is not None
+    assert settled.overall_raw is not None
+    # Measured 0.0 on this fixture; a small tolerance absorbs future
+    # non-determinism in MediaPipe's tracker without hiding a real regression.
+    assert abs(still.outcome.overall_raw - settled.overall_raw) <= 1.0
+
+
 def test_the_head_pose_of_the_frontal_synthetic_face_is_near_zero(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
