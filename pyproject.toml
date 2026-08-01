@@ -1,24 +1,22 @@
 [project]
 name = "face-symmetry-lab"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local-first face symmetry and reference age-band research app"
 readme = "README.md"
 authors = [
     { name = "Kenjo Yamamoto", email = "applem3ky@gmail.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
-    "insightface>=1.0.1",
-    "mediapipe>=0.10.35",
-    "numpy>=2.5.1",
-    "onnxruntime>=1.27.0",
-    "opencv-contrib-python>=5.0.0.93",
-    "pandas>=3.0.3",
-    "pillow>=12.3.0",
-    "pydantic>=2.13.4",
-    "pytest>=9.1.1",
-    "streamlit>=1.59.1",
-    "streamlit-webrtc>=0.75.0",
+    "mediapipe>=0.10.35,<0.11",
+    "numpy>=2.5.1,<3",
+    "onnxruntime>=1.27.0,<2",
+    "opencv-contrib-python>=5.0.0.93,<5.1",
+    "pandas>=3.0.3,<4",
+    "pillow>=12.3.0,<13",
+    "pydantic>=2.13.4,<3",
+    "streamlit>=1.59.1,<2",
+    "streamlit-webrtc>=0.75.0,<0.76",
 ]
 
 [project.scripts]
@@ -30,8 +28,33 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "mypy>=2.2.0",
-    "pytest>=9.1.1",
-    "pytest-cov>=7.1.0",
-    "ruff>=0.15.20",
+    "mypy>=2.2.0,<3",
+    "pytest>=9.1.1,<10",
+    "pytest-cov>=7.1.0,<8",
+    "ruff>=0.15.20,<1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "RUF"]
+allowed-confusables = ["×", "（", "）", "："]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "mediapipe.*", "onnxruntime.*", "streamlit_webrtc.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "model: fixed real-model test",
+    "e2e: browser or media-track integration",
+    "performance: reference-device benchmark",
 ]

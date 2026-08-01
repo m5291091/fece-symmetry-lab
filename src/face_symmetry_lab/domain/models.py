@@ -1,40 +1,115 @@
-from enum import Enum
-from typing import Optional
-from pydantic import BaseModel
+from datetime import datetime
+from enum import StrEnum
 
-# C++の enum Status { OK, HOLD, ERROR }; に相当
-# Enum: 決まった選択肢(定数)を定義可能
-# ここで言うOK,HOLD,ERRORを指す
-# Enumを継承
-# OK,HOLD,ERRORは、それぞれオブジェクト、関数ではない。
-class Status(Enum):
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+
+class Status(StrEnum):
     OK = "OK"
     HOLD = "HOLD"
+    NO_FACE = "NO_FACE"
+    MULTI_FACE = "MULTI_FACE"
     ERROR = "ERROR"
 
-class ReasonCode(Enum):
+
+class ReasonCode(StrEnum):
     NO_FACE = "NO_FACE"
     MULTIPLE_FACES = "MULTIPLE_FACES"
     POSTURE = "POSTURE"
     DISTANCE = "DISTANCE"
     LOW_QUALITY = "LOW_QUALITY"
-    
-# それぞれの変数の型を定義
-# BaseModelの継承を行っているので、初期化に必要なdef __init__()を書く必要がない
+
+
+class AgeBand(StrEnum):
+    """Age-group labels used by the seminar MobileNetV2 model."""
+
+    AGE_0_9 = "0-9"
+    AGE_10_19 = "10-19"
+    AGE_20_29 = "20-29"
+    AGE_30_39 = "30-39"
+    AGE_40_49 = "40-49"
+    AGE_50_59 = "50-59"
+    AGE_60_69 = "60-69"
+    AGE_70_PLUS = "70+"
+
+
+AGE_BANDS: tuple[AgeBand, ...] = tuple(AgeBand)
+
+
 class AnalysisState(BaseModel):
-    status: Status # statusという変数がStatus型を持っている
-    # Optional[ReasonCode]: ReasonCodeの中身もしくはNoneが入る
-    # =None: ディフォルトでNoneが入る
-    # reason: 上記の型を持つ変数
-    reason: Optional[ReasonCode] = None
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Status
+    reason: ReasonCode | None = None
+
 
 class SymmetryScore(BaseModel):
-    contour: float  # 輪郭のスコア
-    eyes: float     # 目のスコア
-    nose: float     # 鼻のスコア
-    mouth: float    # 口のスコア
-    overall: float  # 全体のスコア
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    contour: float = Field(ge=0, le=100)
+    eyes: float = Field(ge=0, le=100)
+    nose: float = Field(ge=0, le=100)
+    mouth: float = Field(ge=0, le=100)
+    overall: float = Field(ge=0, le=100)
+
+
+class AgeEstimate(BaseModel):
+    """A model output, expressed as a reference range rather than a claimed age."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    band: AgeBand
+    confidence: float = Field(ge=0, le=1)
+    probabilities: tuple[float, ...] = Field(
+        min_length=len(AGE_BANDS),
+        max_length=len(AGE_BANDS),
+    )
+    model_version: str = Field(min_length=1)
+    model_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    observed_at: datetime
+    is_cached: bool = False
+
+    @field_validator("probabilities")
+    @classmethod
+    def validate_probabilities(
+        cls,
+        probabilities: tuple[float, ...],
+    ) -> tuple[float, ...]:
+        if any(not 0 <= probability <= 1 for probability in probabilities):
+            raise ValueError("probabilities must be between 0 and 1")
+        if abs(sum(probabilities) - 1.0) > 1e-6:
+            raise ValueError("probabilities must sum to 1")
+        return probabilities
+
+    @field_validator("observed_at")
+    @classmethod
+    def validate_observed_at(cls, observed_at: datetime) -> datetime:
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("observed_at must be timezone-aware")
+        return observed_at
+
+    @model_validator(mode="after")
+    def confidence_matches_distribution(self) -> "AgeEstimate":
+        winning_index = max(
+            range(len(self.probabilities)),
+            key=self.probabilities.__getitem__,
+        )
+        if abs(self.confidence - self.probabilities[winning_index]) > 1e-6:
+            raise ValueError("confidence must equal the largest probability")
+        if self.band is not AGE_BANDS[winning_index]:
+            raise ValueError("band must match the largest probability")
+        return self
+
 
 class AnalysisResult(BaseModel):
-    state: AnalysisState # 分析状態
-    score: Optional[SymmetryScore] = None # スコア
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: AnalysisState
+    score: SymmetryScore | None = None
+    age_estimate: AgeEstimate | None = None

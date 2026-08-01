@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local model assets and generated investigation artifacts
+models/*
+!models/.gitkeep
+tmp/
+
+# Tool caches and reports
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
