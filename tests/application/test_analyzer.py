@@ -220,6 +220,19 @@ def test_the_outcome_reports_pose_and_face_area() -> None:
     assert 0.0 < outcome.face_area_ratio < 1.0
 
 
+def test_update_swaps_thresholds_and_resets_the_gate_and_smoothing() -> None:
+    """§15.2: applying new Advanced settings must not keep stale EMA history."""
+    analyzer = _analyzer()
+    _drive_to_ok(analyzer)  # gate is OK and EMA has a value
+
+    analyzer.update(thresholds=QualityThresholds(valid_frames_to_ok=1), tau_seconds=0.2)
+    outcome = analyzer.analyze(_frame(frame_id=99), at=100.0)
+
+    assert analyzer.thresholds.valid_frames_to_ok == 1
+    assert outcome.state.status is Status.OK  # new threshold applies immediately
+    assert outcome.overall_smooth == outcome.overall_raw  # smoothing history was reset
+
+
 def test_custom_thresholds_change_how_quickly_the_gate_opens() -> None:
     analyzer = _analyzer(thresholds=QualityThresholds(valid_frames_to_ok=1))
 

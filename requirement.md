@@ -303,6 +303,8 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-024 | P0 | 年齢・性別の失敗分離 | モデルなし・不正出力・推論失敗でも左右差分析を継続し、年齢・性別区画だけに回復手順を示す |
 | FR-025 | P1 | 補正後の肌表面参考値 | 顔cropへ端末内のGray-worldホワイトバランスとrobust明度正規化を適用し、頬領域の色調均一性と局所テクスチャを独立した参考値として算出する。補正係数・指標版・未校正状態を記録し、肌色、疾患、健康、美的品質を推定せず、幾何の全体スコアへ混合しない |
 | FR-026 | P1 | 追跡ズーム | リアルタイムのVIDEOモードで、直前フレームの単一顔bboxを追跡し周辺を切り出して拡大した上でlandmark検出へ渡し、結果を元フレーム座標へ写像する。初回検出・顔見失い時は全体フレームへ復帰し、既定間隔ごとに全体フレームを再検査して2顔以上の出現を見逃さない |
+| FR-027 | P1 | 背景の黒/白置換（表示専用） | `selfie_segmenter`による前景confidence maskを使い、表示用frameの背景だけを黒または白へ置換する。既定OFFのON/OFF切替を持ち、左右差・年齢性別・肌表面参考値のいずれの入力にも使わない。合成失敗時は元映像へfallbackし、分析を止めない |
+| FR-028 | P1 | 映像の明るさ調整（表示・検出共通） | 0.25〜3.0倍のgainを映像へ乗算し、landmark検出前とdisplay出力の双方に一貫して適用する。既定gain 1.0（無調整）とし、範囲外の値は拒否する |
 
 ---
 
@@ -647,6 +649,7 @@ flowchart LR
 - **AC-AGE-02**: 元XML/BINの一方なし・hash不一致、派生ONNXなし・hash不一致、不正shape、18〜75外、NaN/Inf、推論例外の各場合に年齢・性別を表示せず、左右差分析は継続する。
 - **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
 - **AC-ZOOM-01**: リアルタイムの追跡ズームは、単一顔のbboxを追跡して検出入力を拡大しつつ、既定`zoom_recheck_interval_ms`ごとに全体フレームを再検査する。再検査で2顔以上を検出した場合は追跡状態を破棄して`MULTI_FACE`を報告し、顔を見失った場合は次フレームで全体フレーム検索へ復帰する。
+- **AC-DISPLAY-01**: 背景の黒/白置換はON/OFF切替可能で既定OFF、失敗時は元映像へfallbackし左右差・年齢性別・肌表面参考値の分析を止めない。明るさgainは検出入力とdisplay出力の両方へ一貫して適用され、範囲外の値は保存前に拒否される。
 
 ### 12.2 プライバシー・セキュリティ
 
@@ -683,6 +686,7 @@ flowchart LR
 | UI | Streamlit | native layout、theme、status、fragment を優先 |
 | Camera | streamlit-webrtc | 映像のみ、loopback、外部 ICE なし |
 | Landmark | MediaPipe Tasks Face Landmarker | 478 点、CPU、モデル manifest 固定 |
+| 背景segmentation | MediaPipe Tasks Image Segmenter（selfie_segmenter） | 表示専用、CPU、モデル manifest 固定、スコア計算に不使用 |
 | Age / gender | OpenCV DNN + Open Model Zoo由来ONNX | 18〜75歳、BGR 62×62、CPU、公式XML/BINと派生ONNXをmanifest固定 |
 | Image | OpenCV contrib + Pillow | `cv2` provider は 1 distribution のみ、OpenCV 5 は検証まで除外 |
 | Models / config | Pydantic v2 + pydantic-settings | 境界の検証と immutable revision |
@@ -751,6 +755,7 @@ FastAPI 化では domain / application と adapter の一部を再利用でき�
 | `application.session` | 状態遷移、segment、履歴、reset | `st.session_state` 直接操作 |
 | `ports` | 外部境界の `Protocol` / DTO | 具象ライブラリ依存 |
 | `adapters.mediapipe` | RGB→MediaPipe、姿勢、landmark DTO | スコア計算、UI 文言 |
+| `adapters.mediapipe_segmenter` | RGB→前景confidence mask | スコア計算、UI 文言、maskの保存 |
 | `adapters.opencv_demographic` | face crop→BGR 62×62→連続年齢・性別2確率 | 顔埋め込み、モデル自動取得、断定表現 |
 | `adapters.model_store` | manifest、取得、hash、atomic install | 任意 URL、黙示更新 |
 | `adapters.export` | JSON / CSV schema | 画像・landmark の出力 |
@@ -808,6 +813,14 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 - 初回検出時、または直前フレームで顔を見失った（`NO_FACE` / `MULTI_FACE`）場合は、次フレームを全体フレームで検索する。
 - 追跡ズーム中でも、`zoom_recheck_interval_ms`ごとに全体フレームでの検査を強制する。切り出し窓の外に第2の顔が入ってきても見逃さないため（FR-008は最大顔を黙って採点することを禁止する）。全体再検査で2顔以上が見つかれば追跡状態を破棄し`MULTI_FACE`を報告する。
 
+#### 14.3b 明るさ調整と背景置換（FR-027, FR-028, AC-DISPLAY-01）
+
+いずれも表示専用または検出補助専用であり、左右差・年齢性別推定・肌表面参考値のスコア計算入力を変えない。
+
+- 明るさ調整は`domain.frame_adjustments.apply_brightness_gain`で実装する純粋関数で、landmark検出directlyへ渡す前のframeとdisplay出力の両方に同じgainを適用する。既定1.0（無調整）。暗い部屋での検出補助を目的とするため、検出入力にも適用する点が背景置換と異なる。
+- 背景置換は`selfie_segmenter`（`adapters.inference.mediapipe_segmenter.MediaPipeSegmenter`）による前景confidence maskを`domain.frame_adjustments.composite_background`で合成し、**display出力にだけ**適用する。landmark検出、品質ゲート、対称性指標、年齢・性別推定、肌表面参考値のいずれの入力にもならない。
+- 背景置換はON/OFF切替可能で既定OFF。モデル未配置・sha256不一致・推論失敗のいずれでも、その旨をUIへ表示しつつ元映像へfallbackし、左右差分析は継続する（NFR-017と同じ「1フレーム失敗でstreamを止めない」方針の適用）。
+
 ### 14.4 エラーと回復
 
 - adapter 例外は `AnalysisFailure(code, recoverable, event_id)` へ変換し、domain へ例外型を漏らさない。
@@ -831,28 +844,31 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 
 ### 15.2 Advanced 設定
 
-| 設定 | 初期候補 | 検証 |
-|---|---:|---|
-| `yaw_inner_deg` / `yaw_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` |
-| `pitch_inner_deg` / `pitch_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` |
-| `roll_inner_deg` / `roll_outer_deg` | 25 / 28 | `0 < inner < outer ≤ 45` |
-| `valid_frames_to_ok` | 5 | 1〜30 |
-| `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` |
-| `ema_tau_seconds` | 0.4 | 0.05〜5.0 |
-| `history_capacity` | 3,000 | 100〜20,000 |
-| `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 |
-| `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない |
-| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 |
-| `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 |
-| `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026、現時点は内部既定のみ、UI未公開） |
-| `zoom_min_window` | 0.18 | 0 超〜1.0（同上） |
-| `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） |
-| `zoom_target_px` | 480 | 正の整数（同上） |
-| `zoom_max_scale` | 4.0 | 1.0 以上（同上） |
+| 設定 | 初期候補 | 検証 | UI |
+|---|---:|---|---|
+| `yaw_inner_deg` / `yaw_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` | Advanced設定（既定非表示） |
+| `pitch_inner_deg` / `pitch_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` | Advanced設定 |
+| `roll_inner_deg` / `roll_outer_deg` | 25 / 28 | `0 < inner < outer ≤ 45` | Advanced設定 |
+| `valid_frames_to_ok` | 5 | 1〜30 | Advanced設定 |
+| `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` | Advanced設定 |
+| `ema_tau_seconds` | 0.4 | 0.05〜5.0 | Advanced設定 |
+| `history_capacity` | 3,000 | 100〜20,000 | 未公開 |
+| `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 | 未公開 |
+| `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない | 未公開 |
+| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 | 未公開（frozen bundle、要「比較不能」確認UI） |
+| `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 | 未公開（同上） |
+| `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026） | Advanced設定 |
+| `zoom_min_window` | 0.18 | 0 超〜1.0（同上） | Advanced設定 |
+| `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） | Advanced設定 |
+| `zoom_target_px` | 480 | 正の整数（同上） | Advanced設定 |
+| `zoom_max_scale` | 4.0 | 1.0 以上（同上） | Advanced設定 |
+| `brightness_gain` | 1.0 | 0.25〜3.0（FR-028） | 基本UI（常時表示のスライダー） |
+| `background_mode` | OFF | OFF / BLACK / WHITE（FR-027） | 基本UI（常時表示のラジオボタン、モデル未配置時は無効） |
 
-- scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。
-- 基本ユーザーには検出信頼度、角度閾値、係数、model path を常時表示しない。
+- scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。`ui/camera.py`の`_render_advanced_settings`は「設定を適用」ボタン経由で`RealtimeLandmarkPipeline.apply_advanced_settings`を呼び、`FrameAnalyzer.update`・`TrackingZoomLandmarker.update_policy`・`SessionRecorder.reset(thresholds=..., tau_seconds=...)`をまとめて実行する。
+- 基本ユーザーには検出信頼度、角度閾値、係数、model path を常時表示しない（`st.expander`で既定非表示）。`brightness_gain`/`background_mode`は幾何・スコア計算に影響しない表示専用設定のため、Advanced設定の外（常時表示）に置く。
 - 設定モデルは immutable。UI 入力から新しい instance を生成し、成功後に atomic swap する。
+- `part_weights`・`sensitivity`・`history_capacity`・`age_interval_ms`・`analysis_interval_ms`のUI編集は未実装（既定値固定）。frozen metric bundleとの整合、「比較不能になる」確認ダイアログ、workerの再構成が必要なため別途対応する。
 
 ## 16. リポジトリ構成
 
@@ -1206,7 +1222,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 |---|---|---|---|
 | OD-01 | 部位別感度係数と calibration set | M0 | 分布、感度、再撮影差を評価し `symmetry-2d-v1.json` を凍結 |
 | OD-02 | R1 / R2 の実機型番 | M0 | 調達可能な端末を固定し benchmark 手順へ記録 |
-| OD-03 | MediaPipe asset の version / license / hash | M0 | manifest、NOTICE、取得元を review |
+| OD-03 | MediaPipe asset の version / license / hash | M0 | manifest、NOTICE、取得元を review（`face_landmarker`、`selfie_segmenter`の両方が対象） |
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
 | OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認。`face_area_min`はPC webcamでの過剰なTOO_FAR誤拒否を受け0.12→0.05→0.02へ段階的に暫定緩和済み（§8.2）だが、実機評価による最終確定は未完。小さい顔面積での landmark 精度低下（ノイズ増）とのtrade-offも未評価 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
@@ -1223,6 +1239,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | 指標を再現できる | FR-011, FR-020, FR-025, §8, §9 | AC-SCORE-01〜04, AC-APPEARANCE-01, AC-EXPORT-01 |
 | 年齢・性別モデルをアプリへ接続 | FR-022〜024, §10.8, NFR-021 | AC-AGE-01, AC-AGE-02 |
 | リアルタイムで安定 | FR-012〜016, FR-026, NFR-001〜006 | AC-PERF-01, AC-SOAK-01, AC-ZOOM-01 |
+| 表示調整はスコアへ混入しない | FR-027, FR-028 | AC-DISPLAY-01 |
 | 安全な入力 | FR-006, FR-007, NFR-011 | AC-INPUT-01 |
 | 中立でアクセス可能 | UX §5, §10.7, NFR-016 | AC-A11Y-01, copy review |
 | supply chain を固定 | FR-002, FR-020, §10.6 | AC-MODEL-01, AC-MODEL-02 |

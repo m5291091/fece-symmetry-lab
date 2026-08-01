@@ -27,10 +27,12 @@ from face_symmetry_lab.adapters.io.model_store import (
 
 LANDMARKER_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_LANDMARKER_PATH"
 DEMOGRAPHIC_ONNX_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH"
+SEGMENTER_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_SEGMENTER_PATH"
 LANDMARK_ASSET_NAME = "face_landmarker"
 DEMOGRAPHIC_XML_ASSET_NAME = "demographic_age_gender_xml"
 DEMOGRAPHIC_BIN_ASSET_NAME = "demographic_age_gender_bin"
 DEMOGRAPHIC_ONNX_ASSET_NAME = "demographic_age_gender_onnx"
+SEGMENTER_ASSET_NAME = "selfie_segmenter"
 BOOTSTRAP_COMMAND = "uv run python scripts/bootstrap_models.py --accept-manifest"
 CONVERT_DEMOGRAPHIC_COMMAND = "uv run --script scripts/convert_demographic_model.py"
 
@@ -38,6 +40,11 @@ CONVERT_DEMOGRAPHIC_COMMAND = "uv run --script scripts/convert_demographic_model
 def landmark_asset() -> ModelAsset:
     """Return the pinned Face Landmarker entry from the manifest."""
     return find_asset(load_manifest(), LANDMARK_ASSET_NAME)
+
+
+def segmenter_asset() -> ModelAsset:
+    """Return the pinned Image Segmenter entry from the manifest."""
+    return find_asset(load_manifest(), SEGMENTER_ASSET_NAME)
 
 
 def demographic_assets() -> tuple[ModelAsset, ModelAsset]:
@@ -78,6 +85,14 @@ def configured_demographic_path() -> Path:
     return Path(configured).expanduser() if configured else DEFAULT_MODELS_DIR / asset.filename
 
 
+def configured_segmenter_path() -> Path:
+    """Resolve the local asset path. The env var wins over the models directory."""
+    configured = os.environ.get(SEGMENTER_PATH_ENV_VAR)
+    if configured:
+        return Path(configured).expanduser()
+    return DEFAULT_MODELS_DIR / segmenter_asset().filename
+
+
 def landmarker_status(path: Path) -> InstallStatus:
     """Compare the file at ``path`` against the pinned sha256."""
     return asset_status(path, landmark_asset())
@@ -86,6 +101,11 @@ def landmarker_status(path: Path) -> InstallStatus:
 def demographic_model_status(onnx_path: Path) -> InstallStatus:
     """Require the derived ONNX to match the pinned manifest before inference."""
     return asset_status(onnx_path, demographic_asset())
+
+
+def segmenter_status(path: Path) -> InstallStatus:
+    """Compare the file at ``path`` against the pinned sha256."""
+    return asset_status(path, segmenter_asset())
 
 
 def _render_missing(path: Path, asset: ModelAsset) -> None:
@@ -117,6 +137,45 @@ def resolve_ready_landmarker() -> Path | None:
     if status is InstallStatus.MISMATCH:
         st.error(
             "配置済みモデルの sha256 が manifest と一致しません。"
+            "改変または破損の可能性があるため読み込みません。"
+        )
+        st.code(BOOTSTRAP_COMMAND, language="bash")
+        return None
+
+    st.caption(f"model: {asset.version} · sha256 {asset.sha256[:12]}… · 検証済み")
+    return path
+
+
+def resolve_ready_segmenter() -> Path | None:
+    """Render the model status and return the path only when it is verified.
+
+    Unlike the landmark/demographic models, this asset is optional: the
+    background feature stays OFF and unusable until it is verified, but
+    nothing else in the app depends on it (§14.3b).
+    """
+    try:
+        asset = segmenter_asset()
+    except ModelStoreError as error:
+        st.error(str(error))
+        return None
+
+    path = configured_segmenter_path()
+    status = segmenter_status(path)
+
+    if status is InstallStatus.MISSING:
+        st.warning("背景合成モデルが未配置です。アプリは自動取得しません。")
+        st.caption(
+            f"取得元 {asset.url} / {asset.size_bytes:,} bytes / "
+            f"ライセンス {asset.license} / sha256 {asset.sha256}"
+        )
+        st.code(BOOTSTRAP_COMMAND, language="bash")
+        st.caption(
+            f"別の場所に置く場合は環境変数 `{SEGMENTER_PATH_ENV_VAR}` で `{path}` を指定します。"
+        )
+        return None
+    if status is InstallStatus.MISMATCH:
+        st.error(
+            "配置済みの背景合成モデルの sha256 が manifest と一致しません。"
             "改変または破損の可能性があるため読み込みません。"
         )
         st.code(BOOTSTRAP_COMMAND, language="bash")

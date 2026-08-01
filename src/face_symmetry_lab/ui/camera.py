@@ -27,24 +27,47 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
 )
+from face_symmetry_lab.adapters.inference.mediapipe_segmenter import (
+    MediaPipeSegmenter,
+    SegmentationError,
+)
 from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
     TrackingZoomLandmarker,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
-from face_symmetry_lab.adapters.io.model_store import file_sha256
+from face_symmetry_lab.adapters.io.model_store import InstallStatus, file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
+from face_symmetry_lab.application.quality import QualityConfigError, QualityThresholds
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
     PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.domain.frame_adjustments import (
+    MAX_BRIGHTNESS_GAIN,
+    MIN_BRIGHTNESS_GAIN,
+    BackgroundMode,
+)
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
+from face_symmetry_lab.domain.tracking_zoom import TrackingZoomError, TrackingZoomPolicy
 from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics
-from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
+from face_symmetry_lab.ui.model_setup import (
+    configured_segmenter_path,
+    landmark_asset,
+    resolve_ready_landmarker,
+    segmenter_asset,
+    segmenter_status,
+)
 from face_symmetry_lab.ui.scores import render_scores
+
+_BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
+    BackgroundMode.OFF: "しない",
+    BackgroundMode.BLACK: "黒",
+    BackgroundMode.WHITE: "白",
+}
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
@@ -98,6 +121,17 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
     return callback
 
 
+def _build_segmenter() -> MediaPipeSegmenter | None:
+    """Background replacement is optional (§14.3b): never blocks the camera."""
+    path = configured_segmenter_path()
+    if segmenter_status(path) is not InstallStatus.READY:
+        return None
+    try:
+        return MediaPipeSegmenter(model_path=path, model_version=segmenter_asset().version)
+    except SegmentationError:
+        return None
+
+
 def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     config = load_metric_config()
     landmarker = MediaPipeFaceLandmarker(
@@ -124,6 +158,7 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         landmarker=zoomed_landmarker,
         analyzer=analyzer,
         recorder=recorder,
+        segmenter=_build_segmenter(),
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
         midline_indices=config.midline_indices,
     )
@@ -215,6 +250,86 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     )
 
 
+def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
+    """§15.2 Advanced 設定. Hidden by default; basic users never see this."""
+    with st.expander("Advanced 設定（検出信頼度・角度閾値など）", expanded=False):
+        st.caption(
+            "既定値からの変更は左右差の計算条件を変えるため、"
+            "適用すると履歴・平滑化がリセットされ、新しい比較区間として記録されます。"
+        )
+        angle_column, gate_column = st.columns(2)
+        with angle_column:
+            st.markdown("##### 姿勢角の許容範囲")
+            yaw_inner = st.slider("yaw inner (deg)", 1.0, 44.0, 15.0, key="adv_yaw_inner")
+            yaw_outer = st.slider("yaw outer (deg)", 1.0, 45.0, 17.0, key="adv_yaw_outer")
+            pitch_inner = st.slider("pitch inner (deg)", 1.0, 44.0, 15.0, key="adv_pitch_inner")
+            pitch_outer = st.slider("pitch outer (deg)", 1.0, 45.0, 17.0, key="adv_pitch_outer")
+            roll_inner = st.slider("roll inner (deg)", 1.0, 44.0, 25.0, key="adv_roll_inner")
+            roll_outer = st.slider("roll outer (deg)", 1.0, 45.0, 28.0, key="adv_roll_outer")
+        with gate_column:
+            st.markdown("##### 顔サイズ・安定性")
+            face_area_min = st.slider(
+                "face_area_min", 0.001, 0.98, 0.02, step=0.001, key="adv_face_area_min"
+            )
+            face_area_max = st.slider(
+                "face_area_max", 0.02, 0.99, 0.55, step=0.01, key="adv_face_area_max"
+            )
+            valid_frames_to_ok = st.slider(
+                "valid_frames_to_ok", 1, 30, 5, key="adv_valid_frames_to_ok"
+            )
+            ema_tau_seconds = st.slider(
+                "ema_tau_seconds", 0.05, 5.0, DEFAULT_TAU_SECONDS, step=0.05, key="adv_ema_tau"
+            )
+
+        st.markdown("##### 追跡ズーム")
+        zoom_columns = st.columns(5)
+        margin_ratio = zoom_columns[0].slider(
+            "margin_ratio", 0.0, 3.0, 0.6, step=0.05, key="adv_zoom_margin"
+        )
+        min_window_size = zoom_columns[1].slider(
+            "min_window", 0.01, 1.0, 0.18, step=0.01, key="adv_zoom_min_window"
+        )
+        recheck_interval_ms = zoom_columns[2].slider(
+            "recheck_ms", 0, 5000, 1000, step=100, key="adv_zoom_recheck"
+        )
+        target_px = zoom_columns[3].slider(
+            "target_px", 32, 1920, 480, step=16, key="adv_zoom_target_px"
+        )
+        max_scale = zoom_columns[4].slider(
+            "max_scale", 1.0, 8.0, 4.0, step=0.5, key="adv_zoom_max_scale"
+        )
+
+        if st.button("設定を適用", key="apply_advanced_settings"):
+            try:
+                thresholds = QualityThresholds(
+                    yaw_inner_deg=yaw_inner,
+                    yaw_outer_deg=yaw_outer,
+                    pitch_inner_deg=pitch_inner,
+                    pitch_outer_deg=pitch_outer,
+                    roll_inner_deg=roll_inner,
+                    roll_outer_deg=roll_outer,
+                    face_area_min=face_area_min,
+                    face_area_max=face_area_max,
+                    valid_frames_to_ok=valid_frames_to_ok,
+                )
+                zoom_policy = TrackingZoomPolicy(
+                    margin_ratio=margin_ratio,
+                    min_window_size=min_window_size,
+                    recheck_interval_ms=recheck_interval_ms,
+                    target_px=target_px,
+                    max_scale=max_scale,
+                )
+            except (QualityConfigError, TrackingZoomError) as error:
+                st.error(str(error))
+            else:
+                pipeline.apply_advanced_settings(
+                    thresholds=thresholds,
+                    tau_seconds=ema_tau_seconds,
+                    zoom_policy=zoom_policy,
+                )
+                st.success("設定を適用し、新しい比較区間を開始しました。")
+
+
 def render_camera_section() -> None:
     """Render the realtime landmark preview. Call only after consent."""
     st.subheader("リアルタイム ランドマーク表示")
@@ -241,6 +356,35 @@ def render_camera_section() -> None:
         help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
     )
     pipeline.set_midline_enabled(show_midline)
+
+    brightness_column, background_column = st.columns(2)
+    with brightness_column:
+        brightness_gain = st.slider(
+            "映像の明るさ",
+            min_value=MIN_BRIGHTNESS_GAIN,
+            max_value=MAX_BRIGHTNESS_GAIN,
+            value=1.0,
+            step=0.05,
+            key="camera_brightness_gain",
+            help="暗い環境での検出・見やすさを補助する表示調整です。左右差の計算方法自体は変えません。",
+        )
+        pipeline.set_brightness_gain(brightness_gain)
+    with background_column:
+        segmenter_path = configured_segmenter_path()
+        if segmenter_status(segmenter_path) is InstallStatus.READY:
+            background_mode = st.radio(
+                "背景を置き換える（表示専用）",
+                options=list(_BACKGROUND_MODE_LABELS),
+                format_func=lambda mode: _BACKGROUND_MODE_LABELS[mode],
+                key="camera_background_mode",
+                horizontal=True,
+                help="人物以外を単色にします。左右差・年齢性別・肌表面参考値の判定には使いません。",
+            )
+            pipeline.set_background_mode(background_mode)
+        else:
+            st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
+
+    _render_advanced_settings(pipeline)
 
     preview_column, result_column = st.columns([7, 5], gap="large")
     with preview_column:

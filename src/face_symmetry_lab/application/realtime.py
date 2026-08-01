@@ -18,9 +18,17 @@ import numpy as np
 from numpy.typing import NDArray
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
-from face_symmetry_lab.application.ports import LandmarkProvider
+from face_symmetry_lab.application.ports import LandmarkProvider, SegmentationProvider
+from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.domain.export import SessionExport
+from face_symmetry_lab.domain.frame_adjustments import (
+    BACKGROUND_COLORS,
+    BackgroundMode,
+    FrameAdjustmentError,
+    apply_brightness_gain,
+    composite_background,
+)
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_MIDLINE_COLOR,
@@ -29,6 +37,7 @@ from face_symmetry_lab.domain.overlay import (
     draw_face_midline,
     draw_landmark_points,
 )
+from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 from face_symmetry_lab.runtime.frame_scheduler import FrameScheduler
 
 #: Consecutive failures before the UI should offer a recovery action (§14.4).
@@ -71,6 +80,7 @@ class RealtimeLandmarkPipeline:
         analyzer: FrameAnalyzer | None = None,
         recorder: SessionRecorder | None = None,
         scheduler: FrameScheduler | None = None,
+        segmenter: SegmentationProvider | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
         geometry_ttl_ms: int = DEFAULT_GEOMETRY_TTL_MS,
@@ -79,14 +89,20 @@ class RealtimeLandmarkPipeline:
         midline_color: tuple[int, int, int] = DEFAULT_MIDLINE_COLOR,
         point_color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
         point_radius: int = DEFAULT_POINT_RADIUS,
+        brightness_gain: float = 1.0,
+        background_mode: BackgroundMode = BackgroundMode.OFF,
     ) -> None:
         if analysis_interval_ms < 0:
             raise ValueError("analysis_interval_ms は 0 以上である必要があります。")
         if geometry_ttl_ms < 0:
             raise ValueError("geometry_ttl_ms は 0 以上である必要があります。")
+        # §14.3b: validated by trying it once against a throwaway pixel,
+        # reusing the same bounds `apply_brightness_gain` itself enforces.
+        apply_brightness_gain(np.zeros((1, 1, 3), dtype=np.uint8), brightness_gain)
         self._landmarker = landmarker
         self._analyzer = analyzer
         self._recorder = recorder
+        self._segmenter = segmenter
         self.scheduler = scheduler if scheduler is not None else FrameScheduler()
         self._clock = clock
         self._point_color = point_color
@@ -94,6 +110,8 @@ class RealtimeLandmarkPipeline:
         self._midline_indices = midline_indices
         self._midline_enabled = midline_enabled
         self._midline_color = midline_color
+        self._brightness_gain = brightness_gain
+        self._background_mode = background_mode
         self._analysis_interval_seconds = analysis_interval_ms / 1000.0
         self._geometry_ttl_seconds = geometry_ttl_ms / 1000.0
         self._started_at = clock()
@@ -108,6 +126,8 @@ class RealtimeLandmarkPipeline:
         self._overlay_lock = threading.Lock()
         self._cached_geometry: LandmarkFrame | None = None
         self._cached_geometry_at: float | None = None
+        self._cached_mask: NDArray[np.float32] | None = None
+        self._cached_mask_at: float | None = None
 
     def process(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Analyse one frame and return the image to send back to the browser."""
@@ -123,15 +143,36 @@ class RealtimeLandmarkPipeline:
             return rgb_image, None
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
             self._clear_cached_geometry()
+            self._clear_cached_mask()
             self._record_error()
             return rgb_image, None
+
+        adjusted = self._apply_brightness(rgb_image)
+
         if not self._admit_latest_sample():
-            return self._draw_cached_geometry(rgb_image), None
+            return self._draw_cached(adjusted), None
 
         with self.scheduler.slot() as acquired:
             if not acquired:
-                return self._draw_cached_geometry(rgb_image), None
-            return self._analyse(rgb_image)
+                return self._draw_cached(adjusted), None
+            return self._analyse(adjusted)
+
+    def _apply_brightness(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        with self._overlay_lock:
+            gain = self._brightness_gain
+        if gain == 1.0:
+            return rgb_image
+        try:
+            return apply_brightness_gain(rgb_image, gain)
+        except FrameAdjustmentError:
+            # gain is validated at set-time; a failure here means the frame
+            # itself is unusable, so fall through and let detection fail on
+            # the original image instead of masking the real problem.
+            return rgb_image
+
+    def _draw_cached(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        painted = self._draw_cached_geometry(rgb_image)
+        return self._composite_cached_background(painted)
 
     def _admit_latest_sample(self) -> bool:
         """Admit by cadence only; skipped frames are never queued for later."""
@@ -168,6 +209,7 @@ class RealtimeLandmarkPipeline:
             else:
                 self._clear_cached_geometry()
             painted = self._paint_geometry(rgb_image, frame)
+            painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
             self._clear_cached_geometry()
@@ -264,6 +306,57 @@ class RealtimeLandmarkPipeline:
             self._cached_geometry = None
             self._cached_geometry_at = None
 
+    def _apply_background(
+        self,
+        source_image: NDArray[np.uint8],
+        painted: NDArray[np.uint8],
+        timestamp_ms: int,
+        *,
+        at: float,
+    ) -> NDArray[np.uint8]:
+        """Composite a solid background onto the display frame only (§14.3b).
+
+        Segmentation runs on the source frame, not ``painted``, so overlay
+        graphics never leak into the mask. A failure here is display-only
+        and must never be mistaken for a stream failure (NFR-017): it is
+        swallowed and the un-composited frame is returned.
+        """
+        with self._overlay_lock:
+            mode = self._background_mode
+            segmenter = self._segmenter
+        if mode is BackgroundMode.OFF or segmenter is None:
+            return painted
+        try:
+            mask = segmenter.segment(source_image, timestamp_ms=timestamp_ms)
+            composited = composite_background(painted, mask, BACKGROUND_COLORS[mode])
+        except Exception:
+            return painted
+        with self._overlay_lock:
+            self._cached_mask = mask
+            self._cached_mask_at = at
+        return composited
+
+    def _composite_cached_background(self, painted: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        with self._overlay_lock:
+            mode = self._background_mode
+            mask = self._cached_mask
+            cached_at = self._cached_mask_at
+        if mode is BackgroundMode.OFF or mask is None or cached_at is None:
+            return painted
+        now = self._clock()
+        if now - cached_at > self._geometry_ttl_seconds:
+            self._clear_cached_mask()
+            return painted
+        try:
+            return composite_background(painted, mask, BACKGROUND_COLORS[mode])
+        except Exception:
+            return painted
+
+    def _clear_cached_mask(self) -> None:
+        with self._overlay_lock:
+            self._cached_mask = None
+            self._cached_mask_at = None
+
     def _record_error(
         self,
         *,
@@ -312,16 +405,54 @@ class RealtimeLandmarkPipeline:
             self._recorder.reset()
         self.scheduler.reset()
         self._clear_cached_geometry()
+        self._clear_cached_mask()
         with self._sample_lock:
             self._next_analysis_at = self._clock()
             self._throttled_frames = 0
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
 
+    def apply_advanced_settings(
+        self,
+        *,
+        thresholds: QualityThresholds,
+        tau_seconds: float,
+        zoom_policy: TrackingZoomPolicy,
+    ) -> None:
+        """Atomically apply new Advanced settings (§15.2).
+
+        Reaches every component whose behaviour depends on these values:
+        the quality gate and EMA are rebuilt (dropping stale streak/smoothed
+        state), the tracking-zoom policy is swapped in place against the
+        still-valid last known face, and the recorder starts a new segment
+        with a recomputed config fingerprint so exported records before and
+        after this change are never conflated.
+        """
+        if self._analyzer is not None:
+            self._analyzer.update(thresholds=thresholds, tau_seconds=tau_seconds)
+        update_zoom_policy = getattr(self._landmarker, "update_policy", None)
+        if callable(update_zoom_policy):
+            update_zoom_policy(zoom_policy)
+        if self._recorder is not None:
+            self._recorder.reset(thresholds=thresholds, tau_seconds=tau_seconds)
+        self._clear_cached_geometry()
+        self._clear_cached_mask()
+
     def set_midline_enabled(self, enabled: bool) -> None:
         """Update the display-only centre-line preference thread-safely."""
         with self._overlay_lock:
             self._midline_enabled = bool(enabled)
+
+    def set_brightness_gain(self, gain: float) -> None:
+        """Update the brightness gain applied to detection input and display."""
+        apply_brightness_gain(np.zeros((1, 1, 3), dtype=np.uint8), gain)
+        with self._overlay_lock:
+            self._brightness_gain = gain
+
+    def set_background_mode(self, mode: BackgroundMode) -> None:
+        """Update the display-only background replacement thread-safely."""
+        with self._overlay_lock:
+            self._background_mode = mode
 
     def export_bundle(self) -> SessionExport | None:
         """Return an immutable export snapshot without exposing live history."""
@@ -335,4 +466,7 @@ class RealtimeLandmarkPipeline:
             return
         self._closed = True
         self._clear_cached_geometry()
+        self._clear_cached_mask()
         self._landmarker.close()
+        if self._segmenter is not None:
+            self._segmenter.close()

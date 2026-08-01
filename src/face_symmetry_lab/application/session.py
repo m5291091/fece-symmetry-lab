@@ -94,6 +94,9 @@ class SessionRecorder:
         if history_capacity < 1:
             raise ValueError("history_capacity は 1 以上である必要があります。")
         self._metric_config = metric_config
+        self._thresholds = thresholds
+        self._tau_seconds = tau_seconds
+        self._analysis_interval_ms = analysis_interval_ms
         self._settings = build_config_settings(
             metric_config,
             thresholds,
@@ -327,9 +330,38 @@ class SessionRecorder:
         )
         return SessionExport(manifest=manifest, records=records)
 
-    def reset(self) -> None:
-        """Clear history and begin a new comparison segment."""
+    def reset(
+        self,
+        *,
+        thresholds: QualityThresholds | None = None,
+        tau_seconds: float | None = None,
+        analysis_interval_ms: int | None = None,
+    ) -> None:
+        """Clear history and begin a new comparison segment.
+
+        Passing a changed threshold/tau/interval recomputes the config
+        fingerprint too, so the new segment's exported records are
+        correctly distinguished from the one before it (§15.2).
+        """
         with self._lock:
+            if thresholds is not None:
+                self._thresholds = thresholds
+            if tau_seconds is not None:
+                self._tau_seconds = tau_seconds
+            if analysis_interval_ms is not None:
+                self._analysis_interval_ms = analysis_interval_ms
+            if (
+                thresholds is not None
+                or tau_seconds is not None
+                or analysis_interval_ms is not None
+            ):
+                self._settings = build_config_settings(
+                    self._metric_config,
+                    self._thresholds,
+                    tau_seconds=self._tau_seconds,
+                    analysis_interval_ms=self._analysis_interval_ms,
+                )
+                self._fingerprint = config_fingerprint(self._settings)
             self._records.clear()
             self._segment_id = str(uuid4())
             self._config_revision += 1

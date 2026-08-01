@@ -8,6 +8,7 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
 )
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
+from face_symmetry_lab.domain.frame_adjustments import BackgroundMode, FrameAdjustmentError
 from face_symmetry_lab.domain.landmarks import (
     LandmarkFrame,
     TrackingStatus,
@@ -26,7 +27,12 @@ class FakeLandmarker:
         self.points = points
         self.error: Exception | None = None
         self.calls: list[tuple[int, int]] = []
+        self.received_images: list[NDArray[np.uint8]] = []
         self.closed = False
+        self.policy_updates: list[object] = []
+
+    def update_policy(self, policy: object) -> None:
+        self.policy_updates.append(policy)
 
     def detect_video(
         self,
@@ -36,6 +42,7 @@ class FakeLandmarker:
         timestamp_ms: int,
     ) -> LandmarkFrame:
         self.calls.append((frame_id, timestamp_ms))
+        self.received_images.append(rgb_image)
         if self.error is not None:
             raise self.error
         points = (self.points or ((0.5, 0.5),)) if self.face_count == 1 else ()
@@ -46,6 +53,26 @@ class FakeLandmarker:
             width=rgb_image.shape[1],
             height=rgb_image.shape[0],
         )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeSegmenter:
+    def __init__(self, mask_value: float = 1.0) -> None:
+        self.mask_value = mask_value
+        self.error: Exception | None = None
+        self.calls: list[int] = []
+        self.received_images: list[NDArray[np.uint8]] = []
+        self.closed = False
+
+    def segment(self, rgb_image: NDArray[np.uint8], *, timestamp_ms: int) -> NDArray[np.float32]:
+        self.calls.append(timestamp_ms)
+        self.received_images.append(rgb_image)
+        if self.error is not None:
+            raise self.error
+        height, width = rgb_image.shape[:2]
+        return np.full((height, width), self.mask_value, dtype=np.float32)
 
     def close(self) -> None:
         self.closed = True
@@ -78,6 +105,7 @@ class ManualClock:
 class StubAnalyzer:
     def __init__(self) -> None:
         self.reset_calls = 0
+        self.update_calls: list[tuple[object, float]] = []
 
     def analyze(
         self,
@@ -101,12 +129,16 @@ class StubAnalyzer:
     def reset(self) -> None:
         self.reset_calls += 1
 
+    def update(self, *, thresholds: object, tau_seconds: float) -> None:
+        self.update_calls.append((thresholds, tau_seconds))
+
 
 class RecorderSpy:
     def __init__(self) -> None:
         self.analysis_frames: list[int] = []
         self.error_frames: list[int] = []
         self.reset_calls = 0
+        self.reset_kwargs: list[dict[str, object]] = []
 
     def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
         self.analysis_frames.append(frame.frame_id)
@@ -114,8 +146,9 @@ class RecorderSpy:
     def append_error(self, *, frame_id: int, **kwargs) -> None:
         self.error_frames.append(frame_id)
 
-    def reset(self) -> None:
+    def reset(self, **kwargs) -> None:
         self.reset_calls += 1
+        self.reset_kwargs.append(kwargs)
 
     def export_bundle(self) -> str:
         return "bundle"
@@ -419,3 +452,160 @@ def test_realtime_face_midline_can_be_turned_off_without_restarting() -> None:
 
     assert shown.sum() > 0
     assert hidden.sum() == 0
+
+
+def _flat_rgb(value: int, height: int = 20, width: int = 20) -> NDArray[np.uint8]:
+    return np.full((height, width, 3), value, dtype=np.uint8)
+
+
+def test_brightness_gain_reaches_both_the_detector_and_the_display() -> None:
+    landmarker = FakeLandmarker(face_count=0)  # no overlay drawn, so display == input
+    pipeline = _pipeline(landmarker, brightness_gain=2.0)
+
+    painted = pipeline.process(_flat_rgb(100))
+
+    assert np.all(landmarker.received_images[0] == 200)
+    assert np.all(painted == 200)
+
+
+def test_a_default_gain_of_one_leaves_frames_unchanged() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker)
+
+    painted = pipeline.process(_flat_rgb(100))
+
+    assert np.all(painted == 100)
+
+
+def test_an_out_of_range_brightness_gain_is_refused_at_construction() -> None:
+    with pytest.raises(FrameAdjustmentError):
+        _pipeline(FakeLandmarker(), brightness_gain=10.0)
+
+
+def test_set_brightness_gain_updates_the_running_pipeline() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker)
+
+    pipeline.set_brightness_gain(0.5)
+    painted = pipeline.process(_flat_rgb(100))
+
+    assert np.all(painted == 50)
+
+
+def test_background_mode_off_never_calls_the_segmenter() -> None:
+    segmenter = FakeSegmenter()
+    pipeline = _pipeline(FakeLandmarker(face_count=0), segmenter=segmenter)
+
+    pipeline.process(_rgb())
+
+    assert segmenter.calls == []
+
+
+def test_background_replacement_composites_only_the_display_frame() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    segmenter = FakeSegmenter(mask_value=0.0)  # fully background
+    pipeline = _pipeline(
+        landmarker,
+        segmenter=segmenter,
+        background_mode=BackgroundMode.WHITE,
+    )
+
+    painted = pipeline.process(_flat_rgb(10))
+
+    assert np.all(landmarker.received_images[0] == 10)  # detector input untouched
+    assert np.all(painted == 255)  # display replaced with white
+
+
+def test_background_replacement_fails_open_on_segmenter_error() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    segmenter = FakeSegmenter()
+    segmenter.error = RuntimeError("segmentation graph failure")
+    pipeline = _pipeline(
+        landmarker,
+        segmenter=segmenter,
+        background_mode=BackgroundMode.BLACK,
+    )
+
+    painted = pipeline.process(_flat_rgb(77))
+
+    assert np.all(painted == 77)  # fell back to the un-composited frame
+    assert pipeline.snapshot().consecutive_errors == 0  # not counted as a stream failure
+
+
+def test_set_background_mode_updates_the_running_pipeline() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    segmenter = FakeSegmenter(mask_value=0.0)
+    pipeline = _pipeline(landmarker, segmenter=segmenter)
+
+    before = pipeline.process(_flat_rgb(10))
+    pipeline.set_background_mode(BackgroundMode.BLACK)
+    after = pipeline.process(_flat_rgb(10))
+
+    assert np.all(before == 10)  # OFF by default: untouched
+    assert np.all(after == 0)  # BLACK: replaced
+
+
+def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> None:
+    """§15.2: an Advanced settings apply must reach every affected component."""
+    landmarker = FakeLandmarker()
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder)
+    thresholds = object()
+    zoom_policy = object()
+
+    pipeline.apply_advanced_settings(
+        thresholds=thresholds,
+        tau_seconds=0.7,
+        zoom_policy=zoom_policy,
+    )
+
+    assert analyzer.update_calls == [(thresholds, 0.7)]
+    assert landmarker.policy_updates == [zoom_policy]
+    assert recorder.reset_kwargs[-1] == {"thresholds": thresholds, "tau_seconds": 0.7}
+
+
+def test_apply_advanced_settings_clears_cached_geometry_and_background() -> None:
+    """A throttled frame right after applying settings must not paint stale
+
+    cached geometry/background left over from before the change.
+    """
+    landmarker = FakeLandmarker(points=((0.5, 0.2), (0.5, 0.5), (0.5, 0.8)))
+    segmenter = FakeSegmenter(mask_value=0.0)  # fully background -> composites solid white
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        analyzer=StubAnalyzer(),
+        segmenter=segmenter,
+        background_mode=BackgroundMode.WHITE,
+        clock=lambda: 0.0,
+        analysis_interval_ms=1000,
+    )
+    pipeline.process(_rgb())  # populates cached geometry + mask; result is white
+
+    pipeline.apply_advanced_settings(thresholds=object(), tau_seconds=0.4, zoom_policy=object())
+    # clock never advances, so this next call is throttled and must fall
+    # back to the (now-cleared) cache instead of the stale white composite.
+    reused = pipeline.process(_rgb())
+
+    assert np.all(reused == 0)
+
+
+def test_cached_frames_reuse_the_last_computed_mask_without_resegmenting() -> None:
+    clock = ManualClock()
+    landmarker = FakeLandmarker(face_count=0)
+    segmenter = FakeSegmenter(mask_value=0.0)
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        segmenter=segmenter,
+        background_mode=BackgroundMode.WHITE,
+        clock=clock,
+        analysis_interval_ms=1000,
+    )
+
+    analysed = pipeline.process(_flat_rgb(10))
+    clock.advance(0.05)  # well inside the 125ms/1000ms cadence: this frame is throttled
+    throttled = pipeline.process(_flat_rgb(10))
+
+    assert np.all(analysed == 255)
+    assert np.all(throttled == 255)  # still composited, from the cached mask
+    assert segmenter.calls == [0]  # segmentation only ran once

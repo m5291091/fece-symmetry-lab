@@ -85,6 +85,46 @@ def test_session_recorder_is_bounded_and_reset_starts_a_new_segment() -> None:
     assert recorder.config_revision == 2
 
 
+def test_a_bare_reset_keeps_the_same_config_fingerprint() -> None:
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+    )
+    before = recorder.export_bundle().manifest.config_revisions[0].fingerprint
+
+    recorder.reset()
+
+    after = recorder.export_bundle().manifest.config_revisions[0].fingerprint
+    assert after == before
+
+
+def test_reset_with_new_thresholds_recomputes_the_config_fingerprint() -> None:
+    """§15.2: Advanced settings changes must bump revision AND fingerprint."""
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+    )
+    before = recorder.export_bundle().manifest.config_revisions[0]
+
+    recorder.reset(thresholds=QualityThresholds(valid_frames_to_ok=1), tau_seconds=0.8)
+
+    after = recorder.export_bundle().manifest.config_revisions[0]
+    assert after.revision == before.revision + 1
+    assert after.fingerprint != before.fingerprint
+    assert after.settings["valid_frames_to_ok"] == 1
+    assert after.settings["ema_tau_seconds"] == 0.8
+
+
 def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -> None:
     config = _metric_config()
     recorder = SessionRecorder(

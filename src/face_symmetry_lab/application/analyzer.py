@@ -83,6 +83,17 @@ class FrameAnalyzer:
     def thresholds(self) -> QualityThresholds:
         return self._gate.thresholds
 
+    def update(self, *, thresholds: QualityThresholds, tau_seconds: float) -> None:
+        """Atomically replace thresholds/tau and reset gate + EMA history (§15.2).
+
+        Build-new-then-swap, per the Advanced settings contract: a change
+        that affects scoring must not let stale gate streak or smoothed
+        value leak across the change.
+        """
+        self._gate = QualityGate(thresholds)
+        self._ema = TimeBasedEma(tau_seconds=tau_seconds)
+        self._lost_since = None
+
     def reset(self) -> None:
         """Drop history, smoothing, and hysteresis (§4.4, §8.8)."""
         self._gate.reset()

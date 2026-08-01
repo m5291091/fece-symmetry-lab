@@ -35,3 +35,16 @@ class ImageLandmarkProvider(Protocol):
     def detect(self, rgb_image: NDArray[np.uint8], *, frame_id: int = 0) -> LandmarkFrame: ...
 
     def close(self) -> None: ...
+
+
+class SegmentationProvider(Protocol):
+    """Boundary implemented by local person/background segmentation runtimes."""
+
+    def segment(
+        self,
+        rgb_image: NDArray[np.uint8],
+        *,
+        timestamp_ms: int,
+    ) -> NDArray[np.float32]: ...
+
+    def close(self) -> None: ...

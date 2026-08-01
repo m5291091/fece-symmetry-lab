@@ -16,6 +16,7 @@
 | `tests/domain/test_pose.py` | 極分解と intrinsic Y-X-Z の符号 contract | FR-009, §8.2.1, OD-04 |
 | `tests/domain/test_smoothing.py` | 時間ベース EMA と reset 条件 | FR-012, §8.7, §8.8 |
 | `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何 | FR-026, §14.3a, AC-ZOOM-01 |
+| `tests/domain/test_frame_adjustments.py` | 明るさgainの乗算・clip、背景合成のmask blend・検証 | FR-027, FR-028, §14.3b, AC-DISPLAY-01 |
 | `tests/application/test_image_input.py` | JPEG / PNG uploadの形式・容量・画素・animation・推論用顔crop検証 | FR-006, FR-007, FR-022, AC-INPUT-01 |
 | `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot | FR-008, FR-013, NFR-006, NFR-007, NFR-017 |
 | `tests/application/test_still_image.py` | 静止画ランドマークの stateless 検出、中心線切替、プレビュー生成 | FR-006, FR-008, FR-013 |
@@ -26,6 +27,7 @@
 | `tests/adapters/test_opencv_demographic_estimator.py` | 派生ONNX用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
 | `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
 | `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
+| `tests/adapters/test_mediapipe_segmenter.py` | Image Segmenter contract（VIDEO）、frame order、shape/finite検証、close | FR-027, §14.3b, AC-DISPLAY-01 |
 | `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
 | `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件 | FR-011, FR-020, AC-SCORE-04 |
 | `tests/adapters/test_session_exporter.py` | CSV / JSON の同値性、manifest、ファイル名 | FR-017, AC-EXPORT-01 |
@@ -33,6 +35,7 @@
 | `tests/model/test_demographic_conversion.py` | 検証済み公式IRからmanifest固定ONNXを決定的に再生成（asset／変換tool未配置時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §10.6, §21.1 |
 | `tests/model/test_real_demographic.py` | manifest検証済み派生ONNXのOpenCV DNN load・出力shape smoke（未配置／runtime不備時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §21.1 |
 | `tests/model/test_openvino_parity.py` | OpenVINO参照runtimeと派生ONNXの固定入力parity（OD-07数値ゲート、openvino未導入時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, OD-07, §21.1 |
+| `tests/model/test_real_segmenter.py` | 実asset由来のImage Segmenter load・出力shape/有限値smoke、domain合成との結合（未配置時は skip） | FR-002, FR-027, §14.3b, §21.1 |
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
 | `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、sample 間の直近数値表示、frame callback | FR-005, FR-013, NFR-006, NFR-009, AC-PRIV-02 |
 | `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示 | FR-013, FR-014, AC-A11Y-01 |

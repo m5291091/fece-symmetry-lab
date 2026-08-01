@@ -82,6 +82,17 @@ def test_repository_manifest_pins_the_official_openvino_demographic_pair() -> No
     assert xml.license == weights.license == "Apache-2.0"
 
 
+def test_repository_manifest_pins_the_selfie_segmenter() -> None:
+    assets = load_manifest(DEFAULT_MANIFEST_PATH)
+
+    segmenter = find_asset(assets, "selfie_segmenter")
+    assert segmenter.url.startswith("https://")
+    assert segmenter.filename == "selfie_segmenter.tflite"
+    assert segmenter.size_bytes == 249_537
+    assert segmenter.sha256 == "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b"
+    assert segmenter.license
+
+
 def test_repository_manifest_pins_the_locally_derived_demographic_onnx() -> None:
     derived_assets = load_derived_assets(DEFAULT_MANIFEST_PATH)
 

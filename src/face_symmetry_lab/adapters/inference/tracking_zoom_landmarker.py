@@ -85,6 +85,15 @@ class TrackingZoomLandmarker:
     def close(self) -> None:
         self._inner.close()
 
+    def update_policy(self, policy: TrackingZoomPolicy) -> None:
+        """Swap the zoom policy (§15.2 Advanced settings).
+
+        Keeps the last tracked bbox: a policy change does not mean the
+        person moved, so the new margin/window applies to it immediately
+        instead of forcing a full-frame re-search.
+        """
+        self._policy = policy
+
     def _select_window(self, timestamp_ms: int) -> BoundingBox:
         if self._last_bbox is None or self._due_for_full_frame_recheck(timestamp_ms):
             self._last_full_frame_check_ms = timestamp_ms

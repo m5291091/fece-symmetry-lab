@@ -132,6 +132,25 @@ def test_a_second_face_found_on_a_recheck_is_reported_and_tracking_is_dropped() 
     assert after.points == _FACE_FRACTION
 
 
+def test_update_policy_applies_to_the_existing_tracked_face_immediately() -> None:
+    """A policy change (e.g. from Advanced settings) must not discard tracking:
+
+    the last known face position is still valid, so the new margin/window
+    should apply to it right away instead of forcing a full-frame re-search.
+    """
+    fake = _FakeLandmarkProvider(["single", "single"])
+    zoomer = TrackingZoomLandmarker(fake, policy=TrackingZoomPolicy(margin_ratio=0.6))
+
+    zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+    # target_px=1 keeps this assertion free of the (separately tested) upscale step.
+    zoomer.update_policy(TrackingZoomPolicy(margin_ratio=0.0, min_window_size=0.2, target_px=1))
+    zoomer.detect_video(_blank(800, 1000), frame_id=2, timestamp_ms=33)
+
+    # bbox (0.4,0.4)-(0.6,0.6) is 0.2x0.2; margin 0.0 keeps it at 0.2, still
+    # floored at min_window_size 0.2, so the crop equals the raw bbox itself.
+    assert fake.received_shapes[1] == (round(0.2 * 800), round(0.2 * 1000))
+
+
 def test_close_closes_the_wrapped_provider() -> None:
     fake = _FakeLandmarkProvider(["single"])
     zoomer = TrackingZoomLandmarker(fake)

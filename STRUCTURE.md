@@ -35,6 +35,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
 | Tracking-zoom landmark wrapper | `src/face_symmetry_lab/adapters/inference/tracking_zoom_landmarker.py` |
 | Tracking-zoom geometry | `src/face_symmetry_lab/domain/tracking_zoom.py` |
+| MediaPipe segmentation adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_segmenter.py` |
+| Brightness / background compositing | `src/face_symmetry_lab/domain/frame_adjustments.py` |
+| Segmentation model card | `docs/model-cards/mediapipe-selfie-segmenter.md` |
 | Age / gender adapter | `src/face_symmetry_lab/adapters/inference/opencv_demographic_estimator.py` |
 | Age / gender model card | `docs/model-cards/openvino-age-gender-retail-0013.md` |
 | Architecture decisions | `docs/adr/` |
@@ -64,6 +67,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
 | Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, AC-ZOOM-01 |
 | Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, AC-ZOOM-01 |
+| Brightness / background compositing | `domain/frame_adjustments.py` | `tests/domain/test_frame_adjustments.py` | FR-027, FR-028, AC-DISPLAY-01 |
+| MediaPipe segmentation adapter | `adapters/inference/mediapipe_segmenter.py` | `tests/adapters/test_mediapipe_segmenter.py` | FR-027, AC-DISPLAY-01 |
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
@@ -86,7 +91,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `ccb0f2c0832d13f71cbfb64b01d7dca0ae1daee778768644a7949d3c33b8079c`_
+_File-list SHA-256: `9f29844e11703f3ddf95df567b8318ad7e8dde857608617175baa20778e251f3`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -107,6 +112,7 @@ face-symmetry-lab/
     - `0003-age-gender-and-skin-correction.md`
   - `model-cards/`
     - `mediapipe-face-landmarker-v1.md`
+    - `mediapipe-selfie-segmenter.md`
     - `openvino-age-gender-retail-0013.md`
     - `symmetry-2d-v1.md`
 - `scripts/`
@@ -123,14 +129,14 @@ face-symmetry-lab/
       - `export/`
         - … (2 files)
       - `inference/`
-        - … (4 files)
+        - … (5 files)
       - `io/`
         - … (3 files)
       - … (1 files)
     - `application/`
       - … (8 files)
     - `domain/`
-      - … (13 files)
+      - … (14 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
@@ -140,6 +146,7 @@ face-symmetry-lab/
 - `tests/`
   - `adapters/`
     - `test_mediapipe_landmarker.py`
+    - `test_mediapipe_segmenter.py`
     - `test_metric_config.py`
     - `test_model_store.py`
     - `test_opencv_demographic_estimator.py`
@@ -156,6 +163,7 @@ face-symmetry-lab/
     - `__init__.py`
     - `test_demographics.py`
     - `test_export.py`
+    - `test_frame_adjustments.py`
     - `test_geometry.py`
     - `test_landmarks.py`
     - `test_metrics.py`
@@ -172,6 +180,7 @@ face-symmetry-lab/
     - `test_openvino_parity.py`
     - `test_real_demographic.py`
     - `test_real_landmarker.py`
+    - `test_real_segmenter.py`
   - `repository/`
     - `test_generate_structure.py`
     - `test_testbox_documentation.py`
