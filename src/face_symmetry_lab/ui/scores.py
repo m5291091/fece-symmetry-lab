@@ -99,6 +99,10 @@ def render_scores(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> No
 
     render_pose(outcome)
     st.caption(
+        "100 は、正規化後の対応点距離がすべて 0 になった場合の数学上の上限です。"
+        "人物の状態や価値を示す尺度ではなく、実写で 100 になることも保証しません。"
+    )
+    st.caption(
         "同一人物・同一環境内の相対的な傾向を見るための値です。"
         "他人との比較、医学的評価、魅力度の判断には使用できません。"
     )

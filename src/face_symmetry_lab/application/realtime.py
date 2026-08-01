@@ -32,6 +32,9 @@ from face_symmetry_lab.runtime.frame_scheduler import FrameScheduler
 #: Consecutive failures before the UI should offer a recovery action (§14.4).
 ERROR_CIRCUIT_THRESHOLD = 3
 
+#: Preview frames keep flowing, while landmark inference is capped at 8 Hz.
+DEFAULT_ANALYSIS_INTERVAL_MS = 125
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineSnapshot:
@@ -41,6 +44,9 @@ class PipelineSnapshot:
     status: TrackingStatus = TrackingStatus.NO_FACE
     face_count: int = 0
     landmark_count: int = 0
+    #: Frames intentionally left as preview-only by cadence control.
+    throttled_frames: int = 0
+    #: Frames rejected because the one-slot worker was already occupied.
     dropped_frames: int = 0
     consecutive_errors: int = 0
     processing_ms: float = 0.0
@@ -53,7 +59,7 @@ class PipelineSnapshot:
 
 
 class RealtimeLandmarkPipeline:
-    """Drive one landmark detection per frame, dropping frames when busy."""
+    """Sample the latest preview frame without building a latency-prone queue."""
 
     def __init__(
         self,
@@ -63,9 +69,12 @@ class RealtimeLandmarkPipeline:
         recorder: SessionRecorder | None = None,
         scheduler: FrameScheduler | None = None,
         clock: Callable[[], float] = time.monotonic,
+        analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
         point_color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
         point_radius: int = DEFAULT_POINT_RADIUS,
     ) -> None:
+        if analysis_interval_ms < 0:
+            raise ValueError("analysis_interval_ms は 0 以上である必要があります。")
         self._landmarker = landmarker
         self._analyzer = analyzer
         self._recorder = recorder
@@ -73,12 +82,16 @@ class RealtimeLandmarkPipeline:
         self._clock = clock
         self._point_color = point_color
         self._point_radius = point_radius
+        self._analysis_interval_seconds = analysis_interval_ms / 1000.0
         self._started_at = clock()
+        self._next_analysis_at = self._started_at
+        self._throttled_frames = 0
         self._frame_id = 0
         self._last_timestamp_ms = -1
         self._snapshot = PipelineSnapshot()
         self._closed = False
         self._state_lock = threading.Lock()
+        self._sample_lock = threading.Lock()
 
     def process(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Analyse one frame and return the image to send back to the browser."""
@@ -95,11 +108,23 @@ class RealtimeLandmarkPipeline:
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
             self._record_error()
             return rgb_image, None
+        if not self._admit_latest_sample():
+            return rgb_image, None
 
         with self.scheduler.slot() as acquired:
             if not acquired:
                 return rgb_image, None
             return self._analyse(rgb_image)
+
+    def _admit_latest_sample(self) -> bool:
+        """Admit by cadence only; skipped frames are never queued for later."""
+        now = self._clock()
+        with self._sample_lock:
+            if now < self._next_analysis_at:
+                self._throttled_frames += 1
+                return False
+            self._next_analysis_at = now + self._analysis_interval_seconds
+            return True
 
     def _analyse(
         self,
@@ -163,12 +188,15 @@ class RealtimeLandmarkPipeline:
                 # Export bookkeeping is secondary to keeping the camera alive.
                 pass
 
+        with self._sample_lock:
+            throttled_frames = self._throttled_frames
         with self._state_lock:
             self._snapshot = PipelineSnapshot(
                 frame_id=frame.frame_id,
                 status=frame.status,
                 face_count=frame.face_count,
                 landmark_count=len(frame.points),
+                throttled_frames=throttled_frames,
                 dropped_frames=self.scheduler.dropped_frames,
                 consecutive_errors=0,
                 processing_ms=processing_ms,
@@ -190,6 +218,7 @@ class RealtimeLandmarkPipeline:
                 face_count=0,
                 landmark_count=0,
                 consecutive_errors=self._snapshot.consecutive_errors + 1,
+                analysis=None,
             )
         if (
             self._recorder is not None
@@ -206,8 +235,14 @@ class RealtimeLandmarkPipeline:
 
     def snapshot(self) -> PipelineSnapshot:
         """Return the latest immutable result for the UI thread."""
+        with self._sample_lock:
+            throttled_frames = self._throttled_frames
         with self._state_lock:
-            return replace(self._snapshot, dropped_frames=self.scheduler.dropped_frames)
+            return replace(
+                self._snapshot,
+                throttled_frames=throttled_frames,
+                dropped_frames=self.scheduler.dropped_frames,
+            )
 
     def reset_analysis(self) -> None:
         """Drop scores, smoothing, and hysteresis without stopping the stream."""
@@ -216,6 +251,9 @@ class RealtimeLandmarkPipeline:
         if self._recorder is not None:
             self._recorder.reset()
         self.scheduler.reset()
+        with self._sample_lock:
+            self._next_analysis_at = self._clock()
+            self._throttled_frames = 0
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
 

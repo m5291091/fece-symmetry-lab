@@ -36,13 +36,21 @@ def _metric_config():
 
 def test_config_fingerprint_is_canonical_and_covers_metric_and_gate_settings() -> None:
     config = _metric_config()
-    settings = build_config_settings(config, QualityThresholds(), tau_seconds=0.4)
+    settings = build_config_settings(
+        config,
+        QualityThresholds(),
+        tau_seconds=0.4,
+        analysis_interval_ms=125,
+    )
 
     assert config_fingerprint(settings) == config_fingerprint(dict(reversed(settings.items())))
     changed = dict(settings)
     changed["ema_tau_seconds"] = 0.5
     assert config_fingerprint(changed) != config_fingerprint(settings)
     assert settings["sensitivity"] == dict.fromkeys(PART_NAMES, 30.0)
+    changed_interval = dict(settings)
+    changed_interval["analysis_interval_ms"] = 200
+    assert config_fingerprint(changed_interval) != config_fingerprint(settings)
 
 
 def test_session_recorder_is_bounded_and_reset_starts_a_new_segment() -> None:

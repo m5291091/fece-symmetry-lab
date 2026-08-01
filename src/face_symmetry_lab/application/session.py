@@ -35,9 +35,10 @@ def build_config_settings(
     thresholds: QualityThresholds,
     *,
     tau_seconds: float,
+    analysis_interval_ms: int | None = None,
 ) -> dict[str, JsonValue]:
     """Return the normalized settings whose digest defines comparability."""
-    return {
+    settings: dict[str, JsonValue] = {
         "metric_version": config.metric_version,
         "landmark_map_version": config.landmark_map_version,
         "sensitivity": cast(dict[str, JsonValue], dict(config.sensitivity)),
@@ -54,6 +55,9 @@ def build_config_settings(
         "valid_frames_to_ok": thresholds.valid_frames_to_ok,
         "ema_tau_seconds": tau_seconds,
     }
+    if analysis_interval_ms is not None:
+        settings["analysis_interval_ms"] = analysis_interval_ms
+    return settings
 
 
 def config_fingerprint(settings: Mapping[str, object]) -> str:
@@ -81,6 +85,7 @@ class SessionRecorder:
         landmark_model_sha256: str,
         app_version: str,
         lock_digest: str,
+        analysis_interval_ms: int | None = None,
         history_capacity: int = DEFAULT_HISTORY_CAPACITY,
     ) -> None:
         if history_capacity < 1:
@@ -90,6 +95,7 @@ class SessionRecorder:
             metric_config,
             thresholds,
             tau_seconds=tau_seconds,
+            analysis_interval_ms=analysis_interval_ms,
         )
         self._fingerprint = config_fingerprint(self._settings)
         self._landmark_model_version = landmark_model_version

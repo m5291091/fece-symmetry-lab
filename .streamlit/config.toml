@@ -15,6 +15,11 @@ showErrorDetails = "none"
 toolbarMode = "minimal"
 
 [theme]
+base = "dark"
+primaryColor = "#38BDF8"
+backgroundColor = "#07111F"
+secondaryBackgroundColor = "#111C2E"
+textColor = "#F8FAFC"
 baseRadius = "medium"
 buttonRadius = "full"
 showWidgetBorder = true

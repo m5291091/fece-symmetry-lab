@@ -38,10 +38,16 @@ def _outcome(*, ok: bool = True) -> AnalysisOutcome:
 def test_overlay_lines_put_scores_and_pose_in_the_camera_view() -> None:
     lines = metric_overlay_lines(_outcome())
 
-    assert lines[0] == "STATUS OK"
+    assert lines[0] == "LIVE SAMPLE | OK"
     assert "OVERALL 81.2" in lines
     assert any("C 80.0" in line for line in lines)
     assert any("YAW +1.2" in line for line in lines)
+
+
+def test_overlay_labels_reused_numbers_as_the_last_sample() -> None:
+    lines = metric_overlay_lines(_outcome(), current_sample=False)
+
+    assert lines[0] == "LAST SAMPLE | OK"
 
 
 def test_missing_scores_are_shown_as_missing_not_zero() -> None:
@@ -58,5 +64,6 @@ def test_camera_overlay_is_high_contrast_and_does_not_mutate_the_source() -> Non
 
     assert painted is not source
     assert np.array_equal(source, np.full_like(source, 220))
-    assert painted[:180, :520].min() < 30
-    assert painted[:180, :520].max() > 220
+    assert painted[:230, :650].min() < 30
+    assert painted[:230, :650].max() > 220
+    assert float(painted[210, 20].mean()) < 80

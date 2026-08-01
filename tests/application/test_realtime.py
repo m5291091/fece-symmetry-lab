@@ -57,6 +57,17 @@ class StepClock:
         return value
 
 
+class ManualClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 class StubAnalyzer:
     def __init__(self) -> None:
         self.reset_calls = 0
@@ -105,6 +116,7 @@ def _pipeline(landmarker: FakeLandmarker, **kwargs: object) -> RealtimeLandmarkP
     return RealtimeLandmarkPipeline(
         landmarker=landmarker,
         clock=StepClock(),
+        analysis_interval_ms=0,
         **kwargs,  # type: ignore[arg-type]
     )
 
@@ -154,13 +166,51 @@ def test_frame_ids_and_timestamps_increase_monotonically() -> None:
 
 def test_timestamps_stay_strictly_increasing_under_a_stalled_clock() -> None:
     landmarker = FakeLandmarker()
-    pipeline = RealtimeLandmarkPipeline(landmarker=landmarker, clock=lambda: 1.0)
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=lambda: 1.0,
+        analysis_interval_ms=0,
+    )
 
     pipeline.process(_rgb())
     pipeline.process(_rgb())
 
     timestamps = [call[1] for call in landmarker.calls]
     assert timestamps[1] > timestamps[0]
+
+
+def test_pipeline_samples_latest_frames_at_default_cadence() -> None:
+    clock = ManualClock()
+    landmarker = FakeLandmarker()
+    pipeline = RealtimeLandmarkPipeline(landmarker=landmarker, clock=clock)
+
+    _, first = pipeline.process_with_analysis(_rgb())
+    skipped_frame, second = pipeline.process_with_analysis(_rgb())
+    clock.advance(0.124)
+    pipeline.process_with_analysis(_rgb())
+    clock.advance(0.001)
+    _, fourth = pipeline.process_with_analysis(_rgb())
+
+    assert first is None  # No analyzer is attached, but landmark inference ran.
+    assert second is None
+    assert fourth is None
+    assert skipped_frame.sum() == 0
+    assert len(landmarker.calls) == 2
+    assert pipeline.snapshot().throttled_frames == 2
+
+
+def test_pipeline_reset_allows_an_immediate_sample() -> None:
+    clock = ManualClock()
+    landmarker = FakeLandmarker()
+    pipeline = RealtimeLandmarkPipeline(landmarker=landmarker, clock=clock)
+
+    pipeline.process(_rgb())
+    pipeline.process(_rgb())
+    pipeline.reset_analysis()
+    pipeline.process(_rgb())
+
+    assert len(landmarker.calls) == 2
+    assert pipeline.snapshot().throttled_frames == 0
 
 
 def test_a_busy_analyzer_returns_the_raw_frame_instead_of_queueing() -> None:

@@ -106,6 +106,40 @@ def test_callback_draws_numeric_status_over_the_camera_image() -> None:
     assert result[:150, :500].sum() > 0
 
 
+def test_callback_keeps_the_latest_numbers_without_reusing_landmarks(monkeypatch) -> None:
+    from face_symmetry_lab.ui import camera
+
+    overlay_calls: list[tuple[AnalysisOutcome | None, bool]] = []
+
+    def record_overlay(
+        rgb_image: np.ndarray,
+        outcome: AnalysisOutcome | None,
+        *,
+        current_sample: bool,
+    ) -> np.ndarray:
+        overlay_calls.append((outcome, current_sample))
+        return rgb_image
+
+    monkeypatch.setattr(camera, "draw_camera_metrics", record_overlay)
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=StubLandmarker(),
+        analyzer=OverlayAnalyzer(),  # type: ignore[arg-type]
+        clock=lambda: 0.0,
+    )
+    callback = build_video_frame_callback(pipeline)
+    source = av.VideoFrame.from_ndarray(np.zeros((48, 64, 3), dtype=np.uint8), format="rgb24")
+
+    first = callback(source).to_ndarray(format="rgb24")
+    second = callback(source).to_ndarray(format="rgb24")
+
+    assert overlay_calls[0][0] is not None
+    assert overlay_calls[0][1] is True
+    assert overlay_calls[1][0] is overlay_calls[0][0]
+    assert overlay_calls[1][1] is False
+    assert first.sum() > 0  # Only the sampled frame has fresh landmark geometry.
+    assert second.sum() == 0
+
+
 def test_callback_never_raises_when_the_pipeline_fails() -> None:
     class BrokenPipeline:
         def process(self, rgb_image: np.ndarray) -> np.ndarray:

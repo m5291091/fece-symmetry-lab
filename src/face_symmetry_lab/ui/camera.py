@@ -31,6 +31,7 @@ from face_symmetry_lab.adapters.io.metric_config import load_metric_config
 from face_symmetry_lab.adapters.io.model_store import file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.realtime import (
+    DEFAULT_ANALYSIS_INTERVAL_MS,
     PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
@@ -75,7 +76,12 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
         try:
             rgb = np.asarray(frame.to_ndarray(format="rgb24"), dtype=np.uint8)
             painted, analysis = pipeline.process_with_analysis(rgb)
-            painted = draw_camera_metrics(painted, analysis)
+            latest = analysis if analysis is not None else pipeline.snapshot().analysis
+            painted = draw_camera_metrics(
+                painted,
+                latest,
+                current_sample=analysis is not None,
+            )
             annotated = av.VideoFrame.from_ndarray(painted, format="rgb24")
         except Exception:
             # Returning the source frame keeps the preview alive (NFR-017).
@@ -104,11 +110,13 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         landmark_model_sha256=landmarker.model_sha256,
         app_version=__version__,
         lock_digest=file_sha256(LOCK_PATH),
+        analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
     )
     return RealtimeLandmarkPipeline(
         landmarker=landmarker,
         analyzer=analyzer,
         recorder=recorder,
+        analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
     )
 
 
@@ -132,22 +140,37 @@ def release_session_pipeline() -> None:
 def _render_status_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     """Poll the immutable snapshot at 5 Hz without blocking the main script."""
     _render_snapshot(pipeline.snapshot())
-    _render_export_panel(pipeline)
 
 
 def _render_snapshot(snapshot: PipelineSnapshot) -> None:
-    st.write(_STATUS_MESSAGES[snapshot.status])
-    tracking, points, dropped = st.columns(3)
-    tracking.metric("追跡状態", snapshot.status.value)
-    points.metric("ランドマーク点数", snapshot.landmark_count)
-    dropped.metric("スキップしたフレーム", snapshot.dropped_frames)
-    st.caption(f"最新フレーム #{snapshot.frame_id} / 処理時間 {snapshot.processing_ms:.1f} ms")
-    if snapshot.needs_recovery:
-        st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
+    with st.container(border=True):
+        message = _STATUS_MESSAGES[snapshot.status]
+        if snapshot.status is TrackingStatus.ERROR:
+            st.error(message)
+        elif snapshot.status is TrackingStatus.MULTI_FACE:
+            st.warning(message)
+        elif snapshot.status is TrackingStatus.SINGLE_FACE:
+            st.success(message)
+        else:
+            st.info(message)
 
-    if snapshot.analysis is not None:
-        st.divider()
-        render_scores(snapshot.analysis)
+        tracking, points = st.columns(2)
+        tracking.metric("追跡状態", snapshot.status.value)
+        points.metric("ランドマーク点数", snapshot.landmark_count)
+        sampled, busy = st.columns(2)
+        sampled.metric("プレビュー専用フレーム", snapshot.throttled_frames)
+        busy.metric("処理中スキップ", snapshot.dropped_frames)
+        st.caption(
+            f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
+            f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
+        )
+        if snapshot.needs_recovery:
+            st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
+
+        if snapshot.analysis is not None:
+            st.divider()
+            st.caption("カメラ映像の LAST SAMPLE と同じ直近の解析値です。")
+            render_scores(snapshot.analysis)
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -188,7 +211,8 @@ def render_camera_section() -> None:
     st.subheader("リアルタイム ランドマーク表示")
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "状態・左右差・姿勢の数値はカメラ映像の左上にも表示します。"
+        "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
+        "状態・左右差・姿勢の数値はカメラ映像の左上にも大きく表示します。"
     )
 
     model_path = resolve_ready_landmarker()
@@ -201,20 +225,28 @@ def render_camera_section() -> None:
         st.error(str(error))
         return
 
-    context = webrtc_streamer(
-        key=WEBRTC_KEY,
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=LOOPBACK_RTC_CONFIGURATION,
-        media_stream_constraints=MEDIA_STREAM_CONSTRAINTS,
-        video_frame_callback=build_video_frame_callback(pipeline),
-        async_processing=True,
-    )
+    preview_column, result_column = st.columns([7, 5], gap="large")
+    with preview_column:
+        context = webrtc_streamer(
+            key=WEBRTC_KEY,
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=LOOPBACK_RTC_CONFIGURATION,
+            media_stream_constraints=MEDIA_STREAM_CONSTRAINTS,
+            video_frame_callback=build_video_frame_callback(pipeline),
+            async_processing=True,
+        )
+
+    with result_column:
+        st.markdown("#### ライブ解析")
+        if context.state.playing:
+            _render_status_panel(pipeline)
+        else:
+            st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
 
     if not context.state.playing:
-        st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
         return
 
-    _render_status_panel(pipeline)
+    _render_export_panel(pipeline)
 
     st.caption("カメラ映像は `STOP` で停止します。")
     controls = st.columns(2)

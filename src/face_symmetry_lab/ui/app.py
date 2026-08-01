@@ -331,13 +331,22 @@ def render_app() -> None:
         page_icon="🪞",
         layout="wide",
     )
-    st.title("Face Symmetry Lab")
-    st.caption("Local processing · 画像非保存 · 研究用")
-    st.write(
-        "顔のランドマークと、モデルが推定した参考年齢帯を端末内で確認するアプリです。"
-        "リアルタイム映像ではランドマーク、左右差スコア、姿勢角を重ねて表示し、"
-        "数値履歴を再現性メタデータ付きの CSV / JSON として保存できます。"
-        "感度係数の校正が完了するまでは、左右差の数値は同一条件での相対比較専用です。"
+    with st.container(border=True):
+        st.title("Face Symmetry Lab")
+        st.caption("LOCAL PROCESSING · NO IMAGE STORAGE · RESEARCH USE")
+        st.write(
+            "顔のランドマークと、モデルが推定した参考年齢帯を端末内で確認します。"
+            "リアルタイム映像には左右差スコアと姿勢角を重ね、"
+            "数値履歴は再現性メタデータ付きの CSV / JSON として保存できます。"
+        )
+        boundary, metric, cadence = st.columns(3)
+        boundary.metric("処理境界", "端末内のみ")
+        metric.metric("左右差指標", "相対比較専用")
+        cadence.metric("カメラ解析", "最大 8 Hz")
+
+    st.info(
+        "感度係数の固定評価セット校正は未完了です。"
+        "左右差の数値は、同一人物・同一環境での相対変化だけを参照してください。"
     )
 
     with st.expander("利用前に確認してください", expanded=True):
@@ -363,6 +372,7 @@ def render_app() -> None:
         key=INPUT_MODE_STATE_KEY,
         on_change=_switch_input_mode,
     )
+    st.divider()
 
     if input_mode == INPUT_MODE_CAMERA:
         render_camera_section()
