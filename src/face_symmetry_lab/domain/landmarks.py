@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
 
+import numpy as np
+from numpy.typing import NDArray
+
+from face_symmetry_lab.domain.pose import FacePose
+
 #: Face Landmarker returns 478 points; the frame contract does not require it,
 #: so downstream code can also work with reduced fixtures.
 FACE_LANDMARK_COUNT = 478
@@ -36,6 +41,18 @@ class LandmarkFrame:
     frame_id: int
     face_count: int
     points: tuple[tuple[float, float], ...] = ()
+    pose: FacePose | None = None
+    width: int = 0
+    height: int = 0
+
+    @property
+    def face_area_ratio(self) -> float | None:
+        """Bounding-box area of the landmarks, as a fraction of the frame."""
+        if not self.has_single_face or not self.points:
+            return None
+        xs = [x for x, _ in self.points]
+        ys = [y for _, y in self.points]
+        return float((max(xs) - min(xs)) * (max(ys) - min(ys)))
 
     @property
     def has_single_face(self) -> bool:
@@ -55,6 +72,9 @@ def build_landmark_frame(
     frame_id: int,
     face_count: int,
     points: tuple[tuple[float, float], ...] = (),
+    pose: FacePose | None = None,
+    width: int = 0,
+    height: int = 0,
 ) -> LandmarkFrame:
     """Validate a detection result before it can reach the overlay or the UI."""
     if frame_id < 0:
@@ -63,10 +83,35 @@ def build_landmark_frame(
         raise LandmarkError("face_count は 0 以上である必要があります。")
     if face_count != 1 and points:
         raise LandmarkError("単一顔のフレームだけがランドマークを保持できます。")
+    if width < 0 or height < 0:
+        raise LandmarkError("画像サイズは 0 以上である必要があります。")
     for x, y in points:
         if not (isfinite(x) and isfinite(y)):
             raise LandmarkError("ランドマーク座標は有限値である必要があります。")
-    return LandmarkFrame(frame_id=frame_id, face_count=face_count, points=points)
+    if pose is not None and not all(
+        isfinite(value) for value in (pose.yaw_deg, pose.pitch_deg, pose.roll_deg)
+    ):
+        raise LandmarkError("姿勢角は有限値である必要があります。")
+    return LandmarkFrame(
+        frame_id=frame_id,
+        face_count=face_count,
+        points=points,
+        pose=pose,
+        width=width,
+        height=height,
+    )
+
+
+def to_pixel_array(frame: LandmarkFrame) -> NDArray[np.float64]:
+    """Landmarks in pixel coordinates, for metrics that must not be aspect-warped."""
+    if frame.width <= 0 or frame.height <= 0:
+        raise LandmarkError("画素座標に戻すには画像サイズが必要です。")
+    if not frame.has_single_face:
+        raise LandmarkError("単一顔のフレームだけを画素座標へ変換できます。")
+    return np.array(
+        [(x * frame.width, y * frame.height) for x, y in frame.points],
+        dtype=np.float64,
+    )
 
 
 def to_pixel_points(

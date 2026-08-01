@@ -24,6 +24,19 @@ class ReasonCode(StrEnum):
     POSTURE = "POSTURE"
     DISTANCE = "DISTANCE"
     LOW_QUALITY = "LOW_QUALITY"
+    # §6.3 codes. The five above predate this table and are kept for callers
+    # that only need the coarse category.
+    OFF_AXIS_YAW = "OFF_AXIS_YAW"
+    OFF_AXIS_PITCH = "OFF_AXIS_PITCH"
+    OFF_AXIS_ROLL = "OFF_AXIS_ROLL"
+    TOO_CLOSE = "TOO_CLOSE"
+    TOO_FAR = "TOO_FAR"
+    UNSTABLE = "UNSTABLE"
+    LOW_CONFIDENCE = "LOW_CONFIDENCE"
+    LOW_LIGHT = "LOW_LIGHT"
+    OVEREXPOSED = "OVEREXPOSED"
+    BLUR = "BLUR"
+    STALE_RESULT = "STALE_RESULT"
 
 
 class AgeBand(StrEnum):
@@ -47,6 +60,9 @@ class AnalysisState(BaseModel):
 
     status: Status
     reason: ReasonCode | None = None
+    #: §6.2 keeps blocking reasons and non-blocking warnings apart.
+    reason_codes: tuple[ReasonCode, ...] = ()
+    warning_codes: tuple[ReasonCode, ...] = ()
 
 
 class SymmetryScore(BaseModel):
