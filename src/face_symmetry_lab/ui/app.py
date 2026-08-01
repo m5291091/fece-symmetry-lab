@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import streamlit as st
+from streamlit.delta_generator import DeltaGenerator
 
 from face_symmetry_lab import __version__
 from face_symmetry_lab.adapters.export.session_exporter import (
@@ -60,6 +61,9 @@ IMAGE_LANDMARKER_STATE_KEY = "image_landmarker"
 IMAGE_LANDMARKER_PATH_KEY = "image_landmarker_path"
 IMAGE_RECORDER_STATE_KEY = "image_session_recorder"
 IMAGE_RECORDED_INPUT_KEY = "image_recorded_input"
+CONSENT_PRIVACY_KEY = "consent_privacy"
+CONSENT_RESEARCH_KEY = "consent_research"
+CONSENT_RIGHTS_KEY = "consent_rights"
 
 _IMAGE_STATUS_MESSAGES = {
     TrackingStatus.NO_FACE: (
@@ -179,12 +183,17 @@ def _render_image_landmarks(
     rgb: np.ndarray,
     *,
     input_fingerprint: str,
-) -> tuple[SessionRecorder | None, LandmarkFrame | None]:
-    """Detect, draw, and score one uploaded photo (stateless, §8.7)."""
+) -> tuple[SessionRecorder | None, LandmarkFrame | None, DeltaGenerator | None]:
+    """Detect, draw, and score one uploaded photo (stateless, §8.7).
+
+    Returns the score-side column so the caller can append the age/gender
+    panel into the same column, keeping every result beside the photo
+    instead of in a separate section the user has to scroll to.
+    """
     st.subheader("静止画のランドマークと左右差")
     model_path = resolve_ready_landmarker()
     if model_path is None:
-        return None, None
+        return None, None, None
 
     show_midline = st.toggle(
         "顔の中心線を表示",
@@ -206,7 +215,7 @@ def _render_image_landmarks(
         processing_ms = (time.monotonic() - started) * 1000.0
     except (LandmarkDetectionError, MetricConfigError) as error:
         st.error(str(error))
-        return None, None
+        return None, None, None
 
     recorder = _session_image_recorder(landmarker, config)
     if st.session_state.get(IMAGE_RECORDED_INPUT_KEY) != input_fingerprint:
@@ -222,15 +231,17 @@ def _render_image_landmarks(
         st.session_state[IMAGE_RECORDED_INPUT_KEY] = input_fingerprint
 
     landmarks = analysis.landmarks
-    preview_column, status_column = st.columns([7, 5])
+    preview_column, status_column = st.columns([7, 5], gap="large")
     with preview_column:
         st.image(landmarks.preview, caption="検出したランドマーク", width="stretch")
-        st.caption(_IMAGE_STATUS_MESSAGES[landmarks.frame.status])
-        st.caption(f"ランドマーク点数 {landmarks.landmark_count}")
+        st.caption(
+            f"{_IMAGE_STATUS_MESSAGES[landmarks.frame.status]} "
+            f"入力 {rgb.shape[1]} × {rgb.shape[0]} · ランドマーク点数 {landmarks.landmark_count}"
+        )
     with status_column:
         # Still images are stateless, so the raw value is shown directly (§8.7).
         render_scores(analysis.outcome, show_smoothed=False)
-    return recorder, landmarks.frame
+    return recorder, landmarks.frame, status_column
 
 
 def _render_image_section() -> None:
@@ -241,7 +252,7 @@ def _render_image_section() -> None:
         on_change=_clear_session_result,
     )
     if uploaded is None:
-        st.info("18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を別々に表示します。")
+        st.info("18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を写真の横に並べて表示します。")
         return
 
     uploaded_bytes = uploaded.getvalue()
@@ -252,15 +263,10 @@ def _render_image_section() -> None:
         return
 
     rgb = np.asarray(decoded.rgb, dtype=np.uint8)
-    recorder, landmark_frame = _render_image_landmarks(
+    recorder, landmark_frame, result_column = _render_image_landmarks(
         rgb,
         input_fingerprint=sha256(uploaded_bytes).hexdigest(),
     )
-
-    st.divider()
-    st.subheader("モデル推定の参考年齢・参考性別")
-    st.caption(f"入力画像 {decoded.width} × {decoded.height}")
-    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
 
     age_input: np.ndarray | None = None
     if landmark_frame is not None:
@@ -272,39 +278,46 @@ def _render_image_section() -> None:
     demographic_model = resolve_ready_demographic()
     model_ready = demographic_model is not None
 
-    action_column, result_column = st.columns([7, 5])
-    with action_column:
-        analyze = st.button(
-            "参考年齢・参考性別を推定",
-            type="primary",
-            disabled=not model_ready or age_input is None,
-        )
-        if st.button("セッション結果をリセット"):
-            _clear_session_result()
-            st.rerun()
+    # Rendered into the same column as the symmetry scores (§5.1): every
+    # result stays beside the photo instead of in a section below it.
+    if result_column is not None:
+        with result_column:
+            st.divider()
+            st.caption(
+                "runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳"
+            )
+            analyze_column, reset_column = st.columns(2)
+            analyze = analyze_column.button(
+                "参考年齢・参考性別を推定",
+                type="primary",
+                disabled=not model_ready or age_input is None,
+                width="stretch",
+            )
+            if reset_column.button("結果をリセット", width="stretch"):
+                _clear_session_result()
+                st.rerun()
 
-    if analyze:
-        try:
-            if demographic_model is None:
-                raise DemographicInferenceError("検証済みの年齢・性別モデルがありません。")
-            onnx_path, model_version = demographic_model
-            estimator = _session_estimator(onnx_path, model_version)
-            if age_input is None:
-                raise DemographicInferenceError("単一顔のcropを作成できません。")
-            estimate = estimator.estimate(age_input)
-            st.session_state[RESULT_STATE_KEY] = estimate
-            if recorder is not None:
-                recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
-        except DemographicInferenceError as error:
-            _clear_session_result()
-            st.error(str(error))
+            if analyze:
+                try:
+                    if demographic_model is None:
+                        raise DemographicInferenceError("検証済みの年齢・性別モデルがありません。")
+                    onnx_path, model_version = demographic_model
+                    estimator = _session_estimator(onnx_path, model_version)
+                    if age_input is None:
+                        raise DemographicInferenceError("単一顔のcropを作成できません。")
+                    estimate = estimator.estimate(age_input)
+                    st.session_state[RESULT_STATE_KEY] = estimate
+                    if recorder is not None:
+                        recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
+                except DemographicInferenceError as error:
+                    _clear_session_result()
+                    st.error(str(error))
 
-    with result_column:
-        session_estimate = st.session_state.get(RESULT_STATE_KEY)
-        if isinstance(session_estimate, DemographicEstimate):
-            render_demographic_estimate(session_estimate)
-        else:
-            st.info("モデル準備後にボタンを押すと、18〜75歳向けの参考値を表示します。")
+            session_estimate = st.session_state.get(RESULT_STATE_KEY)
+            if isinstance(session_estimate, DemographicEstimate):
+                render_demographic_estimate(session_estimate)
+            else:
+                st.info("ボタンを押すと、18〜75歳向けの参考値を表示します。")
 
     if recorder is not None:
         _render_image_export(recorder)
@@ -354,16 +367,25 @@ def render_app() -> None:
             "照明・ぼけgate、同一端末での再撮影評価が必要です。"
         )
 
-    with st.expander("利用前に確認してください", expanded=True):
+    # Collapsed once already agreed to (from the prior run's widget state), so
+    # returning users are not forced to scroll past it on every rerun.
+    already_consented = all(
+        st.session_state.get(key, False)
+        for key in (CONSENT_PRIVACY_KEY, CONSENT_RESEARCH_KEY, CONSENT_RIGHTS_KEY)
+    )
+    with st.expander("利用前に確認してください", expanded=not already_consented):
         consent_privacy = st.checkbox(
-            "映像と画像は端末内のメモリだけで処理され、アプリは保存・外部送信しません。"
+            "映像と画像は端末内のメモリだけで処理され、アプリは保存・外部送信しません。",
+            key=CONSENT_PRIVACY_KEY,
         )
         consent_research = st.checkbox(
             "私は18〜75歳です。結果は参考値であり、実年齢、自己認識・法的性別、"
-            "肌質・医学的状態、人物の価値を示さないことに同意します。"
+            "肌質・医学的状態、人物の価値を示さないことに同意します。",
+            key=CONSENT_RESEARCH_KEY,
         )
         consent_rights = st.checkbox(
-            "本人の映像・画像、または分析する明示的な権限・同意があるものだけを使用します。"
+            "本人の映像・画像、または分析する明示的な権限・同意があるものだけを使用します。",
+            key=CONSENT_RIGHTS_KEY,
         )
 
     consented = consent_privacy and consent_research and consent_rights

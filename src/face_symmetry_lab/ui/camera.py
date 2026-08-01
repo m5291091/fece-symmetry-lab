@@ -373,13 +373,32 @@ def render_camera_section() -> None:
         st.error(str(error))
         return
 
-    show_midline = st.toggle(
-        "顔の中心線を表示",
-        value=True,
-        key="camera_midline_enabled",
-        help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
-    )
+    # One compact row for every display toggle, instead of stacking each on
+    # its own line, to keep the controls above the video short.
+    midline_column, demographic_column = st.columns(2)
+    with midline_column:
+        show_midline = st.toggle(
+            "顔の中心線を表示",
+            value=True,
+            key="camera_midline_enabled",
+            help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+        )
+    with demographic_column:
+        demographic_model_ready = resolve_ready_demographic() is not None
+        show_demographics = st.toggle(
+            "年齢・性別の参考値を表示",
+            value=True,
+            key="camera_demographic_enabled",
+            disabled=not demographic_model_ready,
+            help=(
+                "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
+                "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
+            ),
+        )
+        if not demographic_model_ready:
+            st.caption("年齢・性別モデルが未配置のため使用できません。")
     pipeline.set_midline_enabled(show_midline)
+    pipeline.set_demographic_enabled(show_demographics)
 
     brightness_column, background_column = st.columns(2)
     with brightness_column:
@@ -407,21 +426,6 @@ def render_camera_section() -> None:
             pipeline.set_background_mode(background_mode)
         else:
             st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
-
-    demographic_model_ready = resolve_ready_demographic() is not None
-    show_demographics = st.toggle(
-        "年齢・性別の参考値を表示",
-        value=True,
-        key="camera_demographic_enabled",
-        disabled=not demographic_model_ready,
-        help=(
-            "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
-            "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
-        ),
-    )
-    if not demographic_model_ready:
-        st.caption("年齢・性別モデルが未配置のため、この機能は使用できません。")
-    pipeline.set_demographic_enabled(show_demographics)
 
     _render_advanced_settings(pipeline)
 
