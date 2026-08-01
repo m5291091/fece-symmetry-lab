@@ -22,12 +22,19 @@ MediaPipe Face Landmarker (`face_landmarker.task`)
   Notes     : Redistribution is permitted under Apache-2.0. This repository does
               not redistribute the file; it is downloaded locally on request.
 
-Age-band MobileNetV2 (`age_mobilenetv2_utkface_v1.onnx`)
-  Licence   : not distributed with this repository. The weights are produced in a
-              separate training environment from UTKFace-derived data. UTKFace is
-              published for non-commercial research use only, so the resulting
-              model inherits that restriction and MUST NOT be redistributed here.
-  Card      : docs/model-cards/age-mobilenetv2-utkface-v1.md
+Open Model Zoo Age/Gender Recognition Retail 0013 (OpenVINO IR FP16)
+  Version   : Open Model Zoo 2023.0 / FP16
+  Source    : https://storage.openvinotoolkit.org/repositories/open_model_zoo/
+              2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/
+  XML SHA-256: 2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067
+  BIN SHA-256: 7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13
+  Licence   : Apache License 2.0
+              https://www.apache.org/licenses/LICENSE-2.0
+  Copyright : Copyright Intel Corporation
+  Card      : docs/model-cards/openvino-age-gender-retail-0013.md
+  Notes     : Commercial use, modification, and redistribution are permitted
+              subject to Apache-2.0. This repository does not redistribute the
+              files; they are downloaded locally on explicit request.
 
 
 Derived configuration

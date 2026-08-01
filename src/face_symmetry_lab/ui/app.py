@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from hashlib import sha256
 from pathlib import Path
@@ -43,13 +42,14 @@ from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
     render_camera_section,
 )
-from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
+from face_symmetry_lab.ui.model_setup import (
+    landmark_asset,
+    resolve_ready_demographic,
+    resolve_ready_landmarker,
+)
 from face_symmetry_lab.ui.scores import render_scores
 
 APP_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DEMOGRAPHIC_XML = APP_ROOT / "models" / "age-gender-recognition-retail-0013.xml"
-DEFAULT_DEMOGRAPHIC_BIN = APP_ROOT / "models" / "age-gender-recognition-retail-0013.bin"
-DEMOGRAPHIC_MODEL_VERSION = "open-model-zoo/age-gender-recognition-retail-0013"
 ESTIMATOR_STATE_KEY = "demographic_estimator"
 ESTIMATOR_PATH_KEY = "demographic_estimator_paths"
 RESULT_STATE_KEY = "demographic_estimate"
@@ -71,20 +71,17 @@ _IMAGE_STATUS_MESSAGES = {
 }
 
 
-def _configured_model_paths() -> tuple[Path, Path]:
-    configured_xml = os.environ.get("FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH")
-    configured_bin = os.environ.get("FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH")
-    xml_path = Path(configured_xml).expanduser() if configured_xml else DEFAULT_DEMOGRAPHIC_XML
-    bin_path = Path(configured_bin).expanduser() if configured_bin else DEFAULT_DEMOGRAPHIC_BIN
-    return xml_path, bin_path
-
-
-def _session_estimator(xml_path: Path, bin_path: Path) -> OpenCvDemographicEstimator:
+def _session_estimator(
+    xml_path: Path,
+    bin_path: Path,
+    model_version: str,
+) -> OpenCvDemographicEstimator:
     xml_stat = xml_path.stat()
     bin_stat = bin_path.stat()
     path_fingerprint = (
         f"{xml_path.resolve()}:{xml_stat.st_size}:{xml_stat.st_mtime_ns}:"
-        f"{bin_path.resolve()}:{bin_stat.st_size}:{bin_stat.st_mtime_ns}"
+        f"{bin_path.resolve()}:{bin_stat.st_size}:{bin_stat.st_mtime_ns}:"
+        f"{model_version}"
     )
     if (
         st.session_state.get(ESTIMATOR_PATH_KEY) != path_fingerprint
@@ -93,7 +90,7 @@ def _session_estimator(xml_path: Path, bin_path: Path) -> OpenCvDemographicEstim
         st.session_state[ESTIMATOR_STATE_KEY] = OpenCvDemographicEstimator(
             xml_path=xml_path,
             bin_path=bin_path,
-            model_version=DEMOGRAPHIC_MODEL_VERSION,
+            model_version=model_version,
         )
         st.session_state[ESTIMATOR_PATH_KEY] = path_fingerprint
     estimator = st.session_state[ESTIMATOR_STATE_KEY]
@@ -295,7 +292,7 @@ def _render_image_section() -> None:
     st.divider()
     st.subheader("モデル推定の参考年齢・参考性別")
     st.caption(f"入力画像 {decoded.width} × {decoded.height}")
-    st.caption("runtime: OpenCV DNN CPU · 候補モデル: Open Model Zoo / 対象18〜75歳")
+    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16 / 対象18〜75歳")
 
     age_input: np.ndarray | None = None
     if landmark_frame is not None:
@@ -304,20 +301,8 @@ def _render_image_section() -> None:
         except ImageInputError:
             age_input = None
 
-    xml_path, bin_path = _configured_model_paths()
-    model_ready = xml_path.is_file() and bin_path.is_file()
-    if model_ready:
-        st.warning(
-            f"ローカル年齢・性別モデル候補: {xml_path.name} / {bin_path.name}。"
-            "実行時SHA-256は記録しますが、配布manifestの承認は未完了です。"
-        )
-    else:
-        st.warning(
-            "年齢・性別モデルが未配置です。XML/BINを`models/`へ配置するか、"
-            "`FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH`と"
-            "`FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH`を設定してください。"
-            "配布URL・ライセンス・SHA-256が確定するまでは自動取得しません。"
-        )
+    demographic_model = resolve_ready_demographic()
+    model_ready = demographic_model is not None
 
     action_column, result_column = st.columns([7, 5])
     with action_column:
@@ -332,7 +317,10 @@ def _render_image_section() -> None:
 
     if analyze:
         try:
-            estimator = _session_estimator(xml_path, bin_path)
+            if demographic_model is None:
+                raise DemographicInferenceError("検証済みの年齢・性別モデルがありません。")
+            xml_path, bin_path, model_version = demographic_model
+            estimator = _session_estimator(xml_path, bin_path, model_version)
             if age_input is None:
                 raise DemographicInferenceError("単一顔のcropを作成できません。")
             estimate = estimator.estimate(age_input)

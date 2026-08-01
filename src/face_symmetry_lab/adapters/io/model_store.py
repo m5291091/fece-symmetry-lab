@@ -28,7 +28,9 @@ DEFAULT_MANIFEST_PATH = APP_ROOT / "configs" / "model-manifest.json"
 DEFAULT_MODELS_DIR = APP_ROOT / "models"
 
 #: §10.6 requires a fixed allow list rather than arbitrary download targets.
-ALLOWED_MODEL_HOSTS: Final[frozenset[str]] = frozenset({"storage.googleapis.com"})
+ALLOWED_MODEL_HOSTS: Final[frozenset[str]] = frozenset(
+    {"storage.googleapis.com", "storage.openvinotoolkit.org"}
+)
 
 #: Hard ceiling so a misbehaving host cannot fill the disk.
 MAX_MODEL_BYTES: Final[int] = 512 * 1024 * 1024
@@ -128,6 +130,17 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def asset_status(path: Path, asset: ModelAsset) -> InstallStatus:
+    """Verify one local path against a pinned manifest entry without network I/O."""
+    if not path.is_file():
+        return InstallStatus.MISSING
+    if path.stat().st_size != asset.size_bytes:
+        return InstallStatus.MISMATCH
+    if file_sha256(path) != asset.sha256:
+        return InstallStatus.MISMATCH
+    return InstallStatus.READY
+
+
 class ModelStore:
     """Local model directory with manifest-verified installs."""
 
@@ -149,14 +162,7 @@ class ModelStore:
 
     def status(self, asset: ModelAsset) -> InstallStatus:
         """Check the local file only. Never touches the network."""
-        path = self.path_for(asset)
-        if not path.is_file():
-            return InstallStatus.MISSING
-        if path.stat().st_size != asset.size_bytes:
-            return InstallStatus.MISMATCH
-        if file_sha256(path) != asset.sha256:
-            return InstallStatus.MISMATCH
-        return InstallStatus.READY
+        return asset_status(self.path_for(asset), asset)
 
     def install(self, asset: ModelAsset) -> Path:
         """Download, verify, and atomically install. Explicit action only."""

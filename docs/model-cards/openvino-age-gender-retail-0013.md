@@ -3,12 +3,25 @@
 | 項目 | 内容 |
 |---|---|
 | name | `age-gender-recognition-retail-0013` |
-| version | `open-model-zoo/age-gender-recognition-retail-0013` |
+| version | `open-model-zoo/2023.0/FP16` |
 | upstream | Open Model Zoo / Intel |
-| status | adapter実装済み、配布asset未登録（OD-07 open） |
+| asset release | Open Model Zoo 2023.0 / FP16 |
+| status | manifest登録・adapter実装済み。parity、slice評価、3 OS smokeは未完（OD-07 open） |
 | runtime | `opencv-contrib-python` DNN / CPU |
 | format | OpenVINO IR XML + BIN |
-| license | Open Model Zoo repositoryはApache-2.0。配布assetの法務確認は未完了 |
+| license | Apache-2.0。条件に従う商用利用・改変・再配布が可能 |
+
+## 固定asset
+
+| file | size | SHA-256 |
+|---|---:|---|
+| `age-gender-recognition-retail-0013.xml` | 62,543 bytes | `2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067` |
+| `age-gender-recognition-retail-0013.bin` | 4,276,038 bytes | `7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13` |
+
+- XML: `https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml`
+- BIN: `https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.bin`
+- combined SHA-256: `b2917f682865b378589103a46442b3ed6de97ff48e3425a192c96d690bfa5a5e`
+- 配布物はrepositoryへ同梱せず、明示的なbootstrap操作で取得して個別hashを検証する。
 
 ## 意図された用途
 
@@ -20,7 +33,7 @@
 - 年齢出力: `fc3_a`、shape `1×1×1×1`。値を100倍した年齢。
 - 性別出力: `prob`、shape `1×2×1×1`、順序`[female, male]`。
 - 18未満または75超の出力、NaN/Inf、不正shapeは結果を出さず、左右差分析を継続する。
-- model identity: XMLとBINの各SHA-256を文字列化した組み合わせSHA-256。
+- model identity: `sha256("xml:" + XML_SHA256 + "\nbin:" + BIN_SHA256)`。
 
 ## 上流公開評価
 
@@ -36,9 +49,9 @@
 
 ## Release gate
 
-次が揃うまでXML/BINをmanifestへ登録せず、正式モデルとして自動取得しない。
+固定URL、size、個別SHA-256、license inventoryのmanifest登録は完了した。モデル取得は引き続き明示操作だけに限定する。一般リリースには次が残る。
 
-1. XML/BINの固定URL、size、個別SHA-256、license inventory。
-2. 固定評価で参照runtimeとの年齢差0.1年以内、性別確率差`1e-4`以内。
-3. 年齢・性別・肌色・撮影条件slice評価とlimitations。
-4. 実モデルsmokeと3 OS runtime確認。
+1. 固定評価で参照runtimeとの年齢差0.1年以内、性別確率差`1e-4`以内。
+2. 年齢・性別・肌色・撮影条件slice評価とlimitations。
+3. 実モデルsmokeと3 OS runtime確認。
+4. 非公開の内部validation datasetについて、学習データのlicense・同意根拠・保持方針を確認できない制約の法務判断。

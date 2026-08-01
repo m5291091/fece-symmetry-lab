@@ -35,9 +35,9 @@ uv run face-symmetry-lab
 
 Streamlit は `.streamlit/config.toml` により `127.0.0.1` だけで待ち受け、利用統計を送信しません。カメラは STUN / TURN を使わず、音声 permission を要求しません。
 
-## ランドマークモデル
+## モデル準備
 
-`configs/model-manifest.json` に取得元 URL、サイズ、ライセンス、SHA-256 を固定しています。アプリは起動時にモデルを自動取得しません。
+`configs/model-manifest.json` にランドマークモデルと年齢・性別モデルの取得元 URL、サイズ、ライセンス、SHA-256 を固定しています。アプリは起動時にモデルを自動取得しません。
 
 ```bash
 uv run python scripts/bootstrap_models.py                    # 内容を表示して確認
@@ -45,7 +45,7 @@ uv run python scripts/bootstrap_models.py --accept-manifest   # CI / 非対話
 uv run python scripts/bootstrap_models.py --verify            # 配置済みファイルを検証
 ```
 
-取得は一時ファイルへ書き、SHA-256 が一致した場合だけ `models/` へ atomic rename します。1 byte でも異なるモデルは配置しません。配置先を変える場合は `FACE_SYMMETRY_LAB_LANDMARKER_PATH` を設定します。
+取得は一時ファイルへ書き、SHA-256 が一致した場合だけ `models/` へ atomic rename します。1 byte でも異なるモデルは配置しません。配置先を変える場合はランドマークに`FACE_SYMMETRY_LAB_LANDMARKER_PATH`、年齢・性別モデルに`FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH` / `FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH`を設定します。別パスもmanifestと同じsize・SHA-256でなければ読み込みません。
 
 ### 実環境での検出テスト
 
@@ -98,7 +98,7 @@ OD-01 の固定評価セットと、OD-04 の同意済み実写単軸映像は�
 1. `models/age-gender-recognition-retail-0013.xml` と同名の`.bin`
 2. 環境変数`FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH` / `FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH`
 
-モデルはGitに含めません。固定URL、size、XML/BIN個別SHA-256、license、runtime parityが未確認のためmanifestへも未登録です。承認前に自動取得しません。
+モデルはGitに含めません。Open Model Zoo 2023.0 FP16の固定URL、size、Apache-2.0、XML/BIN個別SHA-256をmanifestへ登録済みで、明示的なbootstrap操作だけで取得します。固定評価のruntime parity、slice評価、3 OS smokeはリリース前の未完事項です。
 
 アプリ本体は既存の`opencv-contrib-python`だけでCPU推論し、OpenVINO、PyTorch、torchvision、InsightFaceをruntime lockへ混在させません。公開評価値と制約は[モデルカード](docs/model-cards/openvino-age-gender-retail-0013.md)を確認してください。
 

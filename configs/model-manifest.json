@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.0.0",
+  "manifest_version": "1.1.0",
   "models": [
     {
       "name": "face_landmarker",
@@ -11,6 +11,28 @@
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "input_contract": "RGB uint8 image; 478 normalized landmarks; CPU delegate"
+    },
+    {
+      "name": "demographic_age_gender_xml",
+      "version": "open-model-zoo/2023.0/FP16",
+      "filename": "age-gender-recognition-retail-0013.xml",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml",
+      "size_bytes": 62543,
+      "sha256": "2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "input_contract": "OpenVINO IR v11 graph; pair with age-gender-recognition-retail-0013.bin; BGR float32 NCHW 1x3x62x62; outputs fc3_a and prob"
+    },
+    {
+      "name": "demographic_age_gender_bin",
+      "version": "open-model-zoo/2023.0/FP16",
+      "filename": "age-gender-recognition-retail-0013.bin",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.bin",
+      "size_bytes": 4276038,
+      "sha256": "7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "input_contract": "OpenVINO FP16 weights; pair with age-gender-recognition-retail-0013.xml"
     }
   ]
 }

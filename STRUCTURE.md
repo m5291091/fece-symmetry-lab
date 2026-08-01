@@ -80,7 +80,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `ff50a736ca0295ce5c4baa4a901cedc59d543c6121a1566c00e43a32f3ac2020`_
+_File-list SHA-256: `d6057f9a0e1978835094a2899a850a0def5b8b9f6e0e330eb0ca2715063ac1e6`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -158,6 +158,7 @@ face-symmetry-lab/
     - `test_symmetry.py`
   - `model/`
     - `conftest.py`
+    - `test_real_demographic.py`
     - `test_real_landmarker.py`
   - `repository/`
     - `test_generate_structure.py`

@@ -13,11 +13,11 @@ cameraの自動露出・white balance・HDR・ISPは端末とbrowserごとに異
 
 ## Decision
 
-- 8年代分類と`AgeBand`を削除し、Open Model Zoo `age-gender-recognition-retail-0013`を採用候補にする。
+- 8年代分類と`AgeBand`を削除し、Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013`を採用する。
 - 対象は18〜75歳に限定する。62×62 BGRの顔cropを入力し、連続年齢と`[female, male]`の二値確率を返す。
 - 表示は「モデル推定の参考年齢」「外見からのモデル推定の参考性別」とし、自己認識・法的性別を断定しない。
 - OpenVINO IRのXML/BINは既存の`opencv-contrib-python` DNNでCPU推論し、新しい`cv2` providerや学習runtimeを加えない。
-- XML/BINは暗黙取得しない。個別SHA-256、組み合わせhash、size、URL、license、parityが確認できるまでmanifestへ登録しない。
+- XML/BINは暗黙取得しない。Intel公式storageの固定URL、size、Apache-2.0、個別SHA-256をmanifestへ登録し、明示操作でのみ取得する。組み合わせhashを結果へ記録し、parity、slice評価、3 OS smokeはリリース条件として残す。
 - 顔cropには端末内のGray-world white balanceとrobust明度正規化を適用する。補正gainを結果へ含める。
 - 頬patchの色調均一性と局所textureを0〜100の「撮影条件依存の肌表面参考値」として出す。疾患、肌タイプ、健康、美しさを推定せず、幾何スコアへ混合しない。
 

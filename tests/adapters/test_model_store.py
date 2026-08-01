@@ -61,6 +61,24 @@ def test_repository_manifest_is_loadable_and_pins_the_landmark_model() -> None:
     assert landmarker.license
 
 
+def test_repository_manifest_pins_the_official_openvino_demographic_pair() -> None:
+    assets = load_manifest(DEFAULT_MANIFEST_PATH)
+
+    xml = find_asset(assets, "demographic_age_gender_xml")
+    weights = find_asset(assets, "demographic_age_gender_bin")
+
+    assert xml.version == weights.version == "open-model-zoo/2023.0/FP16"
+    assert xml.filename == "age-gender-recognition-retail-0013.xml"
+    assert weights.filename == "age-gender-recognition-retail-0013.bin"
+    assert xml.size_bytes == 62_543
+    assert weights.size_bytes == 4_276_038
+    assert xml.sha256 == "2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067"
+    assert weights.sha256 == "7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13"
+    assert xml.url.endswith("/FP16/age-gender-recognition-retail-0013.xml")
+    assert weights.url.endswith("/FP16/age-gender-recognition-retail-0013.bin")
+    assert xml.license == weights.license == "Apache-2.0"
+
+
 def test_manifest_entries_are_parsed(tmp_path: Path) -> None:
     assets = load_manifest(_manifest_file(tmp_path))
 
