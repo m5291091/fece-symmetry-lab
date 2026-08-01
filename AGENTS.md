@@ -85,7 +85,7 @@ uv run python scripts/verify.py
 
 明示指示なしに `git add`、commit、branch 作成、merge、rebase、tag、push、PR 作成を行わない。調査用の status、diff、log は実行してよい。
 
-ファイル変更時の最終報告では、日本語 Conventional Commit の候補を 1 つ以上示す。
+ファイル変更時の最終報告では、日本語 Conventional Commit の候補を 1 つ以上示す。その際に、必ず、それぞれのCommitでの対象ファイルを全て表示しなさい。
 
 ## 8. 最終報告
 
