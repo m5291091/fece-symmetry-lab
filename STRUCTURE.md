@@ -16,6 +16,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
+| Realtime age/gender worker | `src/face_symmetry_lab/application/demographic_worker.py` |
 | Session history / export records | `src/face_symmetry_lab/application/session.py` |
 | CSV / JSON export adapter | `src/face_symmetry_lab/adapters/export/session_exporter.py` |
 | Still-image landmarks | `src/face_symmetry_lab/application/still_image.py` |
@@ -60,6 +61,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
+| 年齢・性別の独立worker | `application/demographic_worker.py` | `tests/application/test_demographic_worker.py` | FR-022〜024, §14.3 |
 | Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
 | Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
@@ -91,7 +93,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `9f29844e11703f3ddf95df567b8318ad7e8dde857608617175baa20778e251f3`_
+_File-list SHA-256: `56d1f03c50f7c4694fd285592c06e97c1df9f6791ec784e9b54dcdb925e938d3`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -134,7 +136,7 @@ face-symmetry-lab/
         - … (3 files)
       - … (1 files)
     - `application/`
-      - … (8 files)
+      - … (9 files)
     - `domain/`
       - … (14 files)
     - `runtime/`
@@ -154,6 +156,7 @@ face-symmetry-lab/
     - `test_tracking_zoom_landmarker.py`
   - `application/`
     - `test_analyzer.py`
+    - `test_demographic_worker.py`
     - `test_image_input.py`
     - `test_quality.py`
     - `test_realtime.py`

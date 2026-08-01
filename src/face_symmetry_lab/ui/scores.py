@@ -13,7 +13,7 @@ import streamlit as st
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.domain.metrics import PART_NAMES
-from face_symmetry_lab.domain.models import ReasonCode, Status
+from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, ReasonCode, Status
 
 SCORE_HEADING = "左右差スコア（実験値）"
 
@@ -36,6 +36,11 @@ _REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
     ReasonCode.UNSTABLE: "そのまま静止してください。",
     ReasonCode.LOW_CONFIDENCE: "明るさと顔の位置を確認してください。",
     ReasonCode.LOW_QUALITY: "この画像では計算できませんでした。",
+}
+
+_GENDER_LABELS: Final[dict[GenderLabel, str]] = {
+    GenderLabel.FEMALE: "女性",
+    GenderLabel.MALE: "男性",
 }
 
 _STATUS_HEADLINE: Final[dict[Status, str]] = {
@@ -132,3 +137,32 @@ def render_scores(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> No
         "他人との比較、医学的評価、魅力度の判断には使用できません。"
     )
     st.caption(f"metric {outcome.metric_version} · landmark map {outcome.landmark_map_version}")
+
+
+def render_demographic_estimate(estimate: DemographicEstimate) -> None:
+    """Render the §10.8 age/gender reference panel (Image and Camera share this)."""
+    st.subheader("モデル推定の参考年齢・参考性別")
+    age_column, gender_column = st.columns(2)
+    age_column.metric("参考年齢", f"{estimate.estimated_age_years:.1f}歳")
+    gender_column.metric("外見由来の参考性別", _GENDER_LABELS[estimate.gender])
+    st.caption(
+        f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
+        "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
+    )
+    st.bar_chart(
+        {
+            "モデルラベル": ["female", "male"],
+            "モデル出力": list(estimate.gender_probabilities),
+        },
+        x="モデルラベル",
+        y="モデル出力",
+    )
+    if estimate.is_cached:
+        st.caption("同一区間内の直近推論を再表示しています。")
+    with st.expander("モデル情報"):
+        st.code(
+            f"version: {estimate.model_version}\n"
+            f"sha256: {estimate.model_sha256}\n"
+            f"observed_at: {estimate.observed_at.isoformat()}",
+            language="text",
+        )

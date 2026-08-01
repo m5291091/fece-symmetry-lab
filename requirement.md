@@ -44,7 +44,7 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 |---|---|---|
 | M0 | 未完 | OD-01、OD-02、OD-04、OD-07 と実モデル互換性確認が未完。左右差は相対比較専用 |
 | M1 | 一部実装 | 静止画入力、品質判定、幾何左右差、年齢・性別境界、schema は実装中。固定評価と肌表面指標校正は未完 |
-| M2 | 一部実装 | WebRTC、latest-frame-wins、短時間overlay保持、Stop は実装中。年齢・性別の独立worker、E2E、cleanup実測は未完 |
+| M2 | 一部実装 | WebRTC、latest-frame-wins、短時間overlay保持、Stop、年齢・性別の独立worker（capacity 1・独自cadence・segment単位の破棄）は実装中。E2E、cleanup実測は未完 |
 | M3 | 一部実装 | 同意、入力切替、CSV / JSON export は実装済み。trend、About、設定UI、A11y実機確認は未完 |
 | M4 以降 | 未着手 | offline、3 OS、performance、soak、配布判定は未完 |
 

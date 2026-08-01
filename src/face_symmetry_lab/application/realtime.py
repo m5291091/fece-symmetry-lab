@@ -18,6 +18,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
+from face_symmetry_lab.application.demographic_worker import DemographicWorker
+from face_symmetry_lab.application.image_input import ImageInputError, extract_face_crop
 from face_symmetry_lab.application.ports import LandmarkProvider, SegmentationProvider
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import SessionRecorder
@@ -30,6 +32,7 @@ from face_symmetry_lab.domain.frame_adjustments import (
     composite_background,
 )
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
+from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_MIDLINE_COLOR,
     DEFAULT_POINT_COLOR,
@@ -64,6 +67,8 @@ class PipelineSnapshot:
     processing_ms: float = 0.0
     #: Present only when an analyzer is attached and the frame was scored.
     analysis: AnalysisOutcome | None = None
+    #: §14.3, FR-022〜024: produced off-cadence by a `DemographicWorker`.
+    demographic_estimate: DemographicEstimate | None = None
 
     @property
     def needs_recovery(self) -> bool:
@@ -81,6 +86,7 @@ class RealtimeLandmarkPipeline:
         recorder: SessionRecorder | None = None,
         scheduler: FrameScheduler | None = None,
         segmenter: SegmentationProvider | None = None,
+        demographic_worker: DemographicWorker | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
         geometry_ttl_ms: int = DEFAULT_GEOMETRY_TTL_MS,
@@ -103,6 +109,10 @@ class RealtimeLandmarkPipeline:
         self._analyzer = analyzer
         self._recorder = recorder
         self._segmenter = segmenter
+        self._demographic_worker = demographic_worker
+        self._demographic_enabled = True
+        self._demographic_version = 0
+        self._demographic_observed_elapsed_ms: int | None = None
         self.scheduler = scheduler if scheduler is not None else FrameScheduler()
         self._clock = clock
         self._point_color = point_color
@@ -210,6 +220,7 @@ class RealtimeLandmarkPipeline:
                 self._clear_cached_geometry()
             painted = self._paint_geometry(rgb_image, frame)
             painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
+            self._submit_demographic_sample(rgb_image, frame)
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
             self._clear_cached_geometry()
@@ -232,6 +243,8 @@ class RealtimeLandmarkPipeline:
                 # Scoring must never take the preview down with it.
                 analysis = None
 
+        demographic_sample = self._collect_demographic_sample(timestamp_ms)
+
         finished = self._clock()
         processing_ms = (finished - started) * 1000.0
         if self._recorder is not None:
@@ -249,6 +262,12 @@ class RealtimeLandmarkPipeline:
                         elapsed_ms=timestamp_ms,
                         processing_ms=processing_ms,
                     )
+                    if demographic_sample is not None:
+                        estimate, observed_elapsed_ms = demographic_sample
+                        self._recorder.attach_demographic_estimate(
+                            estimate,
+                            observed_elapsed_ms=observed_elapsed_ms,
+                        )
             except Exception:
                 # Export bookkeeping is secondary to keeping the camera alive.
                 pass
@@ -266,6 +285,9 @@ class RealtimeLandmarkPipeline:
                 consecutive_errors=0,
                 processing_ms=processing_ms,
                 analysis=analysis,
+                demographic_estimate=(
+                    demographic_sample[0] if demographic_sample is not None else None
+                ),
             )
         return painted, analysis
 
@@ -357,6 +379,57 @@ class RealtimeLandmarkPipeline:
             self._cached_mask = None
             self._cached_mask_at = None
 
+    def _submit_demographic_sample(
+        self,
+        rgb_image: NDArray[np.uint8],
+        frame: LandmarkFrame,
+    ) -> None:
+        """Hand a single-face crop to the off-critical-path worker (§14.3).
+
+        Age/gender inference never blocks this WebRTC callback thread: the
+        worker itself decides, on its own cadence, whether to actually run.
+        """
+        with self._overlay_lock:
+            worker = self._demographic_worker
+            enabled = self._demographic_enabled
+        if worker is None or not enabled or not frame.has_single_face:
+            return
+        try:
+            crop = extract_face_crop(rgb_image, frame)
+        except ImageInputError:
+            return
+        worker.submit(crop)
+
+    def _collect_demographic_sample(
+        self,
+        timestamp_ms: int,
+    ) -> tuple[DemographicEstimate, int] | None:
+        """Read the worker's latest result, marking reuse across frames.
+
+        `demographic_is_cached` (FR-023) distinguishes a fresh inference
+        (this exact frame) from a redisplay of the same segment's last
+        result, since the worker runs far less often than analysis frames.
+        """
+        with self._overlay_lock:
+            worker = self._demographic_worker
+            enabled = self._demographic_enabled
+        if worker is None or not enabled:
+            return None
+        latest = worker.latest()
+        if latest is None:
+            return None
+        estimate, version = latest
+        with self._overlay_lock:
+            if version != self._demographic_version:
+                self._demographic_version = version
+                self._demographic_observed_elapsed_ms = timestamp_ms
+                resolved = estimate
+            else:
+                resolved = estimate.model_copy(update={"is_cached": True})
+            observed_elapsed_ms = self._demographic_observed_elapsed_ms
+        assert observed_elapsed_ms is not None
+        return resolved, observed_elapsed_ms
+
     def _record_error(
         self,
         *,
@@ -406,11 +479,20 @@ class RealtimeLandmarkPipeline:
         self.scheduler.reset()
         self._clear_cached_geometry()
         self._clear_cached_mask()
+        self._reset_demographic_worker()
         with self._sample_lock:
             self._next_analysis_at = self._clock()
             self._throttled_frames = 0
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
+
+    def _reset_demographic_worker(self) -> None:
+        """New comparison segment: drop the cached estimate (§8.8, FR-023)."""
+        if self._demographic_worker is not None:
+            self._demographic_worker.reset()
+        with self._overlay_lock:
+            self._demographic_version = 0
+            self._demographic_observed_elapsed_ms = None
 
     def apply_advanced_settings(
         self,
@@ -437,6 +519,7 @@ class RealtimeLandmarkPipeline:
             self._recorder.reset(thresholds=thresholds, tau_seconds=tau_seconds)
         self._clear_cached_geometry()
         self._clear_cached_mask()
+        self._reset_demographic_worker()
 
     def set_midline_enabled(self, enabled: bool) -> None:
         """Update the display-only centre-line preference thread-safely."""
@@ -454,6 +537,11 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             self._background_mode = mode
 
+    def set_demographic_enabled(self, enabled: bool) -> None:
+        """Toggle age/gender inference (§15.1, default ON) thread-safely."""
+        with self._overlay_lock:
+            self._demographic_enabled = bool(enabled)
+
     def export_bundle(self) -> SessionExport | None:
         """Return an immutable export snapshot without exposing live history."""
         if self._recorder is None:
@@ -470,3 +558,5 @@ class RealtimeLandmarkPipeline:
         self._landmarker.close()
         if self._segmenter is not None:
             self._segmenter.close()
+        if self._demographic_worker is not None:
+            self._demographic_worker.close()

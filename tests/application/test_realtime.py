@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -8,13 +10,17 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
 )
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
+from face_symmetry_lab.domain.demographics import build_demographic_estimate
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode, FrameAdjustmentError
 from face_symmetry_lab.domain.landmarks import (
     LandmarkFrame,
     TrackingStatus,
     build_landmark_frame,
 )
-from face_symmetry_lab.domain.models import AnalysisState, Status
+from face_symmetry_lab.domain.models import AnalysisState, DemographicEstimate, Status
+
+#: Spread-out points so `extract_face_crop` can derive a non-degenerate bbox.
+SPREAD_POINTS = ((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5))
 
 
 class FakeLandmarker:
@@ -139,6 +145,7 @@ class RecorderSpy:
         self.error_frames: list[int] = []
         self.reset_calls = 0
         self.reset_kwargs: list[dict[str, object]] = []
+        self.demographic_attachments: list[tuple[DemographicEstimate, int]] = []
 
     def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
         self.analysis_frames.append(frame.frame_id)
@@ -152,6 +159,48 @@ class RecorderSpy:
 
     def export_bundle(self) -> str:
         return "bundle"
+
+    def attach_demographic_estimate(
+        self,
+        estimate: DemographicEstimate,
+        *,
+        observed_elapsed_ms: int,
+    ) -> None:
+        self.demographic_attachments.append((estimate, observed_elapsed_ms))
+
+
+class FakeDemographicWorker:
+    def __init__(self) -> None:
+        self.submitted: list[NDArray[np.uint8]] = []
+        self.reset_calls = 0
+        self.closed = False
+        self._latest: tuple[DemographicEstimate, int] | None = None
+
+    def submit(self, rgb_crop: NDArray[np.uint8]) -> None:
+        self.submitted.append(rgb_crop)
+
+    def set_latest(self, estimate: DemographicEstimate, version: int) -> None:
+        self._latest = (estimate, version)
+
+    def latest(self) -> tuple[DemographicEstimate, int] | None:
+        return self._latest
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+        self._latest = None
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _demographic_estimate(age: float = 30.0) -> DemographicEstimate:
+    return build_demographic_estimate(
+        estimated_age_years=age,
+        gender_probabilities=(0.4, 0.6),
+        model_version="demographic/test",
+        model_sha256="a" * 64,
+        observed_at=datetime.now(UTC),
+    )
 
 
 def _rgb(height: int = 20, width: int = 20) -> NDArray[np.uint8]:
@@ -609,3 +658,172 @@ def test_cached_frames_reuse_the_last_computed_mask_without_resegmenting() -> No
     assert np.all(analysed == 255)
     assert np.all(throttled == 255)  # still composited, from the cached mask
     assert segmenter.calls == [0]  # segmentation only ran once
+
+
+def test_single_face_frames_submit_a_crop_to_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert len(worker.submitted) == 1
+    assert worker.submitted[0].shape[2] == 3
+
+
+def test_multi_face_frames_do_not_submit_to_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(face_count=2), demographic_worker=worker)
+
+    pipeline.process(_rgb())
+
+    assert worker.submitted == []
+
+
+def test_no_face_frames_do_not_submit_to_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(face_count=0), demographic_worker=worker)
+
+    pipeline.process(_rgb())
+
+    assert worker.submitted == []
+
+
+def test_degenerate_landmarks_do_not_crash_or_submit_to_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(points=((0.5, 0.5),)), demographic_worker=worker)
+
+    annotated = pipeline.process(_rgb())
+
+    assert annotated.shape == (20, 20, 3)
+    assert worker.submitted == []
+
+
+def test_a_fresh_demographic_estimate_is_attached_to_the_snapshot() -> None:
+    worker = FakeDemographicWorker()
+    estimate = _demographic_estimate()
+    worker.set_latest(estimate, version=1)
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    published = pipeline.snapshot().demographic_estimate
+    assert published is not None
+    assert published.estimated_age_years == estimate.estimated_age_years
+    assert published.is_cached is False
+
+
+def test_a_reused_demographic_estimate_is_marked_as_cached() -> None:
+    worker = FakeDemographicWorker()
+    worker.set_latest(_demographic_estimate(), version=1)
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+
+    pipeline.process(_rgb(height=40, width=40))
+    first = pipeline.snapshot().demographic_estimate
+    pipeline.process(_rgb(height=40, width=40))
+    second = pipeline.snapshot().demographic_estimate
+
+    assert first is not None and first.is_cached is False
+    assert second is not None and second.is_cached is True
+
+
+def test_a_new_demographic_version_is_not_marked_cached() -> None:
+    worker = FakeDemographicWorker()
+    worker.set_latest(_demographic_estimate(age=30.0), version=1)
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+    pipeline.process(_rgb(height=40, width=40))
+
+    worker.set_latest(_demographic_estimate(age=45.0), version=2)
+    pipeline.process(_rgb(height=40, width=40))
+
+    latest = pipeline.snapshot().demographic_estimate
+    assert latest is not None
+    assert latest.estimated_age_years == 45.0
+    assert latest.is_cached is False
+
+
+def test_demographic_estimate_is_attached_to_the_session_recorder() -> None:
+    worker = FakeDemographicWorker()
+    worker.set_latest(_demographic_estimate(), version=1)
+    recorder = RecorderSpy()
+    pipeline = _pipeline(
+        FakeLandmarker(points=SPREAD_POINTS),
+        analyzer=StubAnalyzer(),
+        recorder=recorder,
+        demographic_worker=worker,
+    )
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert len(recorder.demographic_attachments) == 1
+    attached_estimate, observed_elapsed_ms = recorder.demographic_attachments[0]
+    assert attached_estimate.estimated_age_years == 30.0
+    assert observed_elapsed_ms is not None
+
+
+def test_no_attachment_without_a_demographic_worker() -> None:
+    recorder = RecorderSpy()
+    pipeline = _pipeline(
+        FakeLandmarker(points=SPREAD_POINTS),
+        analyzer=StubAnalyzer(),
+        recorder=recorder,
+    )
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert recorder.demographic_attachments == []
+
+
+def test_reset_analysis_resets_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(), demographic_worker=worker)
+
+    pipeline.reset_analysis()
+
+    assert worker.reset_calls == 1
+
+
+def test_apply_advanced_settings_resets_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(
+        FakeLandmarker(),
+        analyzer=StubAnalyzer(),
+        recorder=RecorderSpy(),
+        demographic_worker=worker,
+    )
+
+    pipeline.apply_advanced_settings(thresholds=object(), tau_seconds=0.4, zoom_policy=object())
+
+    assert worker.reset_calls == 1
+
+
+def test_close_closes_the_demographic_worker() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(), demographic_worker=worker)
+
+    pipeline.close()
+
+    assert worker.closed is True
+
+
+def test_disabling_demographics_stops_submission_and_display() -> None:
+    worker = FakeDemographicWorker()
+    worker.set_latest(_demographic_estimate(), version=1)
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+
+    pipeline.set_demographic_enabled(False)
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert worker.submitted == []
+    assert pipeline.snapshot().demographic_estimate is None
+
+
+def test_re_enabling_demographics_resumes_submission() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS), demographic_worker=worker)
+
+    pipeline.set_demographic_enabled(False)
+    pipeline.process(_rgb(height=40, width=40))
+    pipeline.set_demographic_enabled(True)
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert len(worker.submitted) == 1

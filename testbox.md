@@ -18,7 +18,8 @@
 | `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何 | FR-026, §14.3a, AC-ZOOM-01 |
 | `tests/domain/test_frame_adjustments.py` | 明るさgainの乗算・clip、背景合成のmask blend・検証 | FR-027, FR-028, §14.3b, AC-DISPLAY-01 |
 | `tests/application/test_image_input.py` | JPEG / PNG uploadの形式・容量・画素・animation・推論用顔crop検証 | FR-006, FR-007, FR-022, AC-INPUT-01 |
-| `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot | FR-008, FR-013, NFR-006, NFR-007, NFR-017 |
+| `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot、年齢・性別workerの提出/収集/失敗分離 | FR-008, FR-013, FR-022〜024, NFR-006, NFR-007, NFR-017 |
+| `tests/application/test_demographic_worker.py` | 年齢・性別推定workerのcapacity-1・独自cadence・segment世代破棄・失敗分離 | FR-022〜024, §14.3 |
 | `tests/application/test_still_image.py` | 静止画ランドマークの stateless 検出、中心線切替、プレビュー生成 | FR-006, FR-008, FR-013 |
 | `tests/application/test_quality.py` | 品質ゲート、理由コード、OK/HOLD ヒステリシス | FR-010, §6.2〜6.4, AC-STATE-01 |
 | `tests/application/test_analyzer.py` | ゲート→幾何／補正後の肌表面参考値→平滑化の統合と失敗分離 | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01 |

@@ -36,7 +36,7 @@ from face_symmetry_lab.application.still_image import (
 from face_symmetry_lab.domain.export import InputMode
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfig, MetricConfigError
-from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
+from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
@@ -47,7 +47,7 @@ from face_symmetry_lab.ui.model_setup import (
     resolve_ready_demographic,
     resolve_ready_landmarker,
 )
-from face_symmetry_lab.ui.scores import render_scores
+from face_symmetry_lab.ui.scores import render_demographic_estimate, render_scores
 
 APP_ROOT = Path(__file__).resolve().parents[3]
 ESTIMATOR_STATE_KEY = "demographic_estimator"
@@ -98,33 +98,6 @@ def _clear_session_result() -> None:
     st.session_state.pop(RESULT_STATE_KEY, None)
     st.session_state.pop(IMAGE_RECORDER_STATE_KEY, None)
     st.session_state.pop(IMAGE_RECORDED_INPUT_KEY, None)
-
-
-def _render_demographic_result(estimate: DemographicEstimate) -> None:
-    st.subheader("モデル推定の参考年齢・参考性別")
-    age_column, gender_column = st.columns(2)
-    age_column.metric("参考年齢", f"{estimate.estimated_age_years:.1f}歳")
-    gender_label = {GenderLabel.FEMALE: "女性", GenderLabel.MALE: "男性"}[estimate.gender]
-    gender_column.metric("外見由来の参考性別", gender_label)
-    st.caption(
-        f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
-        "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
-    )
-    st.bar_chart(
-        {
-            "モデルラベル": ["female", "male"],
-            "モデル出力": list(estimate.gender_probabilities),
-        },
-        x="モデルラベル",
-        y="モデル出力",
-    )
-    with st.expander("モデル情報"):
-        st.code(
-            f"version: {estimate.model_version}\n"
-            f"sha256: {estimate.model_sha256}\n"
-            f"observed_at: {estimate.observed_at.isoformat()}",
-            language="text",
-        )
 
 
 def _session_image_landmarker(model_path: Path) -> MediaPipeImageLandmarker:
@@ -329,7 +302,7 @@ def _render_image_section() -> None:
     with result_column:
         session_estimate = st.session_state.get(RESULT_STATE_KEY)
         if isinstance(session_estimate, DemographicEstimate):
-            _render_demographic_result(session_estimate)
+            render_demographic_estimate(session_estimate)
         else:
             st.info("モデル準備後にボタンを押すと、18〜75歳向けの参考値を表示します。")
 

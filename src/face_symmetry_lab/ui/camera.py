@@ -31,12 +31,17 @@ from face_symmetry_lab.adapters.inference.mediapipe_segmenter import (
     MediaPipeSegmenter,
     SegmentationError,
 )
+from face_symmetry_lab.adapters.inference.opencv_demographic_estimator import (
+    DemographicInferenceError,
+    OpenCvDemographicEstimator,
+)
 from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
     TrackingZoomLandmarker,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
 from face_symmetry_lab.adapters.io.model_store import InstallStatus, file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
+from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.quality import QualityConfigError, QualityThresholds
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
@@ -57,11 +62,12 @@ from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics
 from face_symmetry_lab.ui.model_setup import (
     configured_segmenter_path,
     landmark_asset,
+    resolve_ready_demographic,
     resolve_ready_landmarker,
     segmenter_asset,
     segmenter_status,
 )
-from face_symmetry_lab.ui.scores import render_scores
+from face_symmetry_lab.ui.scores import render_demographic_estimate, render_scores
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.OFF: "しない",
@@ -132,6 +138,19 @@ def _build_segmenter() -> MediaPipeSegmenter | None:
         return None
 
 
+def _build_demographic_worker() -> DemographicWorker | None:
+    """Age/gender inference is optional (§14.3, FR-024): never blocks the camera."""
+    demographic_model = resolve_ready_demographic()
+    if demographic_model is None:
+        return None
+    onnx_path, model_version = demographic_model
+    try:
+        estimator = OpenCvDemographicEstimator(onnx_path=onnx_path, model_version=model_version)
+    except DemographicInferenceError:
+        return None
+    return DemographicWorker(estimator=estimator)
+
+
 def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     config = load_metric_config()
     landmarker = MediaPipeFaceLandmarker(
@@ -159,6 +178,7 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         analyzer=analyzer,
         recorder=recorder,
         segmenter=_build_segmenter(),
+        demographic_worker=_build_demographic_worker(),
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
         midline_indices=config.midline_indices,
     )
@@ -215,6 +235,10 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
             st.divider()
             st.caption("カメラ映像の LAST SAMPLE と同じ直近の解析値です。")
             render_scores(snapshot.analysis)
+
+        if snapshot.demographic_estimate is not None:
+            st.divider()
+            render_demographic_estimate(snapshot.demographic_estimate)
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -383,6 +407,21 @@ def render_camera_section() -> None:
             pipeline.set_background_mode(background_mode)
         else:
             st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
+
+    demographic_model_ready = resolve_ready_demographic() is not None
+    show_demographics = st.toggle(
+        "年齢・性別の参考値を表示",
+        value=True,
+        key="camera_demographic_enabled",
+        disabled=not demographic_model_ready,
+        help=(
+            "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
+            "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
+        ),
+    )
+    if not demographic_model_ready:
+        st.caption("年齢・性別モデルが未配置のため、この機能は使用できません。")
+    pipeline.set_demographic_enabled(show_demographics)
 
     _render_advanced_settings(pipeline)
 
