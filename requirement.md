@@ -1,11 +1,11 @@
 # Face Symmetry Lab
 
-## プロダクト要件定義・技術仕様・開発ガイド v3.6
+## プロダクト要件定義・技術仕様・開発ガイド v3.7
 
 | 項目 | 内容 |
 |---|---|
 | ステータス | M0 未完。M1〜M3 の一部を先行実装中 |
-| 版 | v3.6 |
+| 版 | v3.7 |
 | 更新日 | 2026-08-01 |
 | 想定リポジトリ | `face-symmetry-lab` |
 | 配布形態 | ローカル Streamlit アプリ |
@@ -16,7 +16,7 @@
 
 ---
 
-## 0. v3.6 の設計判断
+## 0. v3.7 の設計判断
 
 v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナーの研究成果を最終アプリへ接続するため、次を変更する。
 
@@ -35,7 +35,7 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 13. **既定テーマを dark にする。** Streamlit 公式 theme token で暗い背景と高コントラスト本文を定義し、映像 overlay は blue / amber の状態色を使う。生の DOM/CSS 上書きには依存しない。
 14. **顔の中心線を表示設定にする。** 採点に用いる正中点の TLS 直線を顔範囲へ描画し、Camera / Image の双方で既定 ON、利用者が ON / OFF を切り替えられるようにする。中心線はランドマークと異なる色かつ5px以上とし、表示設定は採点値と `config_fingerprint` を変えない。
 15. **画像由来の外観差と肌表面参考値は幾何スコアと分離する。** 顔cropへ端末内のホワイトバランス・明度正規化を適用し、頬領域の色調均一性と局所テクスチャを「撮影条件依存の肌表面参考値」として算出する。疾患、肌質、美しさ、健康を推定せず、補正量を記録し、校正完了までは4部位＋全体の幾何スコアへ混合しない。
-16. **年齢・性別入力は顔 crop に限定する。** MediaPipe の単一顔 landmark bbox から余白付き crop を作り、Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` へ入力する。XML/BINの固定URL、Apache-2.0、size、個別SHA-256をmanifestへ登録し、既存の `opencv-contrib-python` の DNN runtime だけを使う。parityとslice評価はmanifest登録後もリリース条件として残す。
+16. **年齢・性別入力は顔 crop に限定する。** MediaPipe の単一顔 landmark bbox から余白付き crop を作り、Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` へ入力する。公式XML/BINを出所の正本として固定し、再現可能な開発時変換で生成した固定ONNXを既存の `opencv-contrib-python` DNNから実行する。元assetと派生assetのsize、SHA-256、変換recipeをmanifestへ登録し、parityとslice評価はリリース条件として残す。
 17. **間引き中も幾何表示を短時間保持する。** ランドマーク推論は最大8Hzのまま、直近の単一顔ランドマークと中心線を250ms以内だけプレビューへ再描画する。検出失敗、複数顔、リセット、TTL超過では即時消去し、古い結果を別の顔へ長時間重ねない。
 
 ### 0.1 現在の実装位置（2026-08-01）
@@ -563,6 +563,7 @@ flowchart LR
 ### 10.6 モデル供給網
 
 - モデル manifest に `name`、`version`、`url`、`size`、`sha256`、`license`、`input_contract` を固定する。
+- ローカル派生assetは取得URLの代わりに、元asset名、変換script・tool版、変換contract、size、sha256を固定する。派生assetをnetworkから取得せず、検証済み元assetから明示操作でだけ生成する。
 - HTTPS と許可ドメインを必須とし、任意 URL 入力を提供しない。
 - 一時ファイルへ取得し、hash 検証成功後に atomic rename する。
 - 1 byte でも異なるモデルはロードしない。失敗時は旧検証済み版を保持する。
@@ -592,7 +593,7 @@ flowchart LR
 
 採用モデルはOpen Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` とする。入力はBGR 62×62、出力は年齢を100で除した値と `[female, male]` の2クラス確率である。公開対象は18〜75歳、公開値は年齢平均誤差6.99年、性別accuracy 95.80%だが、内部validation datasetであり、本アプリの実利用精度を保証しない。
 
-モデルはOpenVINO IRのXMLとBINの組で提供される。採用assetはIntel公式storageの`2023.0/models_bin/1/.../FP16/`にあるXML 62,543 bytes（SHA-256 `2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067`）とBIN 4,276,038 bytes（SHA-256 `7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13`）へ固定する。既存の`opencv-contrib-python` DNN adapterからCPU推論し、別の`cv2` provider、OpenVINO、PyTorch、torchvision、InsightFaceをruntime lockへ追加しない。graphとweightsの両方を個別SHA-256で検証し、組み合わせhash `b2917f682865b378589103a46442b3ed6de97ff48e3425a192c96d690bfa5a5e` を結果へ記録する。
+モデルはOpenVINO IRのXMLとBINの組で提供される。採用元assetはIntel公式storageの`2023.0/models_bin/1/.../FP16/`にあるXML 62,543 bytes（SHA-256 `2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067`）とBIN 4,276,038 bytes（SHA-256 `7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13`）へ固定する。PyPIのOpenCV wheelはOpenVINO backendを含まないため、検証済みXML/BINから開発用scriptで決定的に生成したONNXを実行assetとする。ONNXの変換recipe、size、SHA-256、元asset名をmanifestへ固定し、結果には実行したONNXのSHA-256を記録する。既存の`opencv-contrib-python` DNN adapterからCPU推論し、別の`cv2` provider、OpenVINO、ONNX Runtime、PyTorch、torchvision、InsightFaceをruntime lockへ追加しない。
 
 ## 11. 非機能要件
 
@@ -641,8 +642,8 @@ flowchart LR
 - **AC-FACE-01**: 2 顔以上では誰のスコアも表示せず、履歴と EMA を継続しない。
 - **AC-INPUT-01**: 偽装拡張子、巨大画像、animated 画像、truncate JPEG、壊れた PNG を安全に拒否し、その後の正常分析が継続できる。
 - **AC-EXPORT-01**: CSV と JSON の同一レコードが同じ意味を持ち、各行から model、metric、config、segment を特定できる。
-- **AC-AGE-01**: 固定評価セットで採用IRと参照runtimeの年齢出力差が0.1年以内、性別確率差が`1e-4`以内で、出力順`[female, male]`が一致する。年齢MAEと性別accuracyをslice別に記録する。
-- **AC-AGE-02**: XML/BINの一方なし、hash不一致、不正shape、18〜75外、NaN/Inf、推論例外の各場合に年齢・性別を表示せず、左右差分析は継続する。
+- **AC-AGE-01**: 固定評価セットで派生ONNXと公式IRの参照runtimeとの年齢出力差が0.1年以内、性別確率差が`1e-4`以内で、出力順`[female, male]`が一致する。年齢MAEと性別accuracyをslice別に記録する。
+- **AC-AGE-02**: 元XML/BINの一方なし・hash不一致、派生ONNXなし・hash不一致、不正shape、18〜75外、NaN/Inf、推論例外の各場合に年齢・性別を表示せず、左右差分析は継続する。
 - **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
 
 ### 12.2 プライバシー・セキュリティ
@@ -680,7 +681,7 @@ flowchart LR
 | UI | Streamlit | native layout、theme、status、fragment を優先 |
 | Camera | streamlit-webrtc | 映像のみ、loopback、外部 ICE なし |
 | Landmark | MediaPipe Tasks Face Landmarker | 478 点、CPU、モデル manifest 固定 |
-| Age / gender | OpenCV DNN + Open Model Zoo IR | 18〜75歳、BGR 62×62、CPU、XML/BINをmanifest固定 |
+| Age / gender | OpenCV DNN + Open Model Zoo由来ONNX | 18〜75歳、BGR 62×62、CPU、公式XML/BINと派生ONNXをmanifest固定 |
 | Image | OpenCV contrib + Pillow | `cv2` provider は 1 distribution のみ、OpenCV 5 は検証まで除外 |
 | Models / config | Pydantic v2 + pydantic-settings | 境界の検証と immutable revision |
 | Numeric / export | NumPy + Pandas | domain の幾何と CSV 生成 |
@@ -724,7 +725,7 @@ flowchart LR
     APP --> CORE["domain / pure geometry"]
     APP --> PORTS["ports / Protocols"]
     MP["adapter / MediaPipe"] --> PORTS
-    AGE["adapter / OpenCV age-gender IR"] --> PORTS
+    AGE["adapter / OpenCV age-gender ONNX"] --> PORTS
     EX["adapter / export"] --> PORTS
     MS["adapter / model store"] --> PORTS
     BOOT["composition root"] --> UI
@@ -1192,7 +1193,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
 | OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
-| OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済みXML/BINについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み |
+| OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済み公式XML/BINと派生ONNXについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み |
 | OD-08 | 肌表面参考指標のcalibration set | M1 / M5 | 照明、影、化粧、髭、眼鏡、camera、再撮影差と補正gainを評価し、係数と利用範囲を指標カードへ記録 |
 
 ## 26. トレーサビリティ

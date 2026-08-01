@@ -28,13 +28,17 @@ Open Model Zoo Age/Gender Recognition Retail 0013 (OpenVINO IR FP16)
               2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/
   XML SHA-256: 2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067
   BIN SHA-256: 7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13
+  Derived ONNX SHA-256:
+              e86b01b71cce307c1a58d9b3db3777be2d95993f702f5b6b29d02bf4efe296bc
   Licence   : Apache License 2.0
               https://www.apache.org/licenses/LICENSE-2.0
   Copyright : Copyright Intel Corporation
   Card      : docs/model-cards/openvino-age-gender-retail-0013.md
   Notes     : Commercial use, modification, and redistribution are permitted
               subject to Apache-2.0. This repository does not redistribute the
-              files; they are downloaded locally on explicit request.
+              files. Official IR files are downloaded locally on explicit
+              request, and the ONNX modification is generated locally by the
+              pinned conversion recipe.
 
 
 Derived configuration

@@ -80,7 +80,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `d6057f9a0e1978835094a2899a850a0def5b8b9f6e0e330eb0ca2715063ac1e6`_
+_File-list SHA-256: `32b9dc9c5c9040c22954b7422c0f36fd4d73c534d51a260044970125ebcdb4e2`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -106,6 +106,7 @@ face-symmetry-lab/
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
+  - `convert_demographic_model.py`
   - `derive_landmark_map.py`
   - `generate_structure.py`
   - `verify.py`
@@ -158,6 +159,7 @@ face-symmetry-lab/
     - `test_symmetry.py`
   - `model/`
     - `conftest.py`
+    - `test_demographic_conversion.py`
     - `test_real_demographic.py`
     - `test_real_landmarker.py`
   - `repository/`

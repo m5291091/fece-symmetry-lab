@@ -7,11 +7,14 @@ import pytest
 
 from face_symmetry_lab.adapters.io.model_store import (
     DEFAULT_MANIFEST_PATH,
+    DerivedModelAsset,
     InstallStatus,
     ModelAsset,
     ModelStore,
     ModelStoreError,
     find_asset,
+    find_derived_asset,
+    load_derived_assets,
     load_manifest,
 )
 
@@ -77,6 +80,31 @@ def test_repository_manifest_pins_the_official_openvino_demographic_pair() -> No
     assert xml.url.endswith("/FP16/age-gender-recognition-retail-0013.xml")
     assert weights.url.endswith("/FP16/age-gender-recognition-retail-0013.bin")
     assert xml.license == weights.license == "Apache-2.0"
+
+
+def test_repository_manifest_pins_the_locally_derived_demographic_onnx() -> None:
+    derived_assets = load_derived_assets(DEFAULT_MANIFEST_PATH)
+
+    onnx = find_derived_asset(derived_assets, "demographic_age_gender_onnx")
+
+    assert isinstance(onnx, DerivedModelAsset)
+    assert onnx.version == "open-model-zoo/2023.0/FP16-onnx-v1"
+    assert onnx.filename == "age-gender-recognition-retail-0013.onnx"
+    assert onnx.size_bytes > 4_000_000
+    assert len(onnx.sha256) == 64
+    assert onnx.source_assets == (
+        "demographic_age_gender_xml",
+        "demographic_age_gender_bin",
+    )
+    assert onnx.converter == "scripts/convert_demographic_model.py"
+    assert onnx.converter_version == "ir11-to-onnx-opset13-v1"
+    assert onnx.tools == {
+        "ml-dtypes": "0.5.4",
+        "numpy": "2.5.1",
+        "onnx": "1.22.0",
+        "protobuf": "7.35.1",
+    }
+    assert onnx.license == "Apache-2.0"
 
 
 def test_manifest_entries_are_parsed(tmp_path: Path) -> None:

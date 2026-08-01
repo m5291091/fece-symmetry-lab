@@ -22,17 +22,18 @@
 | `tests/application/test_analyzer.py` | ゲート→幾何／補正後の肌表面参考値→平滑化の統合と失敗分離 | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01 |
 | `tests/application/test_session.py` | session履歴上限、segment、設定fingerprint、肌表面・年齢・性別の合流 | FR-016, FR-017, FR-020, FR-023, FR-025, NFR-012 |
 | `tests/runtime/test_frame_scheduler.py` | capacity 1 の latest-frame-wins gate | NFR-006, NFR-007 |
-| `tests/adapters/test_opencv_demographic_estimator.py` | OpenVINO IR用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
+| `tests/adapters/test_opencv_demographic_estimator.py` | 派生ONNX用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
 | `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
 | `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
 | `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件 | FR-011, FR-020, AC-SCORE-04 |
 | `tests/adapters/test_session_exporter.py` | CSV / JSON の同値性、manifest、ファイル名 | FR-017, AC-EXPORT-01 |
 | `tests/model/test_real_landmarker.py` | 実 `.task` asset の load・検出・スコア smoke（未配置時は skip） | FR-002, FR-009, FR-011, §21.1 |
-| `tests/model/test_real_demographic.py` | manifest検証済みOpenVINO IRのOpenCV DNN load・出力shape smoke（未配置／runtime不備時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §21.1 |
+| `tests/model/test_demographic_conversion.py` | 検証済み公式IRからmanifest固定ONNXを決定的に再生成（asset／変換tool未配置時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §10.6, §21.1 |
+| `tests/model/test_real_demographic.py` | manifest検証済み派生ONNXのOpenCV DNN load・出力shape smoke（未配置／runtime不備時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, §21.1 |
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
 | `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、sample 間の直近数値表示、frame callback | FR-005, FR-013, NFR-006, NFR-009, AC-PRIV-02 |
 | `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示 | FR-013, FR-014, AC-A11Y-01 |
-| `tests/ui/test_model_setup.py` | manifest由来のlandmark・OpenVINO XML/BIN解決、個別hash検証、状態表示 | FR-001, FR-002, FR-020, FR-024 |
+| `tests/ui/test_model_setup.py` | manifest由来のlandmark・派生ONNX解決、元IR provenance・個別hash検証、状態表示 | FR-001, FR-002, FR-020, FR-024 |
 | `tests/test_cli.py` | localhost 限定の Streamlit 起動 command | NFR-009, AC-SEC-01 |
 | `tests/repository/test_generate_structure.py` | 安全で bounded な `STRUCTURE.md` 生成 | 開発効率・リポジトリ規約 |
 | `tests/repository/test_testbox_documentation.py` | test file set と本索引の同期 | 開発効率・リポジトリ規約 |

@@ -2,12 +2,11 @@ from hashlib import sha256
 from pathlib import Path
 
 import face_symmetry_lab.ui.model_setup as model_setup
-from face_symmetry_lab.adapters.io.model_store import InstallStatus, ModelAsset
+from face_symmetry_lab.adapters.io.model_store import DerivedModelAsset, InstallStatus
 from face_symmetry_lab.ui.model_setup import (
-    DEMOGRAPHIC_BIN_PATH_ENV_VAR,
-    DEMOGRAPHIC_XML_PATH_ENV_VAR,
+    DEMOGRAPHIC_ONNX_PATH_ENV_VAR,
     LANDMARKER_PATH_ENV_VAR,
-    configured_demographic_paths,
+    configured_demographic_path,
     configured_landmarker_path,
     demographic_model_status,
     landmark_asset,
@@ -51,63 +50,45 @@ def test_a_file_that_is_not_the_pinned_asset_reports_mismatch(tmp_path: Path) ->
     assert landmarker_status(impostor) is InstallStatus.MISMATCH
 
 
-def test_default_demographic_paths_come_from_the_pinned_manifest(monkeypatch) -> None:
-    monkeypatch.delenv(DEMOGRAPHIC_XML_PATH_ENV_VAR, raising=False)
-    monkeypatch.delenv(DEMOGRAPHIC_BIN_PATH_ENV_VAR, raising=False)
+def test_default_demographic_path_comes_from_the_pinned_manifest(monkeypatch) -> None:
+    monkeypatch.delenv(DEMOGRAPHIC_ONNX_PATH_ENV_VAR, raising=False)
 
-    xml_path, bin_path = configured_demographic_paths()
+    onnx_path = configured_demographic_path()
 
-    assert xml_path.name == "age-gender-recognition-retail-0013.xml"
-    assert bin_path.name == "age-gender-recognition-retail-0013.bin"
-    assert xml_path.parent == bin_path.parent
-    assert xml_path.parent.name == "models"
+    assert onnx_path.name == "age-gender-recognition-retail-0013.onnx"
+    assert onnx_path.parent.name == "models"
 
 
-def test_demographic_model_requires_both_verified_ir_files(tmp_path: Path) -> None:
-    xml_path = tmp_path / "age-gender-recognition-retail-0013.xml"
-    bin_path = tmp_path / "age-gender-recognition-retail-0013.bin"
+def test_demographic_model_requires_the_verified_derived_onnx(tmp_path: Path) -> None:
+    onnx_path = tmp_path / "age-gender-recognition-retail-0013.onnx"
 
-    assert demographic_model_status(xml_path, bin_path) is InstallStatus.MISSING
+    assert demographic_model_status(onnx_path) is InstallStatus.MISSING
 
-    xml_path.write_bytes(b"not the pinned XML")
-    assert demographic_model_status(xml_path, bin_path) is InstallStatus.MISMATCH
-
-    bin_path.write_bytes(b"not the pinned BIN")
-    assert demographic_model_status(xml_path, bin_path) is InstallStatus.MISMATCH
+    onnx_path.write_bytes(b"not the pinned ONNX")
+    assert demographic_model_status(onnx_path) is InstallStatus.MISMATCH
 
 
-def test_demographic_model_reports_ready_for_a_verified_pair(
+def test_demographic_model_reports_ready_for_a_verified_onnx(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    xml_bytes = b"pinned XML"
-    bin_bytes = b"pinned BIN"
-    xml_asset = ModelAsset(
-        name="demographic_age_gender_xml",
-        version="test/FP16",
-        filename="age.xml",
-        url="https://storage.openvinotoolkit.org/age.xml",
-        size_bytes=len(xml_bytes),
-        sha256=sha256(xml_bytes).hexdigest(),
+    onnx_bytes = b"pinned ONNX"
+    onnx_asset = DerivedModelAsset(
+        name="demographic_age_gender_onnx",
+        version="test/ONNX",
+        filename="age.onnx",
+        size_bytes=len(onnx_bytes),
+        sha256=sha256(onnx_bytes).hexdigest(),
         license="Apache-2.0",
         license_url="https://www.apache.org/licenses/LICENSE-2.0",
-        input_contract="test XML",
+        input_contract="test ONNX",
+        source_assets=("demographic_age_gender_xml", "demographic_age_gender_bin"),
+        converter="scripts/convert_demographic_model.py",
+        converter_version="test-v1",
+        tools={"onnx": "1.22.0"},
     )
-    bin_asset = ModelAsset(
-        name="demographic_age_gender_bin",
-        version="test/FP16",
-        filename="age.bin",
-        url="https://storage.openvinotoolkit.org/age.bin",
-        size_bytes=len(bin_bytes),
-        sha256=sha256(bin_bytes).hexdigest(),
-        license="Apache-2.0",
-        license_url="https://www.apache.org/licenses/LICENSE-2.0",
-        input_contract="test BIN",
-    )
-    monkeypatch.setattr(model_setup, "demographic_assets", lambda: (xml_asset, bin_asset))
-    xml_path = tmp_path / xml_asset.filename
-    bin_path = tmp_path / bin_asset.filename
-    xml_path.write_bytes(xml_bytes)
-    bin_path.write_bytes(bin_bytes)
+    monkeypatch.setattr(model_setup, "demographic_asset", lambda: onnx_asset)
+    onnx_path = tmp_path / onnx_asset.filename
+    onnx_path.write_bytes(onnx_bytes)
 
-    assert demographic_model_status(xml_path, bin_path) is InstallStatus.READY
+    assert demographic_model_status(onnx_path) is InstallStatus.READY

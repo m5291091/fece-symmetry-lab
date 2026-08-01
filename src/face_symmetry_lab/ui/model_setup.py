@@ -14,21 +14,25 @@ import streamlit as st
 
 from face_symmetry_lab.adapters.io.model_store import (
     DEFAULT_MODELS_DIR,
+    DerivedModelAsset,
     InstallStatus,
     ModelAsset,
     ModelStoreError,
     asset_status,
     find_asset,
+    find_derived_asset,
+    load_derived_assets,
     load_manifest,
 )
 
 LANDMARKER_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_LANDMARKER_PATH"
-DEMOGRAPHIC_XML_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH"
-DEMOGRAPHIC_BIN_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH"
+DEMOGRAPHIC_ONNX_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH"
 LANDMARK_ASSET_NAME = "face_landmarker"
 DEMOGRAPHIC_XML_ASSET_NAME = "demographic_age_gender_xml"
 DEMOGRAPHIC_BIN_ASSET_NAME = "demographic_age_gender_bin"
+DEMOGRAPHIC_ONNX_ASSET_NAME = "demographic_age_gender_onnx"
 BOOTSTRAP_COMMAND = "uv run python scripts/bootstrap_models.py --accept-manifest"
+CONVERT_DEMOGRAPHIC_COMMAND = "uv run --script scripts/convert_demographic_model.py"
 
 
 def landmark_asset() -> ModelAsset:
@@ -48,6 +52,17 @@ def demographic_assets() -> tuple[ModelAsset, ModelAsset]:
     return xml_asset, bin_asset
 
 
+def demographic_asset() -> DerivedModelAsset:
+    """Return the derived ONNX entry after checking its source provenance."""
+    xml_asset, bin_asset = demographic_assets()
+    onnx_asset = find_derived_asset(load_derived_assets(), DEMOGRAPHIC_ONNX_ASSET_NAME)
+    if onnx_asset.source_assets != (xml_asset.name, bin_asset.name):
+        raise ModelStoreError("年齢・性別ONNXの元asset指定がmanifestと一致しません。")
+    if onnx_asset.license != xml_asset.license or onnx_asset.license != bin_asset.license:
+        raise ModelStoreError("年齢・性別ONNXと元assetのライセンスが一致しません。")
+    return onnx_asset
+
+
 def configured_landmarker_path() -> Path:
     """Resolve the local asset path. The env var wins over the models directory."""
     configured = os.environ.get(LANDMARKER_PATH_ENV_VAR)
@@ -56,22 +71,11 @@ def configured_landmarker_path() -> Path:
     return DEFAULT_MODELS_DIR / landmark_asset().filename
 
 
-def configured_demographic_paths() -> tuple[Path, Path]:
-    """Resolve demographic IR paths; explicit local overrides still require hashes."""
-    xml_asset, bin_asset = demographic_assets()
-    configured_xml = os.environ.get(DEMOGRAPHIC_XML_PATH_ENV_VAR)
-    configured_bin = os.environ.get(DEMOGRAPHIC_BIN_PATH_ENV_VAR)
-    xml_path = (
-        Path(configured_xml).expanduser()
-        if configured_xml
-        else DEFAULT_MODELS_DIR / xml_asset.filename
-    )
-    bin_path = (
-        Path(configured_bin).expanduser()
-        if configured_bin
-        else DEFAULT_MODELS_DIR / bin_asset.filename
-    )
-    return xml_path, bin_path
+def configured_demographic_path() -> Path:
+    """Resolve the derived ONNX path; local overrides still require its hash."""
+    asset = demographic_asset()
+    configured = os.environ.get(DEMOGRAPHIC_ONNX_PATH_ENV_VAR)
+    return Path(configured).expanduser() if configured else DEFAULT_MODELS_DIR / asset.filename
 
 
 def landmarker_status(path: Path) -> InstallStatus:
@@ -79,15 +83,9 @@ def landmarker_status(path: Path) -> InstallStatus:
     return asset_status(path, landmark_asset())
 
 
-def demographic_model_status(xml_path: Path, bin_path: Path) -> InstallStatus:
-    """Require both IR files to match the pinned manifest before inference."""
-    xml_asset, bin_asset = demographic_assets()
-    statuses = (asset_status(xml_path, xml_asset), asset_status(bin_path, bin_asset))
-    if InstallStatus.MISMATCH in statuses:
-        return InstallStatus.MISMATCH
-    if InstallStatus.MISSING in statuses:
-        return InstallStatus.MISSING
-    return InstallStatus.READY
+def demographic_model_status(onnx_path: Path) -> InstallStatus:
+    """Require the derived ONNX to match the pinned manifest before inference."""
+    return asset_status(onnx_path, demographic_asset())
 
 
 def _render_missing(path: Path, asset: ModelAsset) -> None:
@@ -128,35 +126,37 @@ def resolve_ready_landmarker() -> Path | None:
     return path
 
 
-def resolve_ready_demographic() -> tuple[Path, Path, str] | None:
-    """Render the demographic pair status and return only verified IR paths."""
+def resolve_ready_demographic() -> tuple[Path, str] | None:
+    """Render status and return only a verified derived ONNX path."""
     try:
         xml_asset, bin_asset = demographic_assets()
-        xml_path, bin_path = configured_demographic_paths()
-        status = demographic_model_status(xml_path, bin_path)
+        onnx_asset = demographic_asset()
+        onnx_path = configured_demographic_path()
+        status = demographic_model_status(onnx_path)
     except ModelStoreError as error:
         st.error(str(error))
         return None
 
     if status is InstallStatus.MISSING:
-        st.warning("年齢・性別モデルが未配置です。アプリは自動取得しません。")
+        st.warning("年齢・性別モデルの派生ONNXが未配置です。アプリは自動生成しません。")
         for asset in (xml_asset, bin_asset):
             st.caption(
                 f"取得元 {asset.url} / {asset.size_bytes:,} bytes / "
                 f"ライセンス {asset.license} / sha256 {asset.sha256}"
             )
         st.code(BOOTSTRAP_COMMAND, language="bash")
+        st.code(CONVERT_DEMOGRAPHIC_COMMAND, language="bash")
         return None
     if status is InstallStatus.MISMATCH:
         st.error(
-            "年齢・性別モデルのXMLまたはBINがmanifestと一致しません。"
+            "年齢・性別モデルのONNXがmanifestと一致しません。"
             "改変または破損の可能性があるため読み込みません。"
         )
-        st.code(BOOTSTRAP_COMMAND, language="bash")
+        st.code(CONVERT_DEMOGRAPHIC_COMMAND, language="bash")
         return None
 
     st.caption(
-        f"model: {xml_asset.version} · XML {xml_asset.sha256[:12]}… · "
-        f"BIN {bin_asset.sha256[:12]}… · 検証済み"
+        f"model: {onnx_asset.version} · ONNX {onnx_asset.sha256[:12]}… · "
+        f"source XML/BIN {xml_asset.sha256[:8]}…/{bin_asset.sha256[:8]}… · 検証済み"
     )
-    return xml_path, bin_path, xml_asset.version
+    return onnx_path, onnx_asset.version

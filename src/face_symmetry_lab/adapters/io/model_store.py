@@ -82,6 +82,38 @@ class ModelAsset(BaseModel):
         return filename
 
 
+class DerivedModelAsset(BaseModel):
+    """One locally generated model file pinned to source assets and a recipe."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    filename: str
+    size_bytes: int = Field(gt=0, le=MAX_MODEL_BYTES)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    license: str = Field(min_length=1)
+    license_url: str = Field(min_length=1)
+    input_contract: str = Field(min_length=1)
+    source_assets: tuple[str, ...] = Field(min_length=1)
+    converter: str = Field(min_length=1)
+    converter_version: str = Field(min_length=1)
+    tools: dict[str, str] = Field(min_length=1)
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, filename: str) -> str:
+        return ModelAsset.validate_filename(filename)
+
+    @field_validator("converter")
+    @classmethod
+    def validate_converter(cls, converter: str) -> str:
+        path = Path(converter)
+        if path.is_absolute() or ".." in path.parts or path.suffix != ".py":
+            raise ValueError("変換scriptはrepository内のPython相対pathに限定します。")
+        return converter
+
+
 #: A downloader yields the response body in chunks. Injected for tests.
 Downloader = Callable[[str], Iterator[bytes]]
 
@@ -115,11 +147,41 @@ def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> tuple[ModelAsset, ...]:
         raise ModelStoreError(f"model manifest の内容が不正です: {error}") from error
 
 
+def load_derived_assets(
+    path: Path = DEFAULT_MANIFEST_PATH,
+) -> tuple[DerivedModelAsset, ...]:
+    """Read and validate locally derived model entries from the manifest."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ModelStoreError(f"model manifest が見つかりません: {path}") from error
+    except json.JSONDecodeError as error:
+        raise ModelStoreError(f"model manifest を解析できません: {path}") from error
+
+    entries = raw.get("derived_models") if isinstance(raw, dict) else None
+    if not isinstance(entries, list) or not entries:
+        raise ModelStoreError("model manifest に derived_models 配列がありません。")
+    try:
+        return tuple(DerivedModelAsset.model_validate(entry) for entry in entries)
+    except ValidationError as error:
+        raise ModelStoreError(f"derived model manifest の内容が不正です: {error}") from error
+
+
 def find_asset(assets: tuple[ModelAsset, ...], name: str) -> ModelAsset:
     for asset in assets:
         if asset.name == name:
             return asset
     raise ModelStoreError(f"model manifest に {name} がありません。")
+
+
+def find_derived_asset(
+    assets: tuple[DerivedModelAsset, ...],
+    name: str,
+) -> DerivedModelAsset:
+    for asset in assets:
+        if asset.name == name:
+            return asset
+    raise ModelStoreError(f"derived model manifest に {name} がありません。")
 
 
 def file_sha256(path: Path) -> str:
@@ -130,7 +192,7 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def asset_status(path: Path, asset: ModelAsset) -> InstallStatus:
+def asset_status(path: Path, asset: ModelAsset | DerivedModelAsset) -> InstallStatus:
     """Verify one local path against a pinned manifest entry without network I/O."""
     if not path.is_file():
         return InstallStatus.MISSING

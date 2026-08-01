@@ -72,24 +72,19 @@ _IMAGE_STATUS_MESSAGES = {
 
 
 def _session_estimator(
-    xml_path: Path,
-    bin_path: Path,
+    onnx_path: Path,
     model_version: str,
 ) -> OpenCvDemographicEstimator:
-    xml_stat = xml_path.stat()
-    bin_stat = bin_path.stat()
+    onnx_stat = onnx_path.stat()
     path_fingerprint = (
-        f"{xml_path.resolve()}:{xml_stat.st_size}:{xml_stat.st_mtime_ns}:"
-        f"{bin_path.resolve()}:{bin_stat.st_size}:{bin_stat.st_mtime_ns}:"
-        f"{model_version}"
+        f"{onnx_path.resolve()}:{onnx_stat.st_size}:{onnx_stat.st_mtime_ns}:{model_version}"
     )
     if (
         st.session_state.get(ESTIMATOR_PATH_KEY) != path_fingerprint
         or ESTIMATOR_STATE_KEY not in st.session_state
     ):
         st.session_state[ESTIMATOR_STATE_KEY] = OpenCvDemographicEstimator(
-            xml_path=xml_path,
-            bin_path=bin_path,
+            onnx_path=onnx_path,
             model_version=model_version,
         )
         st.session_state[ESTIMATOR_PATH_KEY] = path_fingerprint
@@ -292,7 +287,7 @@ def _render_image_section() -> None:
     st.divider()
     st.subheader("モデル推定の参考年齢・参考性別")
     st.caption(f"入力画像 {decoded.width} × {decoded.height}")
-    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16 / 対象18〜75歳")
+    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
 
     age_input: np.ndarray | None = None
     if landmark_frame is not None:
@@ -319,8 +314,8 @@ def _render_image_section() -> None:
         try:
             if demographic_model is None:
                 raise DemographicInferenceError("検証済みの年齢・性別モデルがありません。")
-            xml_path, bin_path, model_version = demographic_model
-            estimator = _session_estimator(xml_path, bin_path, model_version)
+            onnx_path, model_version = demographic_model
+            estimator = _session_estimator(onnx_path, model_version)
             if age_input is None:
                 raise DemographicInferenceError("単一顔のcropを作成できません。")
             estimate = estimator.estimate(age_input)

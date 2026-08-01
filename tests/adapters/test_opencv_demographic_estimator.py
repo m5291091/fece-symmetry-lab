@@ -28,22 +28,19 @@ class FakeNet:
         ]
 
 
-def _model_files(tmp_path: Path) -> tuple[Path, Path]:
-    xml_path = tmp_path / "age-gender.xml"
-    bin_path = tmp_path / "age-gender.bin"
-    xml_path.write_bytes(b"test-graph")
-    bin_path.write_bytes(b"test-weights")
-    return xml_path, bin_path
+def _model_file(tmp_path: Path) -> Path:
+    onnx_path = tmp_path / "age-gender.onnx"
+    onnx_path.write_bytes(b"test-model")
+    return onnx_path
 
 
 def test_estimator_uses_bgr_62_square_and_maps_continuous_outputs(tmp_path: Path) -> None:
-    xml_path, bin_path = _model_files(tmp_path)
+    onnx_path = _model_file(tmp_path)
     net = FakeNet()
     estimator = OpenCvDemographicEstimator(
-        xml_path=xml_path,
-        bin_path=bin_path,
+        onnx_path=onnx_path,
         model_version="openvino-age-gender/1.0.0",
-        net_factory=lambda _xml, _bin: net,
+        net_factory=lambda _onnx: net,
     )
     image = np.zeros((32, 24, 3), dtype=np.uint8)
     image[..., 0] = 10
@@ -63,24 +60,20 @@ def test_estimator_uses_bgr_62_square_and_maps_continuous_outputs(tmp_path: Path
 
 @pytest.mark.parametrize("age", [0.17, 0.76, float("nan")])
 def test_estimator_rejects_age_outside_supported_range(tmp_path: Path, age: float) -> None:
-    xml_path, bin_path = _model_files(tmp_path)
+    onnx_path = _model_file(tmp_path)
     estimator = OpenCvDemographicEstimator(
-        xml_path=xml_path,
-        bin_path=bin_path,
+        onnx_path=onnx_path,
         model_version="openvino-age-gender/1.0.0",
-        net_factory=lambda _xml, _bin: FakeNet(age=age),
+        net_factory=lambda _onnx: FakeNet(age=age),
     )
 
     with pytest.raises(DemographicInferenceError):
         estimator.estimate(np.zeros((32, 32, 3), dtype=np.uint8))
 
 
-def test_estimator_requires_both_ir_files(tmp_path: Path) -> None:
-    xml_path, _ = _model_files(tmp_path)
-
-    with pytest.raises(DemographicInferenceError, match="BIN"):
+def test_estimator_requires_the_derived_onnx(tmp_path: Path) -> None:
+    with pytest.raises(DemographicInferenceError, match="ONNX"):
         OpenCvDemographicEstimator(
-            xml_path=xml_path,
-            bin_path=tmp_path / "missing.bin",
+            onnx_path=tmp_path / "missing.onnx",
             model_version="openvino-age-gender/1.0.0",
         )

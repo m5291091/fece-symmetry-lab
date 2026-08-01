@@ -45,7 +45,7 @@ uv run python scripts/bootstrap_models.py --accept-manifest   # CI / 非対話
 uv run python scripts/bootstrap_models.py --verify            # 配置済みファイルを検証
 ```
 
-取得は一時ファイルへ書き、SHA-256 が一致した場合だけ `models/` へ atomic rename します。1 byte でも異なるモデルは配置しません。配置先を変える場合はランドマークに`FACE_SYMMETRY_LAB_LANDMARKER_PATH`、年齢・性別モデルに`FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH` / `FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH`を設定します。別パスもmanifestと同じsize・SHA-256でなければ読み込みません。
+取得は一時ファイルへ書き、SHA-256 が一致した場合だけ `models/` へ atomic rename します。1 byte でも異なるモデルは配置しません。配置先を変える場合はランドマークに`FACE_SYMMETRY_LAB_LANDMARKER_PATH`、年齢・性別の派生モデルに`FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH`を設定します。別パスもmanifestと同じsize・SHA-256でなければ読み込みません。
 
 ### 実環境での検出テスト
 
@@ -93,14 +93,18 @@ OD-01 の固定評価セットと、OD-04 の同意済み実写単軸映像は�
 
 ## 年齢・性別モデル
 
-アプリはOpen Model Zoo `age-gender-recognition-retail-0013`のOpenVINO IR（XML/BIN）を読み込みます。
+アプリはOpen Model Zoo `age-gender-recognition-retail-0013`の公式OpenVINO IR（XML/BIN）から固定生成したONNXを読み込みます。
 
-1. `models/age-gender-recognition-retail-0013.xml` と同名の`.bin`
-2. 環境変数`FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH` / `FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH`
+```bash
+uv run python scripts/bootstrap_models.py --accept-manifest
+uv run --script scripts/convert_demographic_model.py
+```
 
-モデルはGitに含めません。Open Model Zoo 2023.0 FP16の固定URL、size、Apache-2.0、XML/BIN個別SHA-256をmanifestへ登録済みで、明示的なbootstrap操作だけで取得します。固定評価のruntime parity、slice評価、3 OS smokeはリリース前の未完事項です。
+生成先は`models/age-gender-recognition-retail-0013.onnx`です。別の場所を使う場合は環境変数`FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH`を指定します。
 
-アプリ本体は既存の`opencv-contrib-python`だけでCPU推論し、OpenVINO、PyTorch、torchvision、InsightFaceをruntime lockへ混在させません。公開評価値と制約は[モデルカード](docs/model-cards/openvino-age-gender-retail-0013.md)を確認してください。
+モデルはGitに含めません。Open Model Zoo 2023.0 FP16の固定URL、size、Apache-2.0、XML/BIN個別SHA-256に加え、派生ONNXの変換recipe、size、SHA-256をmanifestへ登録済みです。公式assetの取得とONNX生成はいずれも明示操作だけです。固定評価の公式IR runtime parity、slice評価、3 OS smokeはリリース前の未完事項です。
+
+アプリ本体は既存の`opencv-contrib-python`だけでCPU推論し、OpenVINO、ONNX Runtime、PyTorch、torchvision、InsightFaceをruntime lockへ混在させません。変換専用packageはPEP 723 scriptへ隔離しています。公開評価値と制約は[モデルカード](docs/model-cards/openvino-age-gender-retail-0013.md)を確認してください。
 
 ## 開発
 

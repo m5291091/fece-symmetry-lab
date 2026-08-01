@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.1.0",
+  "manifest_version": "1.2.0",
   "models": [
     {
       "name": "face_landmarker",
@@ -33,6 +33,30 @@
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "input_contract": "OpenVINO FP16 weights; pair with age-gender-recognition-retail-0013.xml"
+    }
+  ],
+  "derived_models": [
+    {
+      "name": "demographic_age_gender_onnx",
+      "version": "open-model-zoo/2023.0/FP16-onnx-v1",
+      "filename": "age-gender-recognition-retail-0013.onnx",
+      "size_bytes": 8556137,
+      "sha256": "e86b01b71cce307c1a58d9b3db3777be2d95993f702f5b6b29d02bf4efe296bc",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "input_contract": "Derived ONNX opset 13; BGR float32 NCHW 1x3x62x62; outputs fc3_a and prob; generated only from the pinned OpenVINO IR pair",
+      "source_assets": [
+        "demographic_age_gender_xml",
+        "demographic_age_gender_bin"
+      ],
+      "converter": "scripts/convert_demographic_model.py",
+      "converter_version": "ir11-to-onnx-opset13-v1",
+      "tools": {
+        "ml-dtypes": "0.5.4",
+        "numpy": "2.5.1",
+        "onnx": "1.22.0",
+        "protobuf": "7.35.1"
+      }
     }
   ]
 }

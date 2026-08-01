@@ -5,15 +5,15 @@ import pytest
 
 from face_symmetry_lab.adapters.io.model_store import InstallStatus
 from face_symmetry_lab.ui.model_setup import (
-    configured_demographic_paths,
+    configured_demographic_path,
     demographic_model_status,
 )
 
 
 @pytest.mark.model
-def test_pinned_demographic_ir_loads_and_exposes_expected_outputs() -> None:
-    xml_path, bin_path = configured_demographic_paths()
-    if demographic_model_status(xml_path, bin_path) is not InstallStatus.READY:
+def test_pinned_demographic_onnx_loads_and_exposes_expected_outputs() -> None:
+    onnx_path = configured_demographic_path()
+    if demographic_model_status(onnx_path) is not InstallStatus.READY:
         pytest.skip("manifest検証済みの年齢・性別モデルが未配置です。")
 
     import cv2
@@ -21,7 +21,7 @@ def test_pinned_demographic_ir_loads_and_exposes_expected_outputs() -> None:
     if not hasattr(cv2, "dnn"):
         pytest.skip("cv2 DNN runtimeが現在の環境でロードされていません。")
 
-    net = cv2.dnn.readNet(str(bin_path), str(xml_path))
+    net = cv2.dnn.readNetFromONNX(str(onnx_path))
     net.setInput(np.zeros((1, 3, 62, 62), dtype=np.float32))
     age_output, gender_output = net.forward(["fc3_a", "prob"])
 

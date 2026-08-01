@@ -2,35 +2,30 @@ import tomllib
 from pathlib import Path
 
 from face_symmetry_lab.ui.model_setup import (
-    DEMOGRAPHIC_BIN_PATH_ENV_VAR,
-    DEMOGRAPHIC_XML_PATH_ENV_VAR,
-    configured_demographic_paths,
+    DEMOGRAPHIC_ONNX_PATH_ENV_VAR,
+    configured_demographic_path,
 )
 
 STREAMLIT_CONFIG_PATH = Path(__file__).parents[2] / ".streamlit" / "config.toml"
 
 
-def test_configured_model_paths_default_to_repository_models(monkeypatch) -> None:
-    monkeypatch.delenv(DEMOGRAPHIC_XML_PATH_ENV_VAR, raising=False)
-    monkeypatch.delenv(DEMOGRAPHIC_BIN_PATH_ENV_VAR, raising=False)
+def test_configured_model_path_defaults_to_repository_models(monkeypatch) -> None:
+    monkeypatch.delenv(DEMOGRAPHIC_ONNX_PATH_ENV_VAR, raising=False)
 
-    xml_path, bin_path = configured_demographic_paths()
+    onnx_path = configured_demographic_path()
 
-    assert xml_path.name == "age-gender-recognition-retail-0013.xml"
-    assert bin_path.name == "age-gender-recognition-retail-0013.bin"
-    assert xml_path.parent.name == bin_path.parent.name == "models"
+    assert onnx_path.name == "age-gender-recognition-retail-0013.onnx"
+    assert onnx_path.parent.name == "models"
 
 
-def test_configured_model_paths_use_explicit_local_paths(
+def test_configured_model_path_uses_explicit_local_path(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    xml_path = tmp_path / "age.xml"
-    bin_path = tmp_path / "age.bin"
-    monkeypatch.setenv(DEMOGRAPHIC_XML_PATH_ENV_VAR, str(xml_path))
-    monkeypatch.setenv(DEMOGRAPHIC_BIN_PATH_ENV_VAR, str(bin_path))
+    onnx_path = tmp_path / "age.onnx"
+    monkeypatch.setenv(DEMOGRAPHIC_ONNX_PATH_ENV_VAR, str(onnx_path))
 
-    assert configured_demographic_paths() == (xml_path, bin_path)
+    assert configured_demographic_path() == onnx_path
 
 
 def test_streamlit_uses_the_dark_product_theme() -> None:

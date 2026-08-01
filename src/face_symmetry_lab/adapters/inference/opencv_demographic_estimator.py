@@ -1,4 +1,4 @@
-"""OpenCV DNN adapter for Open Model Zoo age/gender IR assets."""
+"""OpenCV DNN adapter for the pinned Open Model Zoo-derived ONNX asset."""
 
 from __future__ import annotations
 
@@ -29,14 +29,14 @@ class _DnnNet(Protocol):
     def forward(self, output_names: list[str]) -> list[NDArray[np.float32]]: ...
 
 
-NetFactory = Callable[[Path, Path], _DnnNet]
+NetFactory = Callable[[Path], _DnnNet]
 
 
-def _default_net_factory(xml_path: Path, bin_path: Path) -> _DnnNet:
+def _default_net_factory(onnx_path: Path) -> _DnnNet:
     try:
         import cv2
 
-        return cast(_DnnNet, cv2.dnn.readNet(str(bin_path), str(xml_path)))
+        return cast(_DnnNet, cv2.dnn.readNetFromONNX(str(onnx_path)))
     except Exception as error:
         raise DemographicInferenceError("年齢・性別モデルを初期化できません。") from error
 
@@ -47,11 +47,6 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _combined_sha256(xml_path: Path, bin_path: Path) -> str:
-    identity = f"xml:{_file_sha256(xml_path)}\nbin:{_file_sha256(bin_path)}".encode()
-    return sha256(identity).hexdigest()
 
 
 def preprocess_demographic_image(rgb_image: NDArray[np.uint8]) -> NDArray[np.float32]:
@@ -73,18 +68,15 @@ class OpenCvDemographicEstimator:
     def __init__(
         self,
         *,
-        xml_path: Path,
-        bin_path: Path,
+        onnx_path: Path,
         model_version: str,
         net_factory: NetFactory = _default_net_factory,
     ) -> None:
-        if not xml_path.is_file():
-            raise DemographicInferenceError("年齢・性別モデルのXMLが見つかりません。")
-        if not bin_path.is_file():
-            raise DemographicInferenceError("年齢・性別モデルのBINが見つかりません。")
+        if not onnx_path.is_file():
+            raise DemographicInferenceError("年齢・性別モデルのONNXが見つかりません。")
         self._model_version = model_version
-        self._model_sha256 = _combined_sha256(xml_path, bin_path)
-        self._net = net_factory(xml_path, bin_path)
+        self._model_sha256 = _file_sha256(onnx_path)
+        self._net = net_factory(onnx_path)
 
     def estimate(self, rgb_image: NDArray[np.uint8]) -> DemographicEstimate:
         blob = preprocess_demographic_image(rgb_image)
