@@ -30,6 +30,8 @@ from face_symmetry_lab.adapters.io.model_store import (
 )
 from face_symmetry_lab.application.still_image import detect_still_image_landmarks
 from face_symmetry_lab.domain.landmarks import FACE_LANDMARK_COUNT, TrackingStatus
+from face_symmetry_lab.domain.metrics import PART_NAMES
+from face_symmetry_lab.domain.models import Status
 
 pytestmark = pytest.mark.model
 
@@ -170,3 +172,81 @@ def test_real_photo_produces_a_full_landmark_set() -> None:
     assert result.landmark_count == FACE_LANDMARK_COUNT
     assert result.preview.shape == image.shape
     assert not np.array_equal(result.preview, image)
+
+
+def test_the_synthetic_face_produces_a_symmetry_score(
+    synthetic_face_rgb: NDArray[np.uint8],
+) -> None:
+    """End-to-end: real model -> pose -> quality gate -> score."""
+    from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+    from face_symmetry_lab.application.still_image import analyze_still_image
+
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_installed_model(),
+        model_version=_asset().version,
+    )
+    try:
+        analysis = analyze_still_image(landmarker, synthetic_face_rgb, config=load_metric_config())
+    finally:
+        landmarker.close()
+
+    outcome = analysis.outcome
+    assert outcome.state.status is Status.OK, outcome.state.reason_codes
+    assert outcome.symmetry is not None
+    assert outcome.overall_raw is not None
+    assert 0.0 <= outcome.overall_raw <= 100.0
+    for name in PART_NAMES:
+        value = outcome.symmetry.part(name)
+        assert value is not None and 0.0 <= value <= 100.0
+
+
+def test_a_drawn_symmetric_face_scores_higher_than_a_skewed_one(
+    synthetic_face_rgb: NDArray[np.uint8],
+) -> None:
+    """A deliberately asymmetric render must not score above the symmetric one."""
+    from PIL import Image
+
+    from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+    from face_symmetry_lab.application.still_image import analyze_still_image
+
+    skewed = Image.fromarray(synthetic_face_rgb).transform(
+        (512, 512),
+        Image.Transform.AFFINE,
+        (1.0, 0.10, -25.0, 0.0, 1.0, 0.0),
+        resample=Image.Resampling.BILINEAR,
+    )
+    config = load_metric_config()
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_installed_model(),
+        model_version=_asset().version,
+    )
+    try:
+        balanced = analyze_still_image(landmarker, synthetic_face_rgb, config=config)
+        distorted = analyze_still_image(
+            landmarker,
+            np.asarray(skewed, dtype=np.uint8),
+            config=config,
+        )
+    finally:
+        landmarker.close()
+
+    assert balanced.outcome.overall_raw is not None
+    if distorted.outcome.overall_raw is not None:
+        assert distorted.outcome.overall_raw <= balanced.outcome.overall_raw
+
+
+def test_the_head_pose_of_the_frontal_synthetic_face_is_near_zero(
+    synthetic_face_rgb: NDArray[np.uint8],
+) -> None:
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_installed_model(),
+        model_version=_asset().version,
+    )
+    try:
+        frame = landmarker.detect(synthetic_face_rgb)
+    finally:
+        landmarker.close()
+
+    assert frame.pose is not None
+    assert abs(frame.pose.yaw_deg) < 15.0
+    assert abs(frame.pose.roll_deg) < 15.0

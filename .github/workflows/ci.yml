@@ -21,3 +21,26 @@ jobs:
           python-version-file: .python-version
       - run: uv sync --frozen
       - run: uv run python scripts/verify.py
+
+  # §21.5: the `model` marker must actually run somewhere, not merely be excluded
+  # from the PR job. This is the only job allowed to reach the model host.
+  model-smoke:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - run: uv sync --frozen
+      - name: Prepare the pinned model assets
+        run: uv run python scripts/bootstrap_models.py --accept-manifest
+      - name: Verify the installed assets against the manifest
+        run: uv run python scripts/bootstrap_models.py --verify
+      - name: Real-model smoke tests
+        run: uv run pytest -m model
+      - name: The landmark map is still reproducible from the model
+        run: uv run python scripts/derive_landmark_map.py --check
