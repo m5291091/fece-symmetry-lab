@@ -37,6 +37,7 @@ def metric_overlay_lines(
         for name in ("contour", "eyes", "nose", "mouth")
     }
     pose = outcome.pose
+    skin_quality = outcome.skin_quality
     return (
         f"{'LIVE SAMPLE' if current_sample else 'LAST SAMPLE'} | {outcome.state.status.value}",
         f"OVERALL {_number(overall)}",
@@ -48,6 +49,7 @@ def metric_overlay_lines(
                 f"M {_number(parts['mouth'])}",
             )
         ),
+        f"SKIN REF {_number(skin_quality.score if skin_quality else None)} | CAPTURE-DEPENDENT",
         " ".join(
             (
                 f"YAW {_number(pose.yaw_deg if pose else None, signed=True)}",
@@ -80,9 +82,14 @@ def draw_camera_metrics(
     status_font = _font(status_size)
     overall_font = _font(overall_size)
     detail_font = _font(detail_size)
-    fonts = (status_font, overall_font, detail_font, detail_font)
+    fonts = (status_font, overall_font, detail_font, detail_font, detail_font)
     padding = max(12, round(18 * scale))
-    gaps = (max(5, round(8 * scale)), max(7, round(11 * scale)), max(4, round(6 * scale)))
+    gaps = (
+        max(5, round(8 * scale)),
+        max(7, round(11 * scale)),
+        max(4, round(6 * scale)),
+        max(4, round(6 * scale)),
+    )
 
     image = Image.fromarray(painted).convert("RGBA")
     measuring = ImageDraw.Draw(image)
@@ -91,7 +98,7 @@ def draw_camera_metrics(
     ]
     line_heights = [box[3] - box[1] for box in boxes]
     content_height = sum(line_heights) + sum(gaps) + padding * 2
-    panel_height = min(height, max(round(224 * scale), content_height))
+    panel_height = min(height, max(round(258 * scale), content_height))
     panel_width = min(
         width,
         max(round(540 * scale), max(box[2] - box[0] for box in boxes) + padding * 2),

@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
@@ -79,13 +80,26 @@ def _frame(points=SYMMETRIC_POINTS, *, frame_id=1, yaw=0.0, face_count=1):
 
 
 def _analyzer(**kwargs) -> FrameAnalyzer:
-    return FrameAnalyzer(config=_config(), **kwargs)
+    return FrameAnalyzer(
+        config=_config(),
+        skin_pairs=((7, 8), (9, 10), (11, 12)),
+        **kwargs,
+    )
 
 
-def _drive_to_ok(analyzer: FrameAnalyzer, *, start: float = 0.0):
+def _drive_to_ok(
+    analyzer: FrameAnalyzer,
+    *,
+    start: float = 0.0,
+    rgb_image: np.ndarray | None = None,
+):
     outcome = None
     for index in range(1, 6):
-        outcome = analyzer.analyze(_frame(frame_id=index), at=start + index * 0.1)
+        outcome = analyzer.analyze(
+            _frame(frame_id=index),
+            at=start + index * 0.1,
+            rgb_image=rgb_image,
+        )
     assert outcome is not None
     return outcome
 
@@ -212,3 +226,26 @@ def test_custom_thresholds_change_how_quickly_the_gate_opens() -> None:
     outcome = analyzer.analyze(_frame(), at=0.0)
 
     assert outcome.state.status is Status.OK
+
+
+def test_skin_surface_reference_is_separate_from_the_geometry_overall() -> None:
+    mirrored = np.full((480, 640, 3), (150, 120, 105), dtype=np.uint8)
+    analyzer = _analyzer()
+
+    baseline = _drive_to_ok(analyzer, rgb_image=mirrored)
+    changed_image = mirrored.copy()
+    rng = np.random.default_rng(42)
+    changed_image[250:290, 180:220] = rng.integers(
+        0,
+        256,
+        size=(40, 40, 3),
+        dtype=np.uint8,
+    )
+    changed = analyzer.analyze(_frame(frame_id=6), at=0.7, rgb_image=changed_image)
+
+    assert baseline.skin_quality is not None
+    assert baseline.skin_quality.score == pytest.approx(100.0, abs=1e-6)
+    assert changed.skin_quality is not None
+    assert changed.skin_quality.score is not None
+    assert changed.skin_quality.score < baseline.skin_quality.score
+    assert changed.overall_raw == pytest.approx(baseline.overall_raw, abs=1e-6)

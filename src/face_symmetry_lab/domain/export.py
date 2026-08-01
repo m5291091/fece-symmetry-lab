@@ -16,9 +16,9 @@ from pydantic import (
     model_validator,
 )
 
-from face_symmetry_lab.domain.models import ReasonCode, Status
+from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "2.0.0"
 
 
 class InputMode(StrEnum):
@@ -31,7 +31,7 @@ class ExportRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal["1.1.0"] = "1.1.0"
+    schema_version: Literal["2.0.0"] = "2.0.0"
     session_id: str
     segment_id: str
     frame_id: int = Field(ge=0)
@@ -57,20 +57,23 @@ class ExportRecord(BaseModel):
     distance_eyes_raw: float | None = Field(default=None, ge=0)
     distance_nose_raw: float | None = Field(default=None, ge=0)
     distance_mouth_raw: float | None = Field(default=None, ge=0)
-    age_band: str | None = None
-    age_confidence: float | None = Field(default=None, ge=0, le=1)
-    age_prob_0_9: float | None = Field(default=None, ge=0, le=1)
-    age_prob_10_19: float | None = Field(default=None, ge=0, le=1)
-    age_prob_20_29: float | None = Field(default=None, ge=0, le=1)
-    age_prob_30_39: float | None = Field(default=None, ge=0, le=1)
-    age_prob_40_49: float | None = Field(default=None, ge=0, le=1)
-    age_prob_50_59: float | None = Field(default=None, ge=0, le=1)
-    age_prob_60_69: float | None = Field(default=None, ge=0, le=1)
-    age_prob_70_plus: float | None = Field(default=None, ge=0, le=1)
-    age_observed_elapsed_ms: int | None = Field(default=None, ge=0)
-    age_is_cached: bool | None = None
-    age_model_version: str | None = None
-    age_model_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    skin_quality_score_raw: float | None = Field(default=None, ge=0, le=100)
+    skin_tone_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
+    skin_texture_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
+    skin_correction_gain_r: float | None = Field(default=None, ge=0.5, le=2)
+    skin_correction_gain_g: float | None = Field(default=None, ge=0.5, le=2)
+    skin_correction_gain_b: float | None = Field(default=None, ge=0.5, le=2)
+    skin_metric_version: str | None = None
+    skin_quality_frozen: bool | None = None
+    estimated_age_years: float | None = Field(default=None, ge=18, le=75)
+    gender_label: GenderLabel | None = None
+    gender_confidence: float | None = Field(default=None, ge=0, le=1)
+    gender_prob_female: float | None = Field(default=None, ge=0, le=1)
+    gender_prob_male: float | None = Field(default=None, ge=0, le=1)
+    demographic_observed_elapsed_ms: int | None = Field(default=None, ge=0)
+    demographic_is_cached: bool | None = None
+    demographic_model_version: str | None = None
+    demographic_model_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     landmark_model_version: str = Field(min_length=1)
     landmark_model_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     metric_version: str = Field(min_length=1)
@@ -107,11 +110,37 @@ class ExportRecord(BaseModel):
             self.distance_eyes_raw,
             self.distance_nose_raw,
             self.distance_mouth_raw,
+            self.skin_quality_score_raw,
+            self.skin_tone_uniformity_raw,
+            self.skin_texture_uniformity_raw,
         )
         if self.analysis_status is not Status.OK and any(
             value is not None for value in score_values
         ):
             raise ValueError("左右差スコアと距離は OK レコードだけに保持できます。")
+        return self
+
+    @model_validator(mode="after")
+    def demographic_fields_are_complete(self) -> ExportRecord:
+        values = (
+            self.estimated_age_years,
+            self.gender_label,
+            self.gender_confidence,
+            self.gender_prob_female,
+            self.gender_prob_male,
+            self.demographic_observed_elapsed_ms,
+            self.demographic_is_cached,
+            self.demographic_model_version,
+            self.demographic_model_sha256,
+        )
+        if all(value is None for value in values):
+            return self
+        if any(value is None for value in values):
+            raise ValueError("年齢・性別推定fieldは一式で保持する必要があります。")
+        assert self.gender_prob_female is not None
+        assert self.gender_prob_male is not None
+        if abs(self.gender_prob_female + self.gender_prob_male - 1.0) > 1e-6:
+            raise ValueError("gender probabilities must sum to 1")
         return self
 
 
@@ -134,7 +163,7 @@ class ConfigRevision(BaseModel):
 class ExportManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["1.1.0"] = "1.1.0"
+    schema_version: Literal["2.0.0"] = "2.0.0"
     app_version: str = Field(min_length=1)
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     session_id: str

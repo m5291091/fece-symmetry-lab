@@ -39,20 +39,11 @@ class ReasonCode(StrEnum):
     STALE_RESULT = "STALE_RESULT"
 
 
-class AgeBand(StrEnum):
-    """Age-group labels used by the seminar MobileNetV2 model."""
+class GenderLabel(StrEnum):
+    """Binary labels emitted by the selected appearance model."""
 
-    AGE_0_9 = "0-9"
-    AGE_10_19 = "10-19"
-    AGE_20_29 = "20-29"
-    AGE_30_39 = "30-39"
-    AGE_40_49 = "40-49"
-    AGE_50_59 = "50-59"
-    AGE_60_69 = "60-69"
-    AGE_70_PLUS = "70+"
-
-
-AGE_BANDS: tuple[AgeBand, ...] = tuple(AgeBand)
+    FEMALE = "female"
+    MALE = "male"
 
 
 class AnalysisState(BaseModel):
@@ -75,28 +66,26 @@ class SymmetryScore(BaseModel):
     overall: float = Field(ge=0, le=100)
 
 
-class AgeEstimate(BaseModel):
-    """A model output, expressed as a reference range rather than a claimed age."""
+class DemographicEstimate(BaseModel):
+    """Reference outputs from the 18-75 age/appearance model."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    band: AgeBand
-    confidence: float = Field(ge=0, le=1)
-    probabilities: tuple[float, ...] = Field(
-        min_length=len(AGE_BANDS),
-        max_length=len(AGE_BANDS),
-    )
+    estimated_age_years: float = Field(ge=18, le=75)
+    gender: GenderLabel
+    gender_confidence: float = Field(ge=0, le=1)
+    gender_probabilities: tuple[float, float]
     model_version: str = Field(min_length=1)
     model_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     observed_at: datetime
     is_cached: bool = False
 
-    @field_validator("probabilities")
+    @field_validator("gender_probabilities")
     @classmethod
     def validate_probabilities(
         cls,
-        probabilities: tuple[float, ...],
-    ) -> tuple[float, ...]:
+        probabilities: tuple[float, float],
+    ) -> tuple[float, float]:
         if any(not 0 <= probability <= 1 for probability in probabilities):
             raise ValueError("probabilities must be between 0 and 1")
         if abs(sum(probabilities) - 1.0) > 1e-6:
@@ -111,15 +100,16 @@ class AgeEstimate(BaseModel):
         return observed_at
 
     @model_validator(mode="after")
-    def confidence_matches_distribution(self) -> "AgeEstimate":
+    def confidence_matches_distribution(self) -> "DemographicEstimate":
         winning_index = max(
-            range(len(self.probabilities)),
-            key=self.probabilities.__getitem__,
+            range(len(self.gender_probabilities)),
+            key=self.gender_probabilities.__getitem__,
         )
-        if abs(self.confidence - self.probabilities[winning_index]) > 1e-6:
+        if abs(self.gender_confidence - self.gender_probabilities[winning_index]) > 1e-6:
             raise ValueError("confidence must equal the largest probability")
-        if self.band is not AGE_BANDS[winning_index]:
-            raise ValueError("band must match the largest probability")
+        labels = (GenderLabel.FEMALE, GenderLabel.MALE)
+        if self.gender is not labels[winning_index]:
+            raise ValueError("gender must match the largest probability")
         return self
 
 
@@ -128,4 +118,4 @@ class AnalysisResult(BaseModel):
 
     state: AnalysisState
     score: SymmetryScore | None = None
-    age_estimate: AgeEstimate | None = None
+    demographic_estimate: DemographicEstimate | None = None

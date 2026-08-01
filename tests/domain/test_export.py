@@ -32,6 +32,14 @@ def _record(**overrides: object) -> ExportRecord:
         "distance_eyes_raw": 0.011,
         "distance_nose_raw": 0.012,
         "distance_mouth_raw": 0.013,
+        "skin_quality_score_raw": 72.0,
+        "skin_tone_uniformity_raw": 74.0,
+        "skin_texture_uniformity_raw": 70.0,
+        "skin_correction_gain_r": 0.9,
+        "skin_correction_gain_g": 1.0,
+        "skin_correction_gain_b": 1.1,
+        "skin_metric_version": "skin-surface/0.1.0",
+        "skin_quality_frozen": False,
         "landmark_model_version": "landmark/1",
         "landmark_model_sha256": "a" * 64,
         "metric_version": "symmetry-2d/1.0.0",
@@ -46,13 +54,16 @@ def _record(**overrides: object) -> ExportRecord:
     return ExportRecord.model_validate(values)
 
 
-def test_record_uses_the_additive_calibration_schema() -> None:
+def test_record_uses_the_breaking_skin_and_demographic_schema() -> None:
     record = _record()
 
-    assert record.schema_version == "1.1.0"
+    assert record.schema_version == "2.0.0"
     assert record.metric_version == "symmetry-2d/1.0.0"
     assert record.config_fingerprint == "c" * 64
     assert record.distance_mouth_raw == pytest.approx(0.013)
+    assert record.skin_quality_score_raw == pytest.approx(72.0)
+    assert record.skin_quality_frozen is False
+    assert "age_band" not in ExportRecord.model_fields
 
 
 def test_non_finite_values_are_rejected() -> None:
@@ -79,6 +90,14 @@ def test_missing_values_are_null_not_zero_filled() -> None:
         distance_eyes_raw=None,
         distance_nose_raw=None,
         distance_mouth_raw=None,
+        skin_quality_score_raw=None,
+        skin_tone_uniformity_raw=None,
+        skin_texture_uniformity_raw=None,
+        skin_correction_gain_r=None,
+        skin_correction_gain_g=None,
+        skin_correction_gain_b=None,
+        skin_metric_version=None,
+        skin_quality_frozen=None,
     )
 
     assert record.score_overall_raw is None

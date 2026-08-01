@@ -24,6 +24,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Frozen metric bundle | `configs/metrics/symmetry-2d-v1.json` |
 | Landmark map derivation | `scripts/derive_landmark_map.py` |
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
+| Camera correction / skin-surface metric | `src/face_symmetry_lab/domain/skin_quality.py` |
 | Quality gate / hysteresis | `src/face_symmetry_lab/application/quality.py` |
 | Frame analysis orchestration | `src/face_symmetry_lab/application/analyzer.py` |
 | Landmark model card | `docs/model-cards/mediapipe-face-landmarker-v1.md` |
@@ -31,8 +32,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Model preparation CLI | `scripts/bootstrap_models.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
-| ONNX age adapter | `src/face_symmetry_lab/adapters/inference/onnx_age_estimator.py` |
-| Age model card | `docs/model-cards/age-mobilenetv2-utkface-v1.md` |
+| Age / gender adapter | `src/face_symmetry_lab/adapters/inference/opencv_demographic_estimator.py` |
+| Age / gender model card | `docs/model-cards/openvino-age-gender-retail-0013.md` |
 | Architecture decisions | `docs/adr/` |
 | Repository verification | `scripts/verify.py` |
 
@@ -47,9 +48,10 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
 | Normalization / TLS midline | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, AC-SCORE-02 |
 | Symmetry scoring | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01 |
+| Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
 | Display smoothing | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, §8.7 |
-| Age-band mapping | `domain/age.py` | `tests/domain/test_age.py` | FR-022, FR-023 |
+| Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
 | Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
@@ -57,7 +59,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
 | Latest-frame-wins gate | `runtime/frame_scheduler.py` | `tests/runtime/test_frame_scheduler.py` | NFR-006, NFR-007 |
 | Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
-| ONNX age inference | `adapters/inference/onnx_age_estimator.py` | `tests/adapters/test_onnx_age_estimator.py` | FR-022〜024 |
+| OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
 | Score presentation | `ui/scores.py` | UI / E2E tests は未整備 | FR-014, §5.3 |
@@ -78,7 +80,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `1cf29044aa7618fce6e0df9938e04cca686db6687deb0130bb125aa0d475ad02`_
+_File-list SHA-256: `ff50a736ca0295ce5c4baa4a901cedc59d543c6121a1566c00e43a32f3ac2020`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -86,7 +88,6 @@ face-symmetry-lab/
 - `.github/`
   - `workflows/`
     - `ci.yml`
-  - `copilot-instructions.md`
 - `.streamlit/`
   - `config.toml`
 - `configs/`
@@ -97,15 +98,15 @@ face-symmetry-lab/
   - `adr/`
     - `0001-age-estimation-runtime.md`
     - `0002-head-pose-coordinate-signs.md`
+    - `0003-age-gender-and-skin-correction.md`
   - `model-cards/`
-    - `age-mobilenetv2-utkface-v1.md`
     - `mediapipe-face-landmarker-v1.md`
+    - `openvino-age-gender-retail-0013.md`
     - `symmetry-2d-v1.md`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
   - `derive_landmark_map.py`
-  - `export_age_model.py`
   - `generate_structure.py`
   - `verify.py`
 - `src/`
@@ -121,7 +122,7 @@ face-symmetry-lab/
     - `application/`
       - … (8 files)
     - `domain/`
-      - … (11 files)
+      - … (12 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
@@ -133,7 +134,7 @@ face-symmetry-lab/
     - `test_mediapipe_landmarker.py`
     - `test_metric_config.py`
     - `test_model_store.py`
-    - `test_onnx_age_estimator.py`
+    - `test_opencv_demographic_estimator.py`
     - `test_session_exporter.py`
   - `application/`
     - `test_analyzer.py`
@@ -144,7 +145,7 @@ face-symmetry-lab/
     - `test_still_image.py`
   - `domain/`
     - `__init__.py`
-    - `test_age.py`
+    - `test_demographics.py`
     - `test_export.py`
     - `test_geometry.py`
     - `test_landmarks.py`
@@ -152,6 +153,7 @@ face-symmetry-lab/
     - `test_models.py`
     - `test_overlay.py`
     - `test_pose.py`
+    - `test_skin_quality.py`
     - `test_smoothing.py`
     - `test_symmetry.py`
   - `model/`

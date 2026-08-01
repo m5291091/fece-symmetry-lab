@@ -18,15 +18,16 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeImageLandmarker,
 )
-from face_symmetry_lab.adapters.inference.onnx_age_estimator import (
-    AgeInferenceError,
-    OnnxAgeEstimator,
+from face_symmetry_lab.adapters.inference.opencv_demographic_estimator import (
+    DemographicInferenceError,
+    OpenCvDemographicEstimator,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
 from face_symmetry_lab.adapters.io.model_store import file_sha256
 from face_symmetry_lab.application.image_input import (
     ImageInputError,
     decode_uploaded_image,
+    extract_face_crop,
 )
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.still_image import (
@@ -34,9 +35,9 @@ from face_symmetry_lab.application.still_image import (
     analyze_still_image,
 )
 from face_symmetry_lab.domain.export import InputMode
-from face_symmetry_lab.domain.landmarks import TrackingStatus
+from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfig, MetricConfigError
-from face_symmetry_lab.domain.models import AGE_BANDS, AgeEstimate
+from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
@@ -46,11 +47,12 @@ from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landm
 from face_symmetry_lab.ui.scores import render_scores
 
 APP_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_AGE_MODEL = APP_ROOT / "models" / "age_mobilenetv2_utkface_v1.onnx"
-AGE_MODEL_VERSION = "age-mobilenetv2-utkface/1.0.0"
-ESTIMATOR_STATE_KEY = "age_estimator"
-ESTIMATOR_PATH_KEY = "age_estimator_path"
-RESULT_STATE_KEY = "age_estimate"
+DEFAULT_DEMOGRAPHIC_XML = APP_ROOT / "models" / "age-gender-recognition-retail-0013.xml"
+DEFAULT_DEMOGRAPHIC_BIN = APP_ROOT / "models" / "age-gender-recognition-retail-0013.bin"
+DEMOGRAPHIC_MODEL_VERSION = "open-model-zoo/age-gender-recognition-retail-0013"
+ESTIMATOR_STATE_KEY = "demographic_estimator"
+ESTIMATOR_PATH_KEY = "demographic_estimator_paths"
+RESULT_STATE_KEY = "demographic_estimate"
 INPUT_MODE_STATE_KEY = "input_mode"
 INPUT_MODE_CAMERA = "Camera"
 INPUT_MODE_IMAGE = "Image"
@@ -69,26 +71,34 @@ _IMAGE_STATUS_MESSAGES = {
 }
 
 
-def _configured_model_path() -> Path:
-    configured = os.environ.get("FACE_SYMMETRY_LAB_AGE_MODEL_PATH")
-    return Path(configured).expanduser() if configured else DEFAULT_AGE_MODEL
+def _configured_model_paths() -> tuple[Path, Path]:
+    configured_xml = os.environ.get("FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH")
+    configured_bin = os.environ.get("FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH")
+    xml_path = Path(configured_xml).expanduser() if configured_xml else DEFAULT_DEMOGRAPHIC_XML
+    bin_path = Path(configured_bin).expanduser() if configured_bin else DEFAULT_DEMOGRAPHIC_BIN
+    return xml_path, bin_path
 
 
-def _session_estimator(model_path: Path) -> OnnxAgeEstimator:
-    stat = model_path.stat()
-    path_fingerprint = f"{model_path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+def _session_estimator(xml_path: Path, bin_path: Path) -> OpenCvDemographicEstimator:
+    xml_stat = xml_path.stat()
+    bin_stat = bin_path.stat()
+    path_fingerprint = (
+        f"{xml_path.resolve()}:{xml_stat.st_size}:{xml_stat.st_mtime_ns}:"
+        f"{bin_path.resolve()}:{bin_stat.st_size}:{bin_stat.st_mtime_ns}"
+    )
     if (
         st.session_state.get(ESTIMATOR_PATH_KEY) != path_fingerprint
         or ESTIMATOR_STATE_KEY not in st.session_state
     ):
-        st.session_state[ESTIMATOR_STATE_KEY] = OnnxAgeEstimator(
-            model_path=model_path,
-            model_version=AGE_MODEL_VERSION,
+        st.session_state[ESTIMATOR_STATE_KEY] = OpenCvDemographicEstimator(
+            xml_path=xml_path,
+            bin_path=bin_path,
+            model_version=DEMOGRAPHIC_MODEL_VERSION,
         )
         st.session_state[ESTIMATOR_PATH_KEY] = path_fingerprint
     estimator = st.session_state[ESTIMATOR_STATE_KEY]
-    if not isinstance(estimator, OnnxAgeEstimator):
-        raise AgeInferenceError("年齢推定セッションを初期化できません。")
+    if not isinstance(estimator, OpenCvDemographicEstimator):
+        raise DemographicInferenceError("年齢・性別推定セッションを初期化できません。")
     return estimator
 
 
@@ -98,19 +108,22 @@ def _clear_session_result() -> None:
     st.session_state.pop(IMAGE_RECORDED_INPUT_KEY, None)
 
 
-def _render_age_result(estimate: AgeEstimate) -> None:
-    st.subheader("モデル推定の参考年齢帯")
-    st.metric("参考年齢帯", estimate.band.value)
+def _render_demographic_result(estimate: DemographicEstimate) -> None:
+    st.subheader("モデル推定の参考年齢・参考性別")
+    age_column, gender_column = st.columns(2)
+    age_column.metric("参考年齢", f"{estimate.estimated_age_years:.1f}歳")
+    gender_label = {GenderLabel.FEMALE: "女性", GenderLabel.MALE: "男性"}[estimate.gender]
+    gender_column.metric("外見由来の参考性別", gender_label)
     st.caption(
-        f"最大クラス確率 {estimate.confidence:.1%}・"
-        "実年齢の断定、本人確認、人物評価には使用できません。"
+        f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
+        "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
     )
     st.bar_chart(
         {
-            "年齢帯": [band.value for band in AGE_BANDS],
-            "モデル出力": list(estimate.probabilities),
+            "モデルラベル": ["female", "male"],
+            "モデル出力": list(estimate.gender_probabilities),
         },
-        x="年齢帯",
+        x="モデルラベル",
         y="モデル出力",
     )
     with st.expander("モデル情報"):
@@ -175,7 +188,7 @@ def _render_image_export(recorder: SessionRecorder) -> None:
     st.divider()
     st.subheader("この画像の分析データをエクスポート")
     st.warning(
-        "姿勢・左右差・参考年齢帯などの顔由来の派生データを含みます。"
+        "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
         "共有先と利用目的を確認してから保存してください。"
     )
     revision = bundle.manifest.config_revisions[-1]
@@ -201,12 +214,19 @@ def _render_image_landmarks(
     rgb: np.ndarray,
     *,
     input_fingerprint: str,
-) -> SessionRecorder | None:
+) -> tuple[SessionRecorder | None, LandmarkFrame | None]:
     """Detect, draw, and score one uploaded photo (stateless, §8.7)."""
     st.subheader("静止画のランドマークと左右差")
     model_path = resolve_ready_landmarker()
     if model_path is None:
-        return None
+        return None, None
+
+    show_midline = st.toggle(
+        "顔の中心線を表示",
+        value=True,
+        key="image_midline_enabled",
+        help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+    )
 
     try:
         config = load_metric_config()
@@ -216,11 +236,12 @@ def _render_image_landmarks(
             landmarker,
             rgb,
             config=config,
+            show_midline=show_midline,
         )
         processing_ms = (time.monotonic() - started) * 1000.0
     except (LandmarkDetectionError, MetricConfigError) as error:
         st.error(str(error))
-        return None
+        return None, None
 
     recorder = _session_image_recorder(landmarker, config)
     if st.session_state.get(IMAGE_RECORDED_INPUT_KEY) != input_fingerprint:
@@ -244,7 +265,7 @@ def _render_image_landmarks(
     with status_column:
         # Still images are stateless, so the raw value is shown directly (§8.7).
         render_scores(analysis.outcome, show_smoothed=False)
-    return recorder
+    return recorder, landmarks.frame
 
 
 def _render_image_section() -> None:
@@ -255,7 +276,7 @@ def _render_image_section() -> None:
         on_change=_clear_session_result,
     )
     if uploaded is None:
-        st.info("写真を選ぶと、ランドマーク検出と参考年齢帯を別々に表示します。")
+        st.info("18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を別々に表示します。")
         return
 
     uploaded_bytes = uploaded.getvalue()
@@ -266,31 +287,44 @@ def _render_image_section() -> None:
         return
 
     rgb = np.asarray(decoded.rgb, dtype=np.uint8)
-    recorder = _render_image_landmarks(
+    recorder, landmark_frame = _render_image_landmarks(
         rgb,
         input_fingerprint=sha256(uploaded_bytes).hexdigest(),
     )
 
     st.divider()
-    st.subheader("モデル推定の参考年齢帯")
+    st.subheader("モデル推定の参考年齢・参考性別")
     st.caption(f"入力画像 {decoded.width} × {decoded.height}")
+    st.caption("runtime: OpenCV DNN CPU · 候補モデル: Open Model Zoo / 対象18〜75歳")
 
-    model_path = _configured_model_path()
-    if model_path.is_file():
-        st.success(f"年齢帯モデル準備済み: {model_path.name}")
+    age_input: np.ndarray | None = None
+    if landmark_frame is not None:
+        try:
+            age_input = extract_face_crop(rgb, landmark_frame)
+        except ImageInputError:
+            age_input = None
+
+    xml_path, bin_path = _configured_model_paths()
+    model_ready = xml_path.is_file() and bin_path.is_file()
+    if model_ready:
+        st.warning(
+            f"ローカル年齢・性別モデル候補: {xml_path.name} / {bin_path.name}。"
+            "実行時SHA-256は記録しますが、配布manifestの承認は未完了です。"
+        )
     else:
         st.warning(
-            "年齢帯モデルが未配置です。"
-            "`models/age_mobilenetv2_utkface_v1.onnx` に配置するか、"
-            "`FACE_SYMMETRY_LAB_AGE_MODEL_PATH` を設定してください。"
+            "年齢・性別モデルが未配置です。XML/BINを`models/`へ配置するか、"
+            "`FACE_SYMMETRY_LAB_DEMOGRAPHIC_XML_PATH`と"
+            "`FACE_SYMMETRY_LAB_DEMOGRAPHIC_BIN_PATH`を設定してください。"
+            "配布URL・ライセンス・SHA-256が確定するまでは自動取得しません。"
         )
 
     action_column, result_column = st.columns([7, 5])
     with action_column:
         analyze = st.button(
-            "年齢帯を推定",
+            "参考年齢・参考性別を推定",
             type="primary",
-            disabled=not model_path.is_file(),
+            disabled=not model_ready or age_input is None,
         )
         if st.button("セッション結果をリセット"):
             _clear_session_result()
@@ -298,21 +332,23 @@ def _render_image_section() -> None:
 
     if analyze:
         try:
-            estimator = _session_estimator(model_path)
-            estimate = estimator.estimate(rgb)
+            estimator = _session_estimator(xml_path, bin_path)
+            if age_input is None:
+                raise DemographicInferenceError("単一顔のcropを作成できません。")
+            estimate = estimator.estimate(age_input)
             st.session_state[RESULT_STATE_KEY] = estimate
             if recorder is not None:
-                recorder.attach_age_estimate(estimate, observed_elapsed_ms=0)
-        except AgeInferenceError as error:
+                recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
+        except DemographicInferenceError as error:
             _clear_session_result()
             st.error(str(error))
 
     with result_column:
         session_estimate = st.session_state.get(RESULT_STATE_KEY)
-        if isinstance(session_estimate, AgeEstimate):
-            _render_age_result(session_estimate)
+        if isinstance(session_estimate, DemographicEstimate):
+            _render_demographic_result(session_estimate)
         else:
-            st.info("モデル準備後に「年齢帯を推定」を押すと、8 年代の参考値を表示します。")
+            st.info("モデル準備後にボタンを押すと、18〜75歳向けの参考値を表示します。")
 
     if recorder is not None:
         _render_image_export(recorder)
@@ -335,7 +371,7 @@ def render_app() -> None:
         st.title("Face Symmetry Lab")
         st.caption("LOCAL PROCESSING · NO IMAGE STORAGE · RESEARCH USE")
         st.write(
-            "顔のランドマークと、モデルが推定した参考年齢帯を端末内で確認します。"
+            "顔のランドマーク、撮影補正後の肌表面参考値、モデル推定の参考年齢・参考性別を端末内で確認します。"
             "リアルタイム映像には左右差スコアと姿勢角を重ね、"
             "数値履歴は再現性メタデータ付きの CSV / JSON として保存できます。"
         )
@@ -349,12 +385,26 @@ def render_app() -> None:
         "左右差の数値は、同一人物・同一環境での相対変化だけを参照してください。"
     )
 
+    with st.expander("スコアの算出技術と精度について"):
+        st.markdown(
+            "- **幾何左右差**: MediaPipe Face Landmarkerの478点を、両眼で回転・大きさ・"
+            "位置を正規化します。正中点へTLS直線を当て、右側を鏡映した後、輪郭・目・"
+            "鼻・口の対応点RMS距離を0〜100へ変換します。\n"
+            "- **肌表面参考値（実験値）**: 顔cropのwhite balanceと明度を補正し、頬patchの"
+            "色調・局所texture均一性を比較します。幾何の全体点には混ぜません。\n"
+            "- **主な誤差要因**: 顔の向き、照明、影、レンズ歪み、ランドマーク誤差、"
+            "化粧、髭、眼鏡、カメラ処理です。\n"
+            "- **精度向上**: 固定評価セットでの係数校正、実写pose符号確認、3D正規化比較、"
+            "照明・ぼけgate、同一端末での再撮影評価が必要です。"
+        )
+
     with st.expander("利用前に確認してください", expanded=True):
         consent_privacy = st.checkbox(
             "映像と画像は端末内のメモリだけで処理され、アプリは保存・外部送信しません。"
         )
         consent_research = st.checkbox(
-            "結果は研究上の参考値であり、実年齢・医学的状態・人物の価値を示しません。"
+            "私は18〜75歳です。結果は参考値であり、実年齢、自己認識・法的性別、"
+            "肌質・医学的状態、人物の価値を示さないことに同意します。"
         )
         consent_rights = st.checkbox(
             "本人の映像・画像、または分析する明示的な権限・同意があるものだけを使用します。"

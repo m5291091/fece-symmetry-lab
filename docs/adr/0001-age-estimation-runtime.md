@@ -1,6 +1,6 @@
 # ADR-0001: 年齢帯推定は ONNX Runtime adapter として統合する
 
-- Status: Accepted
+- Status: Superseded by ADR-0003
 - Date: 2026-07-30
 - Related requirements: FR-022〜024, AC-AGE-01〜02, NFR-021
 

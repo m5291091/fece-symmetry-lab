@@ -20,6 +20,7 @@ from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_POINT_COLOR,
     DEFAULT_POINT_RADIUS,
+    draw_face_midline,
     draw_landmark_points,
 )
 
@@ -42,10 +43,18 @@ def detect_still_image_landmarks(
     *,
     color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
     radius: int = DEFAULT_POINT_RADIUS,
+    show_midline: bool = False,
+    midline_indices: tuple[int, ...] = (),
 ) -> StillImageLandmarks:
     """Detect landmarks in one image and return an annotated copy."""
     frame = provider.detect(rgb_image)
     preview = draw_landmark_points(rgb_image, frame, color=color, radius=radius)
+    if show_midline:
+        preview = draw_face_midline(
+            preview,
+            frame,
+            midline_indices=midline_indices,
+        )
     return StillImageLandmarks(frame=frame, preview=preview)
 
 
@@ -73,12 +82,20 @@ def analyze_still_image(
     thresholds: QualityThresholds | None = None,
     color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
     radius: int = DEFAULT_POINT_RADIUS,
+    show_midline: bool = True,
 ) -> StillImageAnalysis:
     """Detect, draw, and score one photo. Stateless: no smoothing is applied."""
-    landmarks = detect_still_image_landmarks(provider, rgb_image, color=color, radius=radius)
+    landmarks = detect_still_image_landmarks(
+        provider,
+        rgb_image,
+        color=color,
+        radius=radius,
+        show_midline=show_midline,
+        midline_indices=config.midline_indices,
+    )
     analyzer = FrameAnalyzer(
         config=config,
         thresholds=thresholds or STILL_IMAGE_THRESHOLDS,
     )
-    outcome = analyzer.analyze(landmarks.frame, at=0.0)
+    outcome = analyzer.analyze(landmarks.frame, at=0.0, rgb_image=rgb_image)
     return StillImageAnalysis(landmarks=landmarks, outcome=outcome)

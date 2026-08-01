@@ -33,7 +33,13 @@ class StubLandmarker:
 
 
 class OverlayAnalyzer:
-    def analyze(self, frame: LandmarkFrame, *, at: float) -> AnalysisOutcome:
+    def analyze(
+        self,
+        frame: LandmarkFrame,
+        *,
+        at: float,
+        rgb_image: np.ndarray | None = None,
+    ) -> AnalysisOutcome:
         return AnalysisOutcome(
             frame_id=frame.frame_id,
             state=AnalysisState(status=Status.HOLD),
@@ -106,7 +112,7 @@ def test_callback_draws_numeric_status_over_the_camera_image() -> None:
     assert result[:150, :500].sum() > 0
 
 
-def test_callback_keeps_the_latest_numbers_without_reusing_landmarks(monkeypatch) -> None:
+def test_callback_keeps_latest_numbers_and_short_lived_geometry(monkeypatch) -> None:
     from face_symmetry_lab.ui import camera
 
     overlay_calls: list[tuple[AnalysisOutcome | None, bool]] = []
@@ -136,8 +142,8 @@ def test_callback_keeps_the_latest_numbers_without_reusing_landmarks(monkeypatch
     assert overlay_calls[0][1] is True
     assert overlay_calls[1][0] is overlay_calls[0][0]
     assert overlay_calls[1][1] is False
-    assert first.sum() > 0  # Only the sampled frame has fresh landmark geometry.
-    assert second.sum() == 0
+    assert first.sum() > 0
+    assert second.sum() > 0  # Geometry is retained briefly to avoid visible blinking.
 
 
 def test_callback_never_raises_when_the_pipeline_fails() -> None:

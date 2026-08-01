@@ -1,11 +1,11 @@
 # Face Symmetry Lab
 
-## プロダクト要件定義・技術仕様・開発ガイド v3.3
+## プロダクト要件定義・技術仕様・開発ガイド v3.5
 
 | 項目 | 内容 |
 |---|---|
 | ステータス | M0 未完。M1〜M3 の一部を先行実装中 |
-| 版 | v3.3 |
+| 版 | v3.5 |
 | 更新日 | 2026-08-01 |
 | 想定リポジトリ | `face-symmetry-lab` |
 | 配布形態 | ローカル Streamlit アプリ |
@@ -16,12 +16,12 @@
 
 ---
 
-## 0. v3.3 の設計判断
+## 0. v3.5 の設計判断
 
 v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナーの研究成果を最終アプリへ接続するため、次を変更する。
 
 1. **プロダクトの目的を「美的評価」ではなく「撮影条件を整えた顔の左右差の可視化」に限定する。** スコアは医学的評価、魅力度、本人の価値を示さない。
-2. **年齢帯推定を最終アプリの正式機能へ統合する。** 創造工房セミナーで比較した UTKFace 8 年代分類の fine-tuned MobileNetV2 を初期候補とし、断定的な年齢ではなく参考レンジとして、対称性とは分離した区画に表示する。性別推定は本版のスコープへ含めない。
+2. **18〜75歳向け年齢・性別推定を独立機能として統合する。** 8年代分類は削除し、Open Model Zoo `age-gender-recognition-retail-0013` の連続年齢と二値確率を採用候補とする。年齢は「モデル推定の参考年齢」、性別は「外見からのモデル推定の参考性別」と表示し、本人の自己認識・法的性別を表さない。左右差・肌表面参考値とは分離する。
 3. **初回体験を要件化する。** モデル準備、プライバシー説明、カメラ許可、撮影品質調整、分析という一連の導線を定義する。
 4. **分析状態と理由コードを分離する。** `HOLD` だけでなく、姿勢、距離、複数顔、低品質など「次に何を直せばよいか」を UI が説明できるようにする。
 5. **スコアを版管理する。** モデルだけでなく、ランドマーク対応表、係数、重み、前処理を含む `metric_version` を結果に記録する。
@@ -33,14 +33,18 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 11. **リアルタイムの主要数値を映像内にも表示する。** カメラから視線を外さず撮影条件を調整できるよう、状態、全体・部位別左右差、姿勢角を高コントラストのオーバーレイで示す。同じ情報は画面テキストにも残す。
 12. **映像表示と分析頻度を分離する。** WebRTC の受信・返却は各フレームで継続するが、重いランドマーク推論は既定 125ms 間隔（最大 8Hz）で最新フレームだけを処理する。複数フレームを待ってまとめる batch や待ち queue は、ライブ遅延を増やすため採用しない。
 13. **既定テーマを dark にする。** Streamlit 公式 theme token で暗い背景と高コントラスト本文を定義し、映像 overlay は blue / amber の状態色を使う。生の DOM/CSS 上書きには依存しない。
+14. **顔の中心線を表示設定にする。** 採点に用いる正中点の TLS 直線を顔範囲へ描画し、Camera / Image の双方で既定 ON、利用者が ON / OFF を切り替えられるようにする。中心線はランドマークと異なる色かつ5px以上とし、表示設定は採点値と `config_fingerprint` を変えない。
+15. **画像由来の外観差と肌表面参考値は幾何スコアと分離する。** 顔cropへ端末内のホワイトバランス・明度正規化を適用し、頬領域の色調均一性と局所テクスチャを「撮影条件依存の肌表面参考値」として算出する。疾患、肌質、美しさ、健康を推定せず、補正量を記録し、校正完了までは4部位＋全体の幾何スコアへ混合しない。
+16. **年齢・性別入力は顔 crop に限定する。** MediaPipe の単一顔 landmark bbox から余白付き crop を作り、検証済みの `age-gender-recognition-retail-0013` へ入力する。既存の `opencv-contrib-python` の DNN runtime を使い、配布 asset の URL、license、size、sha256、parity が揃うまでモデル本体を manifest へ追加しない。
+17. **間引き中も幾何表示を短時間保持する。** ランドマーク推論は最大8Hzのまま、直近の単一顔ランドマークと中心線を250ms以内だけプレビューへ再描画する。検出失敗、複数顔、リセット、TTL超過では即時消去し、古い結果を別の顔へ長時間重ねない。
 
 ### 0.1 現在の実装位置（2026-08-01）
 
 | Milestone | 状態 | 現在地 |
 |---|---|---|
 | M0 | 未完 | OD-01、OD-02、OD-04、OD-07 と実モデル互換性確認が未完。左右差は相対比較専用 |
-| M1 | 一部実装 | 静止画入力、品質判定、左右差、年齢帯境界、schema は実装済み。固定評価は未完 |
-| M2 | 一部実装 | WebRTC、latest-frame-wins、overlay、Stop は実装済み。年齢帯の独立worker、E2E、cleanup実測は未完 |
+| M1 | 一部実装 | 静止画入力、品質判定、幾何左右差、年齢・性別境界、schema は実装中。固定評価と肌表面指標校正は未完 |
+| M2 | 一部実装 | WebRTC、latest-frame-wins、短時間overlay保持、Stop は実装中。年齢・性別の独立worker、E2E、cleanup実測は未完 |
 | M3 | 一部実装 | 同意、入力切替、CSV / JSON export は実装済み。trend、About、設定UI、A11y実機確認は未完 |
 | M4 以降 | 未着手 | offline、3 OS、performance、soak、配布判定は未完 |
 
@@ -56,7 +60,7 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 
 Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマークを端末内で解析し、左右差をわかりやすく可視化する研究・セルフチェック用ツールである。
 
-ユーザーは、画像を外部サービスへ送信せず、撮影条件が結果に与える影響を理解しながら、同一人物・同一環境内での左右差の相対的な傾向と、モデルが推定した参考年齢帯を確認できる。
+ユーザーは、画像を外部サービスへ送信せず、撮影条件が結果に与える影響を理解しながら、同一人物・同一環境内での左右差と肌表面参考値の相対的な傾向、およびモデル推定の参考年齢・参考性別を確認できる。
 
 ### 1.2 解決する課題
 
@@ -71,7 +75,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - **Guide before score**: 数値より先に、撮影品質と改善方法を示す。
 - **Explain, do not judge**: 「良い／悪い」「美しい／醜い」と評価しない。
 - **Relative, not absolute**: 異なる人物間の比較やランキングを行わない。
-- **Separate, do not conflate**: 左右差と年齢帯は別のモデル出力として表示し、相関や因果を示唆しない。
+- **Separate, do not conflate**: 左右差、肌表面参考値、参考年齢、参考性別を別の出力として表示し、相関や因果を示唆しない。
 - **Version everything**: モデル、計算式、設定、出力スキーマを追跡可能にする。
 - **Graceful degradation**: 高負荷時は古いフレームを捨て、UI とカメラ操作を維持する。
 
@@ -83,7 +87,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | Time to first valid result | p90 60 秒以内 | モデル準備済みの起動から最初の `OK` まで |
 | 撮影条件の理解 | 80% 以上 | テスト後に「姿勢や照明で値が変わる」と回答できた割合 |
 | 固定条件での表示安定性 | 標準偏差 2.0 点以下 | 同一 fixture または固定撮影で連続 10 秒の平滑化済み全体スコア |
-| 年齢帯モデルの再現性 | Accuracy 59% / Macro F1 0.53 の報告値から許容差 2pt 以内 | セミナーと同一の凍結 UTKFace test split で export 前後を比較 |
+| 年齢・性別モデルの再現性 | 年齢 MAE 6.99年、性別 accuracy 95.80% の公開値を基準に差を記録 | 採用 asset と固定評価セットで runtime parity と slice を比較 |
 | 画像の外部送信・永続化 | 0 件 | ネットワーク遮断テスト、ファイル書込監査、ログ監査 |
 
 成功指標はプロダクト評価用であり、顔対称性スコア自体の医学的・心理的妥当性を意味しない。
@@ -115,7 +119,8 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - JPEG / PNG の静止画分析
 - 単一顔ポリシー、姿勢・距離・安定性の品質ゲート
 - 輪郭、目、鼻、口、全体の左右差スコア
-- 0–9、10–19、20–29、30–39、40–49、50–59、60–69、70+ の参考年齢帯推定
+- 18〜75歳を対象とした参考年齢と外見由来の参考性別の推定
+- 撮影補正量を記録する撮影条件依存の肌表面参考値
 - オーバーレイ、状態表示、改善ガイダンス
 - 表示値の平滑化とセッション内トレンド
 - 設定変更、停止、リセット
@@ -130,12 +135,12 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - 追加ブラウザ・カメラを用いたリアルタイム E2E matrix
 - 3D 正規化方式の評価と、2D 指標との比較レポート
 - 日本語／英語 UI
-- 年齢帯モデルの class imbalance 対策、slice 評価、calibration
+- 年齢・性別モデルおよび肌表面指標の slice 評価、calibration
 
 ### 3.3 P2 — Research Extensions
 
 - 正面判定の学習済み分類器への差し替え
-- 年齢帯モデルの別 architecture 比較、継続学習、個人化
+- 年齢・性別モデルの別 architecture 比較、継続学習、個人化
 - FastAPI アダプタ、別フロントエンド、DB、クラウド配置
 - 定期再学習、自動モデル更新、オンデバイス個人化
 
@@ -147,7 +152,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - ログイン、組織管理、マルチテナント
 - 自動クラウド送信、分析データ収集、テレメトリ
 - 画像加工による「理想顔」生成
-- 外見に基づく性別推定
+- 18歳未満または75歳を超える人物の年齢・性別推定
 
 ## 4. 情報設計と主要ユーザーフロー
 
@@ -155,7 +160,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 
 アプリは次の 4 領域で構成する。
 
-1. **Analyze**: カメラ／静止画、品質ガイド、現在の左右差スコアと参考年齢帯
+1. **Analyze**: カメラ／静止画、品質ガイド、現在の左右差、肌表面参考値、参考年齢・参考性別
 2. **Trend**: セッション内の時系列、状態別の欠測表示
 3. **Session**: 件数、開始時刻、設定、エクスポート、リセット
 4. **About**: 算出方法、制約、モデル・ライセンス、プライバシー
@@ -166,12 +171,12 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 
 1. 起動時に Python、依存、モデル、カメラ利用可否を確認する。
 2. 不足モデルがある場合は、取得元、サイズ、ライセンス、sha256 を表示し、ユーザー操作で取得する。
-3. 「画像は保存・外部送信しない」「左右差と年齢帯は参考値」「本人の同意がある画像のみ使用」の 3 点を確認する。
+3. 「画像は保存・外部送信しない」「左右差・肌表面・年齢・性別は参考値」「本人の同意がある18〜75歳の画像のみ使用」の 3 点を確認する。
 4. 入力方法を Camera / Image から選択する。
 5. Camera の場合はブラウザの許可を求める。拒否時は設定方法と Image への代替動線を示す。
 6. 顔の位置、距離、向きが条件を満たすまで、スコアの代わりに具体的なガイドを示す。
 7. 有効フレームが連続して得られたら分析結果へ切り替える。
-8. 年齢帯は左右差と別カードに「モデル推定の参考年齢帯」と表示し、信頼度と limitations へのリンクを併記する。
+8. 年齢・性別は左右差と別カードに「モデル推定の参考年齢」「外見からのモデル推定の参考性別」と表示し、対象年齢、信頼度と limitations へのリンクを併記する。
 
 ### 4.3 再訪フロー
 
@@ -201,7 +206,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - 生の HTML/CSS セレクタによる内部 DOM の上書きは MUST NOT。必要な独自 UI はテーマ変数に追従するコンポーネントとして隔離する。
 - 色の意味を固定する: neutral=未開始、blue=処理中、amber=調整が必要、red=回復不能なエラー。スコアの高低に赤／緑の価値判断を割り当てない。
 - 数値は最大 1 桁の小数で表示し、精度以上の細かさを演出しない。
-- 年齢帯推定を対称性スコアより目立たせず、両者に関係があるような配置・文言を避ける。
+- 年齢・性別推定と肌表面参考値を対称性スコアより目立たせず、各結果に関係があるような配置・文言を避ける。
 
 ### 5.3 文言
 
@@ -284,7 +289,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-010 | P0 | 品質ゲート | 姿勢、顔サイズ、連続安定性を必須判定し、照度・ぼけは P0 では警告、P1 で評価後にゲート化できる |
 | FR-011 | P0 | 対称性指標 | §8 の手順で輪郭、目、鼻、口、全体を 0〜100 で算出し、範囲外値を拒否する |
 | FR-012 | P0 | 平滑化 | 表示用全体値に EMA を適用し、生値を別保持する。リセット条件は §8.8 に従う |
-| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態、全体・部位別左右差、姿勢角をカメラ映像内に高コントラストで表示し、ランドマーク表示は切替可能にする。状態と全体値を大きく、部位・姿勢をその次の階層で示す。欠測は `—` とし、同じ情報を画面テキストでも提供する |
+| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態、全体・部位別左右差、姿勢角をカメラ映像内に高コントラストで表示する。中心線とランドマークは独立に ON / OFF 可能とし、中心線は Camera / Image とも既定 ON、ランドマークと異なる色、5px以上にする。間引きフレームでは直近の単一顔幾何を250ms以内だけ保持し、エラー・複数顔・リセット・TTL超過で消去する。状態と全体値を大きく、部位・姿勢をその次の階層で示す。欠測は `—` とし、同じ情報を画面テキストでも提供する |
 | FR-014 | P0 | 結果表示 | 全体値、4 部位、姿勢、品質状態、比較上の注意を 1 画面に表示する |
 | FR-015 | P0 | トレンド | 直近 60 秒を既定表示し、欠測を 0 点として結ばず空白で表す |
 | FR-016 | P0 | セッション履歴 | 上限 3,000 件のリングバッファに数値結果のみ保持し、上限到達時は古い順に破棄する |
@@ -293,9 +298,10 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-019 | P0 | セッション制御 | Stop / Resume / Reset があり、結果・カメラ・モデルキャッシュへの影響を確認ダイアログで区別する |
 | FR-020 | P0 | バージョン表示 | 各 `*_model_version` / `*_model_sha256`、`metric_version`、`schema_version`、設定 fingerprint を画面と出力に含める |
 | FR-021 | P1 | セッション要約 | 有効率、中央値、変動幅、主な HOLD 理由を表示する。人物間比較は行わない |
-| FR-022 | P0 | 年齢帯推定 | 単一顔の有効入力を 8 年代へ分類し、断定年齢ではなく「モデル推定の参考年齢帯」として左右差と別区画に表示する |
-| FR-023 | P0 | 年齢帯の再現性 | `age_model_version`、`age_model_sha256`、8 クラス確率、観測時刻、cache 状態を結果へ含める |
-| FR-024 | P0 | 年齢帯の失敗分離 | 年齢モデルなし・不正出力・推論失敗でも左右差分析を継続し、年齢区画だけに回復手順を示す |
+| FR-022 | P0 | 年齢・性別推定 | 単一顔 landmark bbox の余白付き顔 crop を `age-gender-recognition-retail-0013` へ入力し、18〜75歳の連続年齢と二値確率を、断定ではない参考値として左右差と別区画に表示する。対象範囲外には推論を提供しない |
+| FR-023 | P0 | 年齢・性別の再現性 | `demographic_model_version`、`demographic_model_sha256`、推定年齢、性別2クラス確率、観測時刻、cache 状態を結果へ含める |
+| FR-024 | P0 | 年齢・性別の失敗分離 | モデルなし・不正出力・推論失敗でも左右差分析を継続し、年齢・性別区画だけに回復手順を示す |
+| FR-025 | P1 | 補正後の肌表面参考値 | 顔cropへ端末内のGray-worldホワイトバランスとrobust明度正規化を適用し、頬領域の色調均一性と局所テクスチャを独立した参考値として算出する。補正係数・指標版・未校正状態を記録し、肌色、疾患、健康、美的品質を推定せず、幾何の全体スコアへ混合しない |
 
 ---
 
@@ -368,6 +374,15 @@ overall = Σ(w_p × score_p),  Σw_p = 1,  w_p ≥ 0
 - 0〜100 は理解しやすさのための変換値であり、母集団内順位、正常範囲、美的品質を意味しない。
 - 数学上、全部位の正規化距離 `d_p = 0` なら各部位と全体は 100 になる。ただし、これは人物の優劣や望ましさを意味しない。実写では検出誤差、姿勢、撮影条件により、見かけ上左右対称でも landmark 距離が 0 になる保証はない。
 
+### 8.6.1 補正後の肌表面参考値（実験値）
+
+- RGB の顔cropに、各channel平均をそろえるGray-worldホワイトバランスと、5〜95 percentileを用いる明度正規化を端末内で適用する。channel gainは過補正を避ける範囲へclampする。
+- 版管理された左右の頬landmark pair周辺を抽出し、補正後のBT.709輝度・色差の分散から色調均一性、局所勾配からテクスチャ均一性を算出する。
+- patch が画像外、分散不足、欠測、不正 shape の場合は欠測とし、0 点へ置換しない。
+- 出力は `skin_quality_score_raw`、`skin_tone_uniformity_raw`、`skin_texture_uniformity_raw`、補正gain、`skin_metric_version` とする。
+- ソフトウェア補正はcamera固有の露出・HDR・レンズ・ISP処理を復元できず、同一人物・同一端末・近い照明での相対比較を補助するだけである。疾患、肌タイプ、肌色、清潔さ、健康、美的品質を表さない。
+- OD-08 の固定評価が完了するまで `skin_quality_frozen: false` とし、幾何の `score_overall_*` へ混合しない。
+
 ### 8.7 平滑化
 
 ```text
@@ -402,17 +417,17 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 |---|---|---|
 | カメラフレーム、アップロード bytes | 顔画像・機微 | 処理中のメモリのみ。停止・切替・終了で参照破棄 |
 | ランドマーク座標 | 顔由来データ | 計算中のみ。履歴・ログ・既定エクスポートに含めない |
-| 姿勢、品質値、左右差スコア、参考年齢帯 | 顔由来の派生データ | セッション内リングバッファ。明示操作時のみエクスポート |
+| 姿勢、品質値、幾何左右差、肌表面参考値、参考年齢・参考性別 | 顔由来の派生データ | セッション内リングバッファ。明示操作時のみエクスポート |
 | モデル、設定、指標バージョン | 技術メタデータ | モデルキャッシュ、履歴、エクスポート |
 | エラーログ | 運用データ | ローカルで上限・世代管理。顔由来値を含めない |
 
 「数値のみ」は匿名を意味しない。エクスポート前に、顔由来の派生データであることと共有時の注意を表示する。
 
-### 9.2 レコードスキーマ v1.1
+### 9.2 レコードスキーマ v2.0
 
 | フィールド | 型 | 規約 |
 |---|---|---|
-| `schema_version` | string | 例: `1.1.0` |
+| `schema_version` | string | `2.0.0`。8年代分類フィールド削除を含む破壊的変更 |
 | `session_id` | UUID string | 起動セッション内のランダム値。端末・人物を識別しない |
 | `segment_id` | UUID string | 指標に影響する設定変更ごとに更新 |
 | `frame_id` | int | セッション内で単調増加 |
@@ -433,13 +448,19 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 | `score_overall_raw` | float / null | `OK` のみ、0〜100 |
 | `score_overall_smooth` | float / null | EMA 初期化後のみ |
 | `distance_contour_raw` / `distance_eyes_raw` / `distance_nose_raw` / `distance_mouth_raw` | float / null | `OK` のみ。§8.5 の正規化 RMS。校正可能性のため保持し、landmark 座標は含めない |
-| `age_band` | string / null | `0-9`〜`70+` の 8 区分。断定年齢ではない |
-| `age_confidence` | float / null | 選択クラスの softmax 確率。精度や正しさそのものではない |
-| `age_prob_0_9` ... `age_prob_70_plus` | float / null | 8 クラス確率。存在時は合計 1 |
-| `age_observed_elapsed_ms` | int / null | 当該年齢帯を推論したセッション相対時刻 |
-| `age_is_cached` | bool / null | 現フレームで推論した値か、同一 segment 内の再表示か |
-| `age_model_version` | string / null | 年齢帯推論モデルの版 |
-| `age_model_sha256` | string / null | 年齢帯モデルの hash |
+| `skin_quality_score_raw` | float / null | §8.6.1 の独立した暫定0〜100参考値。幾何全体へ混合しない |
+| `skin_tone_uniformity_raw` / `skin_texture_uniformity_raw` | float / null | 補正後の頬patchから得た0〜100の構成値 |
+| `skin_correction_gain_r` / `skin_correction_gain_g` / `skin_correction_gain_b` | float / null | Gray-world補正gain |
+| `skin_metric_version` | string / null | 肌表面参考指標と補正処理の版 |
+| `skin_quality_frozen` | bool / null | 固定評価で係数が凍結済みか |
+| `estimated_age_years` | float / null | 18〜75のモデル推定参考年齢。断定年齢ではない |
+| `gender_label` | `female` / `male` / null | 外見由来の二値モデル出力。本人の自己認識や法的性別ではない |
+| `gender_confidence` | float / null | 選択クラスのモデル確率。精度や正しさそのものではない |
+| `gender_prob_female` / `gender_prob_male` | float / null | 2クラス確率。存在時は合計1 |
+| `demographic_observed_elapsed_ms` | int / null | 当該推論のセッション相対時刻 |
+| `demographic_is_cached` | bool / null | 現フレームで推論した値か、同一segment内の再表示か |
+| `demographic_model_version` | string / null | 年齢・性別推論モデルの版 |
+| `demographic_model_sha256` | string / null | モデルgraphとweightsを組み合わせたhash |
 | `landmark_model_version` | string | ランドマーク推論モデルの版 |
 | `landmark_model_sha256` | string | 使用バイナリの hash |
 | `metric_version` | string | 前処理、対応表、式、係数、重みの版 |
@@ -460,14 +481,14 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 ```json
 {
   "manifest": {
-    "schema_version": "1.1.0",
+    "schema_version": "2.0.0",
     "app_version": "0.1.0",
     "lock_digest": "...",
     "session_id": "uuid",
     "started_at": null,
     "models": [
       {"name": "face_landmarker", "version": "...", "sha256": "..."},
-      {"name": "age_mobilenetv2_utkface", "version": "...", "sha256": "..."}
+      {"name": "age_gender", "version": "...", "sha256": "..."}
     ],
     "metric_version": "symmetry-2d/1.0.0",
     "config_revisions": [
@@ -534,7 +555,7 @@ flowchart LR
 
 ### 10.5 ログ
 
-- ログに画像 bytes、base64、ランドマーク配列、元ファイル名、EXIF、顔埋め込み、年齢帯推定、スコアを含めない。
+- ログに画像bytes、base64、ランドマーク配列、元ファイル名、EXIF、顔埋め込み、年齢・性別推定、肌表面参考値、スコアを含めない。
 - `event_code`、例外種別、匿名 session short ID、処理時間、モデル版のみを許可する。
 - ローカルログは 5MB × 3 世代を上限とする。既定レベルは WARNING。
 - UI にはスタックトレースを出さず、診断用 event ID と回復手順を表示する。
@@ -556,22 +577,22 @@ flowchart LR
 - 画像は本人、または明示的な権限・同意を得た人物のものに限定する。
 - 未成年者を対象とする利用は P0 の想定外とし、専用の同意・保護設計なしに推奨しない。
 
-### 10.8 年齢帯推定の追加条件
+### 10.8 年齢・性別推定の追加条件
 
-年齢帯推定は最終アプリの正式機能とするが、次をすべて満たす。
+年齢・性別推定は最終アプリの正式機能とするが、次をすべて満たす。
 
 1. 左右差機能と表示・失敗・履歴を分離し、一方の失敗で他方を停止しない。
-2. 対象、目的、8 年代の出力、評価指標、既知の偏りを説明し、分析前に明示同意を得る。
-3. 年齢は断定値ではなく「モデル推定の参考年齢帯」として扱い、人物評価や本人確認に用いない。
-4. `age_observed_elapsed_ms`、`age_is_cached`、モデル版、モデル hash を表示・出力する。
-5. 肌色、年齢帯、眼鏡、髭、頭部被覆、照明、カメラ等の slice 評価と limitations をモデルカードで開示する。
+2. 対象が18〜75歳であること、目的、連続年齢と性別2クラス確率、評価指標、既知の偏りを説明し、分析前に明示同意を得る。
+3. 年齢は「モデル推定の参考年齢」、性別は「外見からのモデル推定の参考性別」とし、自己認識・法的性別・人物評価・本人確認に用いない。
+4. `demographic_observed_elapsed_ms`、`demographic_is_cached`、モデル版、モデルhashを表示・出力する。
+5. 肌色、年齢、眼鏡、髭、頭部被覆、照明、camera等のslice評価とlimitationsをモデルカードで開示する。
 6. 顔埋め込みを生成・保持せず、推論に必要な顔領域だけをメモリ上で扱う。
 7. モデルと学習データのライセンスが想定用途を許可し、配布可否を model card と NOTICE に記録する。
-8. class imbalance の影響を Macro F1 とクラス別 recall で継続監視し、Accuracy 単独でモデルを選定しない。
+8. 年齢MAE、性別accuracyだけでなく、年齢・性別・肌色・撮影条件のslice誤差を継続監視する。
 
-初期候補は創造工房セミナーで fine-tune した MobileNetV2 の UTKFace 8 年代分類モデルとする。報告値は Accuracy 約 59%、Macro F1 約 0.53 であり、アプリへの ONNX export 前後で同一 test split の再評価を必須とする。10–19 と 40–69 歳帯の弱さ、および UTKFace の構成に由来する偏りを既知制約として表示する。
+初期候補はOpen Model Zoo `age-gender-recognition-retail-0013` とする。入力はBGR 62×62、出力は年齢を100で除した値と `[female, male]` の2クラス確率である。公開対象は18〜75歳、公開値は年齢平均誤差6.99年、性別accuracy 95.80%だが、内部validation datasetであり、本アプリの実利用精度を保証しない。
 
-InsightFace の公開学習済みモデルは非商用研究用途の条件があり、アプリの runtime 依存へ含めない。さらに MediaPipe は `opencv-contrib-python`、InsightFace Python package は `opencv-python` を要求し、両方が同じ `cv2` namespace を提供する。年齢帯モデルは ONNX Runtime を直接使う adapter とし、学習・比較用の PyTorch / InsightFace 環境はアプリの lock から分離する。
+モデルはOpenVINO IRのXMLとBINの組で提供される。既存の`opencv-contrib-python` DNN adapterからCPU推論し、別の`cv2` provider、OpenVINO、PyTorch、torchvision、InsightFaceをruntime lockへ追加しない。graphとweightsの両方を個別SHA-256で検証し、組み合わせhashを結果へ記録する。
 
 ## 11. 非機能要件
 
@@ -609,7 +630,7 @@ InsightFace の公開学習済みモデルは非商用研究用途の条件が�
 | NFR-018 | 依存安全 | lock 更新は専用 PR とし、OS matrix、実モデル smoke、脆弱性・ライセンス確認を通す |
 | NFR-019 | 終了処理 | Stop / disconnect 後 2 秒以内に track と worker が停止し、残留 thread がない |
 | NFR-020 | 後方互換 | `schema_version` の破壊的変更は major、追加互換は minor、修正は patch を上げる |
-| NFR-021 | 年齢帯推論 | critical path と capacity 1 worker を分離し、R1/R2 で推論 p95 500ms 以下。未準備・失敗時も左右差 UI を操作できる |
+| NFR-021 | 年齢・性別推論 | critical path と capacity 1 worker を分離し、R1/R2 で推論 p95 500ms 以下。未準備・失敗時も左右差 UI を操作できる |
 
 ## 12. 受け入れ基準
 
@@ -620,8 +641,8 @@ InsightFace の公開学習済みモデルは非商用研究用途の条件が�
 - **AC-FACE-01**: 2 顔以上では誰のスコアも表示せず、履歴と EMA を継続しない。
 - **AC-INPUT-01**: 偽装拡張子、巨大画像、animated 画像、truncate JPEG、壊れた PNG を安全に拒否し、その後の正常分析が継続できる。
 - **AC-EXPORT-01**: CSV と JSON の同一レコードが同じ意味を持ち、各行から model、metric、config、segment を特定できる。
-- **AC-AGE-01**: 凍結 test split で MobileNetV2 の `.pth` と配布 ONNX の Accuracy / Macro F1 差が各 2pt 以内で、8 クラス順序が一致する。
-- **AC-AGE-02**: 年齢モデルなし、hash 不一致、不正 shape、NaN/Inf、推論例外の各場合に年齢帯を表示せず、左右差分析は継続する。
+- **AC-AGE-01**: 固定評価セットで採用IRと参照runtimeの年齢出力差が0.1年以内、性別確率差が`1e-4`以内で、出力順`[female, male]`が一致する。年齢MAEと性別accuracyをslice別に記録する。
+- **AC-AGE-02**: XML/BINの一方なし、hash不一致、不正shape、18〜75外、NaN/Inf、推論例外の各場合に年齢・性別を表示せず、左右差分析は継続する。
 - **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
 
 ### 12.2 プライバシー・セキュリティ
@@ -640,6 +661,7 @@ InsightFace の公開学習済みモデルは非商用研究用途の条件が�
 - **AC-SCORE-02**: 平行移動、一様 scale、roll、鏡映に対する不変性が `1e-6` の許容差内で成立する。
 - **AC-SCORE-03**: zero eye distance、欠損、NaN/Inf、範囲外点ではスコアを出さない。
 - **AC-SCORE-04**: 固定評価セットで感度係数を凍結し、根拠と分布をモデル／指標カードに記録する。
+- **AC-APPEARANCE-01**: 合成color castの補正後はchannel平均との差が減少し、均一な頬textureは高い参考値、局所変化では値が低下する。いずれも幾何の全体値は変化せず、照明差・camera差の固定評価前は`skin_quality_frozen: false`とする。
 - **AC-PERF-01**: §11 の基準で fps、遅延、静止画時間、メモリの全条件を満たす。
 - **AC-SOAK-01**: 30 分連続稼働後に queue の増大、track 残留、worker 残留、顕著な memory leak がない。
 
@@ -658,7 +680,7 @@ InsightFace の公開学習済みモデルは非商用研究用途の条件が�
 | UI | Streamlit | native layout、theme、status、fragment を優先 |
 | Camera | streamlit-webrtc | 映像のみ、loopback、外部 ICE なし |
 | Landmark | MediaPipe Tasks Face Landmarker | 478 点、CPU、モデル manifest 固定 |
-| Age band | ONNX Runtime + MobileNetV2 | UTKFace 8 年代分類、CPU、ImageNet 正規化、モデル manifest 固定 |
+| Age / gender | OpenCV DNN + Open Model Zoo IR | 18〜75歳、BGR 62×62、CPU、XML/BINをmanifest固定 |
 | Image | OpenCV contrib + Pillow | `cv2` provider は 1 distribution のみ、OpenCV 5 は検証まで除外 |
 | Models / config | Pydantic v2 + pydantic-settings | 境界の検証と immutable revision |
 | Numeric / export | NumPy + Pandas | domain の幾何と CSV 生成 |
@@ -702,7 +724,7 @@ flowchart LR
     APP --> CORE["domain / pure geometry"]
     APP --> PORTS["ports / Protocols"]
     MP["adapter / MediaPipe"] --> PORTS
-    AGE["adapter / ONNX age model"] --> PORTS
+    AGE["adapter / OpenCV age-gender IR"] --> PORTS
     EX["adapter / export"] --> PORTS
     MS["adapter / model store"] --> PORTS
     BOOT["composition root"] --> UI
@@ -711,7 +733,7 @@ flowchart LR
     BOOT --> MS
 ```
 
-依存は内側へ向ける。`application` は MediaPipe、ONNX Runtime、OpenCV、Streamlit の具象型ではなく、`LandmarkProvider`、`AgeEstimator`、`ModelStore`、`Exporter` 等の `Protocol` に依存する。
+依存は内側へ向ける。`application` はMediaPipe、OpenCV、Streamlitの具象型ではなく、`LandmarkProvider`、`DemographicEstimator`、`ModelStore`、`Exporter`等の`Protocol`に依存する。
 
 FastAPI 化では domain / application と adapter の一部を再利用できるが、transport、resource lifecycle、session、認証、入力制限は別設計とする。「UI を差し替えるだけ」とは扱わない。
 
@@ -721,11 +743,12 @@ FastAPI 化では domain / application と adapter の一部を再利用でき�
 |---|---|---|
 | `domain.geometry` | 座標正規化、鏡映、TLS 中心線 | I/O、モデル、Streamlit import |
 | `domain.symmetry` | RMS、スコア、重み統合、EMA | global state、時刻取得 |
+| `domain.skin_quality` | bounded撮影補正、頬patchの肌表面参考値 | 医学・美的判定、I/O |
 | `application.analyzer` | 1 入力の品質判定と分析 orchestration | UI 描画、モデル自動取得 |
 | `application.session` | 状態遷移、segment、履歴、reset | `st.session_state` 直接操作 |
 | `ports` | 外部境界の `Protocol` / DTO | 具象ライブラリ依存 |
 | `adapters.mediapipe` | RGB→MediaPipe、姿勢、landmark DTO | スコア計算、UI 文言 |
-| `adapters.onnx_age` | face crop→ImageNet 前処理→8 class logits | 顔埋め込み、モデル自動取得、断定年齢への変換 |
+| `adapters.opencv_demographic` | face crop→BGR 62×62→連続年齢・性別2確率 | 顔埋め込み、モデル自動取得、断定表現 |
 | `adapters.model_store` | manifest、取得、hash、atomic install | 任意 URL、黙示更新 |
 | `adapters.export` | JSON / CSV schema | 画像・landmark の出力 |
 | `ui` | 入力、表示、theme、ユーザー操作 | 幾何計算、推論の実装 |
@@ -761,16 +784,16 @@ sequenceDiagram
 
 - WebRTC callback は別スレッドで動作し、`st.*` と `st.session_state` に触れない。
 - 同時 in-flight 分析はセッションあたり 1。待ち queue を作らず、処理中に来たフレームは分析を省略する。
-- callback は各映像フレームを返す一方、推論開始は `analysis_interval_ms` ごとに 1 回までとする。間のフレームは最新の数値サンプルを「直近サンプル」と明記して表示し、landmark 幾何は再利用しない。
+- callback は各映像フレームを返す一方、推論開始は `analysis_interval_ms` ごとに 1 回までとする。間のフレームは最新の数値サンプルを「直近サンプル」と明記し、直近の単一顔landmark幾何を最大250msだけ表示保持する。
 - 複数フレームを蓄積してからまとめて推論する batch は、ライブ表示の遅延とメモリを増やすため採用しない。
-- bbox、landmark、中心線は同じ `frame_id` の結果にだけ描画する。古い幾何を新しい顔へ重ねない。
+- bbox、landmark、中心線は同じ分析結果から生成し、間引きフレームへの再描画は250ms以内に限定する。検出失敗、複数顔、reset、入力切替、TTL超過でcacheを消去する。
 - `SessionRuntimeStore` は lock で最新結果と bounded history を保護する。UI は immutable snapshot だけを読む。
 - UI は `st.fragment(run_every="200ms")` 相当で更新し、`while ctx.state.playing` でメイン実行を占有しない。
 - MediaPipe は realtime で `RunningMode.VIDEO` + 単調増加 timestamp + `detect_for_video` を用いる。`LIVE_STREAM.detect_async` の二重非同期化は P0 で採用しない。
 - 静止画は別の `RunningMode.IMAGE` instance + `detect` を用いる。異なる running mode の instance を兼用しない。
 - `on_video_ended` は thread-safe な終了 signal を発行し、frame 参照と store を破棄する。そこで Streamlit API を呼ばない。
 
-年齢帯推定は critical path から分離した capacity 1 の worker とし、フレーム数ではなく `age_interval_ms` で制御する。対象 segment / ephemeral track が一致しない結果は破棄する。静止画 M1 では同一の検証済み face crop に対し同期実行してよい。
+年齢・性別推定は critical path から分離した capacity 1 の worker とし、フレーム数ではなく `demographic_interval_ms` で制御する。対象 segment / ephemeral track が一致しない結果は破棄する。静止画 M1 では同一の検証済み face crop に対し同期実行してよい。
 
 ### 14.4 エラーと回復
 
@@ -789,7 +812,7 @@ sequenceDiagram
 | 入力 | Camera | Camera / Image |
 | 表示ミラー | ON | 表示だけ反転。分析座標は常に非ミラー |
 | landmark 表示 | OFF | bbox、中心線は ON |
-| 年齢帯表示 | ON | 明示同意後のみ推論。結果は左右差と別区画 |
+| 年齢・性別表示 | ON | 18〜75歳本人の明示同意後のみ推論。結果は左右差・肌表面参考値と別区画 |
 | trend window | 60 秒 | 15 / 30 / 60 / 120 秒 |
 | 壁時計を export | OFF | ON 時だけ `captured_at` を出力 |
 
@@ -847,7 +870,8 @@ face-symmetry-lab/
 ├── src/face_symmetry_lab/
 │   ├── __init__.py
 │   ├── domain/
-│   │   ├── age.py
+│   │   ├── demographics.py
+│   │   ├── skin_quality.py
 │   │   ├── models.py
 │   │   ├── landmarks.py
 │   │   ├── geometry.py
@@ -859,7 +883,7 @@ face-symmetry-lab/
 │   │   └── session.py
 │   ├── adapters/
 │   │   ├── inference/mediapipe_landmarker.py
-│   │   ├── inference/onnx_age_estimator.py
+│   │   ├── inference/opencv_demographic_estimator.py
 │   │   ├── io/model_store.py
 │   │   └── export/session_exporter.py
 │   ├── runtime/
@@ -1129,13 +1153,13 @@ uv sync --frozen
 
 | M | 内容 | Exit criteria |
 |---|---|---|
-| M0 | Compatibility & metric spike | 3 OS lock、model hash、OpenCV 1 provider、age ONNX export parity、pose 規約、metric 係数案、正式対応環境を確認 |
-| M1 | Static core | Image 入力、8 年齢帯、品質判定、4 部位＋全体、schema、unit/property test が完成 |
-| M2 | Realtime | WebRTC、session runtime、年齢帯の独立 worker、状態機械、overlay、Stop/cleanup、E2E が完成 |
+| M0 | Compatibility & metric spike | 3 OS lock、model hash、OpenCV 1 provider、age/gender IR parity、pose 規約、metric 係数案、正式対応環境を確認 |
+| M1 | Static core | Image入力、18〜75歳の年齢・性別、補正後の肌表面参考値、品質判定、4部位＋全体、schema、unit/property testが完成 |
+| M2 | Realtime | WebRTC、session runtime、年齢・性別の独立worker、状態機械、overlay、Stop/cleanup、E2Eが完成 |
 | M3 | Product UI | 初回フロー、responsive layout、trend、settings、export、About、A11y が完成 |
 | M4 | Release hardening | offline、security、3 OS、performance、soak、license/SBOM、user test が合格 |
 | M5 | P1 quality | 照度・ぼけ gate、session summary、3D 正規化評価、日本語／英語 |
-| M6 | Research extension | 正面分類器、年齢帯の別 architecture 比較、class imbalance 改善 |
+| M6 | Research extension | 正面分類器、年齢・性別の別architecture比較、slice改善 |
 
 M0 の完了前に UI 本実装へ進まない。特に感度係数が未校正のまま 0〜100 を製品表示しない。
 
@@ -1153,7 +1177,7 @@ M0 の完了前に UI 本実装へ進まない。特に感度係数が未校正�
 | R-08 | model 取得元改ざん・停止 | M/H | hash mismatch / timeout | pinned URL/hash、atomic install、mirror を ADR 管理 | Security |
 | R-09 | 複数顔・人物交代で履歴混在 | M/H | face count 変化 | multi-face stop、reset、segment | Product/Eng |
 | R-10 | CPU 過負荷・thermal throttling | M/M | p95 / soak 未達 | drop frames、480p fallback、thread 数固定 | Eng/QA |
-| R-11 | 年齢帯推定の偏り・誤認・license 違反 | H/H | slice 指標悪化、断定表現、配布条件不明 | 参考レンジ、別同意、class 別評価、model card、legal gate | Product/Legal |
+| R-11 | 年齢・性別推定の偏り・誤認・license違反 | H/H | slice指標悪化、断定表現、配布条件不明 | 参考値、対象年齢、別同意、slice評価、model card、legal gate | Product/Legal |
 | R-12 | 実在 fixture の無断保持 | L/H | provenance 不明 | synthetic 優先、licensed inventory、削除手順 | QA/Privacy |
 
 P/I は Probability / Impact の Low, Medium, High。各 Owner は実チームの担当者名へ置き換える。
@@ -1168,7 +1192,8 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
 | OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
-| OD-07 | 年齢帯モデルの配布 asset | M0 | ONNX export parity、hash、license、model card、8 class slice 評価が承認済み |
+| OD-07 | 年齢・性別モデルの配布asset | M0 | XML/BINのURL・size・SHA-256、runtime parity、license、model card、年齢/性別slice評価が承認済み |
+| OD-08 | 肌表面参考指標のcalibration set | M1 / M5 | 照明、影、化粧、髭、眼鏡、camera、再撮影差と補正gainを評価し、係数と利用範囲を指標カードへ記録 |
 
 ## 26. トレーサビリティ
 
@@ -1177,8 +1202,8 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | 外部送信なし | FR-002, FR-003, NFR-009, NFR-010 | AC-PRIV-01, AC-PRIV-02, AC-SEC-01 |
 | 初見で結果へ到達 | FR-001〜010, UX §4〜6 | AC-FLOW-01, user task test |
 | 誤帰属を防ぐ | FR-008, §6, §8.8 | AC-FACE-01, AC-SESSION-01 |
-| 指標を再現できる | FR-011, FR-020, §8, §9 | AC-SCORE-01〜04, AC-EXPORT-01 |
-| 年齢帯研究をアプリへ接続 | FR-022〜024, §10.8, NFR-021 | AC-AGE-01, AC-AGE-02 |
+| 指標を再現できる | FR-011, FR-020, FR-025, §8, §9 | AC-SCORE-01〜04, AC-APPEARANCE-01, AC-EXPORT-01 |
+| 年齢・性別モデルをアプリへ接続 | FR-022〜024, §10.8, NFR-021 | AC-AGE-01, AC-AGE-02 |
 | リアルタイムで安定 | FR-012〜016, NFR-001〜006 | AC-PERF-01, AC-SOAK-01 |
 | 安全な入力 | FR-006, FR-007, NFR-011 | AC-INPUT-01 |
 | 中立でアクセス可能 | UX §5, §10.7, NFR-016 | AC-A11Y-01, copy review |
@@ -1189,7 +1214,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 MVP は次をすべて満たしたときのみ Done とする。
 
 - P0 の FR / NFR / AC がすべて合格している。
-- OD-01〜07 が解決され、ADR または設定 bundle に反映されている。
+- OD-01〜08 が解決され、ADR または設定 bundle に反映されている。
 - R1 / R2 で性能・soak、3 OS で lock・model smoke が合格している。
 - 外向き通信 0、loopback 限定、画像非永続化、ログ非保持を検証している。
 - model / metric / schema / config / app / lock の版を結果から追跡できる。

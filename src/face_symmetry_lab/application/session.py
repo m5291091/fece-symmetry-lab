@@ -25,7 +25,8 @@ from face_symmetry_lab.domain.export import (
 )
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
 from face_symmetry_lab.domain.metrics import MetricConfig
-from face_symmetry_lab.domain.models import AgeEstimate, ReasonCode, Status
+from face_symmetry_lab.domain.models import DemographicEstimate, ReasonCode, Status
+from face_symmetry_lab.domain.skin_quality import SKIN_METRIC_VERSION
 
 DEFAULT_HISTORY_CAPACITY = 3_000
 
@@ -54,6 +55,8 @@ def build_config_settings(
         "face_area_max": thresholds.face_area_max,
         "valid_frames_to_ok": thresholds.valid_frames_to_ok,
         "ema_tau_seconds": tau_seconds,
+        "skin_metric_version": SKIN_METRIC_VERSION,
+        "skin_quality_frozen": False,
     }
     if analysis_interval_ms is not None:
         settings["analysis_interval_ms"] = analysis_interval_ms
@@ -163,6 +166,45 @@ class SessionRecorder:
                 distance_eyes_raw=(symmetry.distance("eyes") if symmetry is not None else None),
                 distance_nose_raw=(symmetry.distance("nose") if symmetry is not None else None),
                 distance_mouth_raw=(symmetry.distance("mouth") if symmetry is not None else None),
+                skin_quality_score_raw=(
+                    outcome.skin_quality.score if outcome.skin_quality is not None else None
+                ),
+                skin_tone_uniformity_raw=(
+                    outcome.skin_quality.tone_uniformity
+                    if outcome.skin_quality is not None
+                    else None
+                ),
+                skin_texture_uniformity_raw=(
+                    outcome.skin_quality.texture_uniformity
+                    if outcome.skin_quality is not None
+                    else None
+                ),
+                skin_correction_gain_r=(
+                    outcome.skin_quality.correction.gain_r
+                    if outcome.skin_quality is not None
+                    and outcome.skin_quality.correction is not None
+                    else None
+                ),
+                skin_correction_gain_g=(
+                    outcome.skin_quality.correction.gain_g
+                    if outcome.skin_quality is not None
+                    and outcome.skin_quality.correction is not None
+                    else None
+                ),
+                skin_correction_gain_b=(
+                    outcome.skin_quality.correction.gain_b
+                    if outcome.skin_quality is not None
+                    and outcome.skin_quality.correction is not None
+                    else None
+                ),
+                skin_metric_version=(
+                    outcome.skin_quality.metric_version
+                    if outcome.skin_quality is not None
+                    else None
+                ),
+                skin_quality_frozen=(
+                    outcome.skin_quality.frozen if outcome.skin_quality is not None else None
+                ),
                 landmark_model_version=self._landmark_model_version,
                 landmark_model_sha256=self._landmark_model_sha256,
                 metric_version=outcome.metric_version,
@@ -215,35 +257,30 @@ class SessionRecorder:
         with self._lock:
             return tuple(self._records)
 
-    def attach_age_estimate(
+    def attach_demographic_estimate(
         self,
-        estimate: AgeEstimate,
+        estimate: DemographicEstimate,
         *,
         observed_elapsed_ms: int,
     ) -> ExportRecord | None:
-        """Attach an independently produced age result to the latest record."""
+        """Attach an independently produced age/gender result to the latest record."""
         with self._lock:
             if not self._records:
                 return None
             current = self._records[-1]
-            probabilities = estimate.probabilities
+            probabilities = estimate.gender_probabilities
             payload = current.model_dump(mode="python")
             payload.update(
                 {
-                    "age_band": estimate.band.value,
-                    "age_confidence": estimate.confidence,
-                    "age_prob_0_9": probabilities[0],
-                    "age_prob_10_19": probabilities[1],
-                    "age_prob_20_29": probabilities[2],
-                    "age_prob_30_39": probabilities[3],
-                    "age_prob_40_49": probabilities[4],
-                    "age_prob_50_59": probabilities[5],
-                    "age_prob_60_69": probabilities[6],
-                    "age_prob_70_plus": probabilities[7],
-                    "age_observed_elapsed_ms": observed_elapsed_ms,
-                    "age_is_cached": estimate.is_cached,
-                    "age_model_version": estimate.model_version,
-                    "age_model_sha256": estimate.model_sha256,
+                    "estimated_age_years": estimate.estimated_age_years,
+                    "gender_label": estimate.gender,
+                    "gender_confidence": estimate.gender_confidence,
+                    "gender_prob_female": probabilities[0],
+                    "gender_prob_male": probabilities[1],
+                    "demographic_observed_elapsed_ms": observed_elapsed_ms,
+                    "demographic_is_cached": estimate.is_cached,
+                    "demographic_model_version": estimate.model_version,
+                    "demographic_model_sha256": estimate.model_sha256,
                 }
             )
             enriched = ExportRecord.model_validate(payload)
@@ -255,11 +292,12 @@ class SessionRecorder:
             records = tuple(self._records)
             revision = self._config_revision
             segment_settings = dict(self._settings)
-            age_models = tuple(
+            demographic_models = tuple(
                 dict.fromkeys(
-                    (record.age_model_version, record.age_model_sha256)
+                    (record.demographic_model_version, record.demographic_model_sha256)
                     for record in records
-                    if record.age_model_version is not None and record.age_model_sha256 is not None
+                    if record.demographic_model_version is not None
+                    and record.demographic_model_sha256 is not None
                 )
             )
         models = [
@@ -270,8 +308,8 @@ class SessionRecorder:
             )
         ]
         models.extend(
-            ModelIdentity(name="age_band", version=version, sha256=model_hash)
-            for version, model_hash in age_models
+            ModelIdentity(name="age_gender", version=version, sha256=model_hash)
+            for version, model_hash in demographic_models
         )
         manifest = ExportManifest(
             app_version=self._app_version,

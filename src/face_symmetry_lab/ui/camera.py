@@ -117,6 +117,7 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         analyzer=analyzer,
         recorder=recorder,
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
+        midline_indices=config.midline_indices,
     )
 
 
@@ -224,6 +225,14 @@ def render_camera_section() -> None:
     except (LandmarkDetectionError, MetricConfigError) as error:
         st.error(str(error))
         return
+
+    show_midline = st.toggle(
+        "顔の中心線を表示",
+        value=True,
+        key="camera_midline_enabled",
+        help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+    )
+    pipeline.set_midline_enabled(show_midline)
 
     preview_column, result_column = st.columns([7, 5], gap="large")
     with preview_column:

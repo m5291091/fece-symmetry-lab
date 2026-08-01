@@ -52,6 +52,11 @@ def select_repository_paths(paths: list[str]) -> list[str]:
     return sorted(selected)
 
 
+def existing_repository_paths(paths: list[str], repository_root: Path) -> list[str]:
+    """Exclude tracked paths deleted in the current working tree."""
+    return [path for path in select_repository_paths(paths) if (repository_root / path).is_file()]
+
+
 def _new_node() -> _TreeNode:
     return {"directories": {}, "files": []}
 
@@ -155,7 +160,7 @@ def repository_paths(
         capture_output=True,
     )
     paths = [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
-    return select_repository_paths(paths)
+    return existing_repository_paths(paths, repository_root)
 
 
 def _generated_block(paths: list[str]) -> str:

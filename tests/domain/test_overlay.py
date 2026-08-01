@@ -2,7 +2,13 @@ import numpy as np
 import pytest
 
 from face_symmetry_lab.domain.landmarks import LandmarkError, build_landmark_frame
-from face_symmetry_lab.domain.overlay import draw_landmark_points
+from face_symmetry_lab.domain.overlay import (
+    DEFAULT_MIDLINE_COLOR,
+    DEFAULT_MIDLINE_THICKNESS,
+    DEFAULT_POINT_COLOR,
+    draw_face_midline,
+    draw_landmark_points,
+)
 
 
 def _blank(height: int = 20, width: int = 20) -> np.ndarray:
@@ -64,3 +70,48 @@ def test_non_rgb_images_are_rejected() -> None:
 
     with pytest.raises(LandmarkError, match="RGB"):
         draw_landmark_points(np.zeros((8, 8), dtype=np.uint8), frame)
+
+
+def test_tls_face_midline_is_drawn_through_the_face_extent() -> None:
+    frame = build_landmark_frame(
+        frame_id=7,
+        face_count=1,
+        points=((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5)),
+        width=20,
+        height=20,
+    )
+
+    painted = draw_face_midline(
+        _blank(),
+        frame,
+        midline_indices=(0, 1, 2),
+        color=(255, 0, 0),
+        thickness=1,
+    )
+
+    assert np.all(painted[4:17, 10] == (255, 0, 0))
+
+
+def test_midline_is_not_drawn_without_a_single_face() -> None:
+    frame = build_landmark_frame(frame_id=8, face_count=0)
+
+    painted = draw_face_midline(_blank(), frame, midline_indices=(0, 1, 2))
+
+    assert painted.sum() == 0
+
+
+def test_default_midline_is_thick_and_visually_distinct_from_landmarks() -> None:
+    assert DEFAULT_MIDLINE_COLOR != DEFAULT_POINT_COLOR
+    assert DEFAULT_MIDLINE_THICKNESS >= 5
+
+    frame = build_landmark_frame(
+        frame_id=9,
+        face_count=1,
+        points=((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5)),
+        width=20,
+        height=20,
+    )
+    painted = draw_face_midline(_blank(), frame, midline_indices=(0, 1, 2))
+
+    line_pixels = np.all(painted == DEFAULT_MIDLINE_COLOR, axis=2)
+    assert np.count_nonzero(line_pixels[10]) >= DEFAULT_MIDLINE_THICKNESS

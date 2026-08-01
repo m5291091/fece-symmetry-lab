@@ -21,10 +21,12 @@ from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyze
 from face_symmetry_lab.application.ports import LandmarkProvider
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.domain.export import SessionExport
-from face_symmetry_lab.domain.landmarks import TrackingStatus
+from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
 from face_symmetry_lab.domain.overlay import (
+    DEFAULT_MIDLINE_COLOR,
     DEFAULT_POINT_COLOR,
     DEFAULT_POINT_RADIUS,
+    draw_face_midline,
     draw_landmark_points,
 )
 from face_symmetry_lab.runtime.frame_scheduler import FrameScheduler
@@ -34,6 +36,7 @@ ERROR_CIRCUIT_THRESHOLD = 3
 
 #: Preview frames keep flowing, while landmark inference is capped at 8 Hz.
 DEFAULT_ANALYSIS_INTERVAL_MS = 125
+DEFAULT_GEOMETRY_TTL_MS = 250
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,11 +73,17 @@ class RealtimeLandmarkPipeline:
         scheduler: FrameScheduler | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
+        geometry_ttl_ms: int = DEFAULT_GEOMETRY_TTL_MS,
+        midline_indices: tuple[int, ...] = (),
+        midline_enabled: bool = True,
+        midline_color: tuple[int, int, int] = DEFAULT_MIDLINE_COLOR,
         point_color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
         point_radius: int = DEFAULT_POINT_RADIUS,
     ) -> None:
         if analysis_interval_ms < 0:
             raise ValueError("analysis_interval_ms は 0 以上である必要があります。")
+        if geometry_ttl_ms < 0:
+            raise ValueError("geometry_ttl_ms は 0 以上である必要があります。")
         self._landmarker = landmarker
         self._analyzer = analyzer
         self._recorder = recorder
@@ -82,7 +91,11 @@ class RealtimeLandmarkPipeline:
         self._clock = clock
         self._point_color = point_color
         self._point_radius = point_radius
+        self._midline_indices = midline_indices
+        self._midline_enabled = midline_enabled
+        self._midline_color = midline_color
         self._analysis_interval_seconds = analysis_interval_ms / 1000.0
+        self._geometry_ttl_seconds = geometry_ttl_ms / 1000.0
         self._started_at = clock()
         self._next_analysis_at = self._started_at
         self._throttled_frames = 0
@@ -92,6 +105,9 @@ class RealtimeLandmarkPipeline:
         self._closed = False
         self._state_lock = threading.Lock()
         self._sample_lock = threading.Lock()
+        self._overlay_lock = threading.Lock()
+        self._cached_geometry: LandmarkFrame | None = None
+        self._cached_geometry_at: float | None = None
 
     def process(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Analyse one frame and return the image to send back to the browser."""
@@ -106,14 +122,15 @@ class RealtimeLandmarkPipeline:
         if self._closed:
             return rgb_image, None
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
+            self._clear_cached_geometry()
             self._record_error()
             return rgb_image, None
         if not self._admit_latest_sample():
-            return rgb_image, None
+            return self._draw_cached_geometry(rgb_image), None
 
         with self.scheduler.slot() as acquired:
             if not acquired:
-                return rgb_image, None
+                return self._draw_cached_geometry(rgb_image), None
             return self._analyse(rgb_image)
 
     def _admit_latest_sample(self) -> bool:
@@ -144,14 +161,16 @@ class RealtimeLandmarkPipeline:
                 frame_id=self._frame_id,
                 timestamp_ms=timestamp_ms,
             )
-            painted = draw_landmark_points(
-                rgb_image,
-                frame,
-                color=self._point_color,
-                radius=self._point_radius,
-            )
+            if frame.has_single_face:
+                with self._overlay_lock:
+                    self._cached_geometry = frame
+                    self._cached_geometry_at = started
+            else:
+                self._clear_cached_geometry()
+            painted = self._paint_geometry(rgb_image, frame)
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
+            self._clear_cached_geometry()
             self._record_error(
                 frame_id=self._frame_id,
                 elapsed_ms=timestamp_ms,
@@ -162,7 +181,11 @@ class RealtimeLandmarkPipeline:
         analysis: AnalysisOutcome | None = None
         if self._analyzer is not None:
             try:
-                analysis = self._analyzer.analyze(frame, at=started)
+                analysis = self._analyzer.analyze(
+                    frame,
+                    at=started,
+                    rgb_image=rgb_image,
+                )
             except Exception:
                 # Scoring must never take the preview down with it.
                 analysis = None
@@ -203,6 +226,43 @@ class RealtimeLandmarkPipeline:
                 analysis=analysis,
             )
         return painted, analysis
+
+    def _paint_geometry(
+        self,
+        rgb_image: NDArray[np.uint8],
+        frame: LandmarkFrame,
+    ) -> NDArray[np.uint8]:
+        painted = draw_landmark_points(
+            rgb_image,
+            frame,
+            color=self._point_color,
+            radius=self._point_radius,
+        )
+        with self._overlay_lock:
+            midline_enabled = self._midline_enabled
+        if midline_enabled:
+            painted = draw_face_midline(
+                painted,
+                frame,
+                midline_indices=self._midline_indices,
+                color=self._midline_color,
+            )
+        return painted
+
+    def _draw_cached_geometry(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        now = self._clock()
+        with self._overlay_lock:
+            frame = self._cached_geometry
+            cached_at = self._cached_geometry_at
+        if frame is None or cached_at is None or now - cached_at > self._geometry_ttl_seconds:
+            self._clear_cached_geometry()
+            return rgb_image
+        return self._paint_geometry(rgb_image, frame)
+
+    def _clear_cached_geometry(self) -> None:
+        with self._overlay_lock:
+            self._cached_geometry = None
+            self._cached_geometry_at = None
 
     def _record_error(
         self,
@@ -251,11 +311,17 @@ class RealtimeLandmarkPipeline:
         if self._recorder is not None:
             self._recorder.reset()
         self.scheduler.reset()
+        self._clear_cached_geometry()
         with self._sample_lock:
             self._next_analysis_at = self._clock()
             self._throttled_frames = 0
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
+
+    def set_midline_enabled(self, enabled: bool) -> None:
+        """Update the display-only centre-line preference thread-safely."""
+        with self._overlay_lock:
+            self._midline_enabled = bool(enabled)
 
     def export_bundle(self) -> SessionExport | None:
         """Return an immutable export snapshot without exposing live history."""
@@ -268,4 +334,5 @@ class RealtimeLandmarkPipeline:
         if self._closed:
             return
         self._closed = True
+        self._clear_cached_geometry()
         self._landmarker.close()

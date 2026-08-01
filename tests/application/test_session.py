@@ -9,8 +9,14 @@ from face_symmetry_lab.application.session import (
 )
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
 from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
-from face_symmetry_lab.domain.models import AGE_BANDS, AgeEstimate, AnalysisState, Status
+from face_symmetry_lab.domain.models import (
+    AnalysisState,
+    DemographicEstimate,
+    GenderLabel,
+    Status,
+)
 from face_symmetry_lab.domain.pose import FacePose
+from face_symmetry_lab.domain.skin_quality import CameraCorrection, SkinQualityResult
 from face_symmetry_lab.domain.symmetry import SymmetryResult
 
 
@@ -115,6 +121,13 @@ def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -
         metric_version=config.metric_version,
         landmark_map_version=config.landmark_map_version,
         sensitivity_frozen=False,
+        skin_quality=SkinQualityResult(
+            score=72.0,
+            tone_uniformity=74.0,
+            texture_uniformity=70.0,
+            pair_count=12,
+            correction=CameraCorrection(0.9, 1.0, 1.1, 0.2, 0.8),
+        ),
     )
 
     record = recorder.append_analysis(
@@ -126,18 +139,22 @@ def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -
 
     assert record.score_overall_raw == 81.5
     assert record.distance_mouth_raw == 0.04
+    assert record.skin_quality_score_raw == 72.0
+    assert record.skin_tone_uniformity_raw == 74.0
+    assert record.skin_metric_version == "skin-surface/0.1.0"
     assert record.metric_version == config.metric_version
     assert (
         record.config_fingerprint
         == recorder.export_bundle().manifest.config_revisions[0].fingerprint
     )
 
-    enriched = recorder.attach_age_estimate(
-        AgeEstimate(
-            band=AGE_BANDS[-1],
-            confidence=0.6,
-            probabilities=(0.01, 0.02, 0.03, 0.04, 0.05, 0.1, 0.15, 0.6),
-            model_version="age/1",
+    enriched = recorder.attach_demographic_estimate(
+        DemographicEstimate(
+            estimated_age_years=42.5,
+            gender=GenderLabel.MALE,
+            gender_confidence=0.6,
+            gender_probabilities=(0.4, 0.6),
+            model_version="demographic/1",
             model_sha256="d" * 64,
             observed_at=datetime(2026, 8, 1, tzinfo=UTC),
         ),
@@ -145,6 +162,6 @@ def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -
     )
 
     assert enriched is not None
-    assert enriched.age_band == "70+"
-    assert enriched.age_prob_70_plus == 0.6
-    assert recorder.export_bundle().manifest.models[-1].version == "age/1"
+    assert enriched.estimated_age_years == 42.5
+    assert enriched.gender_prob_male == 0.6
+    assert recorder.export_bundle().manifest.models[-1].version == "demographic/1"

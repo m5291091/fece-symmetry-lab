@@ -98,6 +98,31 @@ def render_scores(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> No
         column.metric(_PART_LABELS[name], "—" if value is None else f"{value:.1f}")
 
     render_pose(outcome)
+    if outcome.skin_quality is not None:
+        skin = outcome.skin_quality
+        st.divider()
+        st.markdown("#### 撮影補正後の肌表面参考値（実験値）")
+        st.metric(
+            "肌表面参考値",
+            "—" if skin.score is None else f"{skin.score:.1f}",
+        )
+        tone_column, texture_column = st.columns(2)
+        tone_column.metric(
+            "色調均一性",
+            "—" if skin.tone_uniformity is None else f"{skin.tone_uniformity:.1f}",
+        )
+        texture_column.metric(
+            "テクスチャ均一性",
+            "—" if skin.texture_uniformity is None else f"{skin.texture_uniformity:.1f}",
+        )
+        st.caption(
+            "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
+            "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。"
+        )
+        if skin.correction is not None:
+            gains = skin.correction.gains
+            st.caption(f"補正gain RGB {gains[0]:.2f} / {gains[1]:.2f} / {gains[2]:.2f}")
+        st.caption(f"skin metric {skin.metric_version} · 未校正")
     st.caption(
         "100 は、正規化後の対応点距離がすべて 0 になった場合の数学上の上限です。"
         "人物の状態や価値を示す尺度ではなく、実写で 100 になることも保証しません。"

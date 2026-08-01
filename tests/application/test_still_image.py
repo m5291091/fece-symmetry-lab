@@ -26,6 +26,8 @@ class FakeImageLandmarker:
             frame_id=frame_id,
             face_count=self.face_count,
             points=points,
+            width=rgb_image.shape[1],
+            height=rgb_image.shape[0],
         )
 
     def close(self) -> None:
@@ -85,3 +87,23 @@ def test_still_images_are_stateless_and_reuse_frame_id_zero() -> None:
     assert first.frame.frame_id == 0
     assert second.frame.frame_id == 0
     assert landmarker.calls == 2
+
+
+def test_still_image_midline_can_be_turned_on_and_off() -> None:
+    source = _rgb()
+    landmarker = FakeImageLandmarker()
+
+    shown = detect_still_image_landmarks(
+        landmarker,
+        source,
+        show_midline=True,
+        midline_indices=(0, 1, 2),
+    )
+    hidden = detect_still_image_landmarks(
+        landmarker,
+        source,
+        show_midline=False,
+        midline_indices=(0, 1, 2),
+    )
+
+    assert not np.array_equal(shown.preview, hidden.preview)

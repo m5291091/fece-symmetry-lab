@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+from numpy.typing import NDArray
+
 from face_symmetry_lab.application.quality import QualityGate, QualityThresholds
 from face_symmetry_lab.domain.landmarks import (
     LandmarkError,
@@ -18,6 +21,12 @@ from face_symmetry_lab.domain.landmarks import (
 from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
+from face_symmetry_lab.domain.skin_quality import (
+    MEDIAPIPE_CHEEK_PAIRS,
+    SkinQualityError,
+    SkinQualityResult,
+    compute_skin_quality,
+)
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS, TimeBasedEma
 from face_symmetry_lab.domain.symmetry import (
     SymmetryError,
@@ -42,6 +51,7 @@ class AnalysisOutcome:
     metric_version: str
     landmark_map_version: str
     sensitivity_frozen: bool
+    skin_quality: SkinQualityResult | None = None
 
     @property
     def overall_raw(self) -> float | None:
@@ -57,11 +67,13 @@ class FrameAnalyzer:
         config: MetricConfig,
         thresholds: QualityThresholds | None = None,
         tau_seconds: float = DEFAULT_TAU_SECONDS,
+        skin_pairs: tuple[tuple[int, int], ...] = MEDIAPIPE_CHEEK_PAIRS,
     ) -> None:
         self._config = config
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
         self._lost_since: float | None = None
+        self._skin_pairs = skin_pairs
 
     @property
     def config(self) -> MetricConfig:
@@ -77,7 +89,13 @@ class FrameAnalyzer:
         self._ema.reset()
         self._lost_since = None
 
-    def analyze(self, frame: LandmarkFrame, *, at: float) -> AnalysisOutcome:
+    def analyze(
+        self,
+        frame: LandmarkFrame,
+        *,
+        at: float,
+        rgb_image: NDArray[np.uint8] | None = None,
+    ) -> AnalysisOutcome:
         state = self._gate.update(frame)
         self._track_face_loss(state.status, at)
 
@@ -100,6 +118,18 @@ class FrameAnalyzer:
         if symmetry is not None and symmetry.overall is not None:
             smooth = self._ema.update(symmetry.overall, at=at)
 
+        skin_quality: SkinQualityResult | None = None
+        if state.status is Status.OK and rgb_image is not None:
+            try:
+                skin_quality = compute_skin_quality(
+                    rgb_image,
+                    frame,
+                    pairs=self._skin_pairs,
+                )
+            except SkinQualityError:
+                # The capture-conditioned reference is independent (§8.6.1).
+                skin_quality = None
+
         return AnalysisOutcome(
             frame_id=frame.frame_id,
             state=state,
@@ -110,6 +140,7 @@ class FrameAnalyzer:
             metric_version=self._config.metric_version,
             landmark_map_version=self._config.landmark_map_version,
             sensitivity_frozen=self._config.sensitivity_frozen,
+            skin_quality=skin_quality,
         )
 
     def _track_face_loss(self, status: Status, at: float) -> None:

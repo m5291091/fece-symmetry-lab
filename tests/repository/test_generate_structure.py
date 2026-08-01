@@ -3,10 +3,18 @@ import pytest
 from scripts.generate_structure import (
     BEGIN_MARKER,
     END_MARKER,
+    existing_repository_paths,
     render_tree,
     replace_generated_tree,
     select_repository_paths,
 )
+
+
+def test_existing_repository_paths_excludes_tracked_files_deleted_in_worktree(tmp_path) -> None:
+    kept = tmp_path / "kept.py"
+    kept.write_text("pass\n", encoding="utf-8")
+
+    assert existing_repository_paths(["kept.py", "deleted.py"], tmp_path) == ["kept.py"]
 
 
 def test_select_repository_paths_excludes_secrets_caches_and_unsafe_paths() -> None:

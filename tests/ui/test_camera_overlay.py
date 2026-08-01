@@ -3,6 +3,7 @@ import numpy as np
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
+from face_symmetry_lab.domain.skin_quality import CameraCorrection, SkinQualityResult
 from face_symmetry_lab.domain.symmetry import SymmetryResult
 from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics, metric_overlay_lines
 
@@ -32,6 +33,13 @@ def _outcome(*, ok: bool = True) -> AnalysisOutcome:
         metric_version="symmetry/test",
         landmark_map_version="map/test",
         sensitivity_frozen=False,
+        skin_quality=SkinQualityResult(
+            score=74.0,
+            tone_uniformity=75.0,
+            texture_uniformity=73.0,
+            pair_count=8,
+            correction=CameraCorrection(0.9, 1.0, 1.1, 0.2, 0.8),
+        ),
     )
 
 
@@ -42,6 +50,7 @@ def test_overlay_lines_put_scores_and_pose_in_the_camera_view() -> None:
     assert "OVERALL 81.2" in lines
     assert any("C 80.0" in line for line in lines)
     assert any("YAW +1.2" in line for line in lines)
+    assert any("SKIN REF 74.0" in line for line in lines)
 
 
 def test_overlay_labels_reused_numbers_as_the_last_sample() -> None:

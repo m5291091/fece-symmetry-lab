@@ -6,13 +6,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
-from face_symmetry_lab.domain.models import AgeEstimate
+from face_symmetry_lab.domain.models import DemographicEstimate
 
 
-class AgeEstimator(Protocol):
-    """Boundary implemented by local age-estimation runtimes."""
+class DemographicEstimator(Protocol):
+    """Boundary implemented by local age/gender runtimes."""
 
-    def estimate(self, rgb_image: NDArray[np.uint8]) -> AgeEstimate: ...
+    def estimate(self, rgb_image: NDArray[np.uint8]) -> DemographicEstimate: ...
 
 
 class LandmarkProvider(Protocol):

@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 
+import numpy as np
+from numpy.typing import NDArray
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+from face_symmetry_lab.domain.landmarks import LandmarkFrame
 
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_PIXELS = 12_000_000
@@ -62,3 +66,36 @@ def decode_uploaded_image(
         width=rgb.width,
         height=rgb.height,
     )
+
+
+def extract_face_crop(
+    rgb_image: NDArray[np.uint8],
+    frame: LandmarkFrame,
+    *,
+    padding_ratio: float = 0.15,
+) -> NDArray[np.uint8]:
+    """Return a clamped, detached face bbox crop for local face models."""
+    image = np.asarray(rgb_image)
+    if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
+        raise ImageInputError("顔 crop には uint8 の RGB 画像が必要です。")
+    if not frame.has_single_face or not frame.points:
+        raise ImageInputError("顔モデル推論には単一顔のlandmarkが必要です。")
+    if not 0.0 <= padding_ratio <= 1.0:
+        raise ImageInputError("顔 crop の余白率が不正です。")
+
+    height, width = image.shape[:2]
+    xs = [point[0] * width for point in frame.points]
+    ys = [point[1] * height for point in frame.points]
+    face_width = max(xs) - min(xs)
+    face_height = max(ys) - min(ys)
+    if face_width <= 0 or face_height <= 0:
+        raise ImageInputError("顔 crop の範囲を決定できません。")
+    padding_x = face_width * padding_ratio
+    padding_y = face_height * padding_ratio
+    left = max(0, int(np.floor(min(xs) - padding_x)))
+    right = min(width, int(np.ceil(max(xs) + padding_x)))
+    top = max(0, int(np.floor(min(ys) - padding_y)))
+    bottom = min(height, int(np.ceil(max(ys) + padding_y)))
+    if left >= right or top >= bottom:
+        raise ImageInputError("顔 crop の範囲を決定できません。")
+    return np.ascontiguousarray(image[top:bottom, left:right]).copy()

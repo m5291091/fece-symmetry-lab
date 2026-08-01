@@ -17,8 +17,13 @@ from face_symmetry_lab.domain.models import AnalysisState, Status
 
 
 class FakeLandmarker:
-    def __init__(self, face_count: int = 1) -> None:
+    def __init__(
+        self,
+        face_count: int = 1,
+        points: tuple[tuple[float, float], ...] | None = None,
+    ) -> None:
         self.face_count = face_count
+        self.points = points
         self.error: Exception | None = None
         self.calls: list[tuple[int, int]] = []
         self.closed = False
@@ -33,11 +38,13 @@ class FakeLandmarker:
         self.calls.append((frame_id, timestamp_ms))
         if self.error is not None:
             raise self.error
-        points = ((0.5, 0.5),) if self.face_count == 1 else ()
+        points = (self.points or ((0.5, 0.5),)) if self.face_count == 1 else ()
         return build_landmark_frame(
             frame_id=frame_id,
             face_count=self.face_count,
             points=points,
+            width=rgb_image.shape[1],
+            height=rgb_image.shape[0],
         )
 
     def close(self) -> None:
@@ -72,7 +79,13 @@ class StubAnalyzer:
     def __init__(self) -> None:
         self.reset_calls = 0
 
-    def analyze(self, frame: LandmarkFrame, *, at: float) -> AnalysisOutcome:
+    def analyze(
+        self,
+        frame: LandmarkFrame,
+        *,
+        at: float,
+        rgb_image: np.ndarray | None = None,
+    ) -> AnalysisOutcome:
         return AnalysisOutcome(
             frame_id=frame.frame_id,
             state=AnalysisState(status=Status.HOLD),
@@ -194,7 +207,7 @@ def test_pipeline_samples_latest_frames_at_default_cadence() -> None:
     assert first is None  # No analyzer is attached, but landmark inference ran.
     assert second is None
     assert fourth is None
-    assert skipped_frame.sum() == 0
+    assert skipped_frame.sum() > 0
     assert len(landmarker.calls) == 2
     assert pipeline.snapshot().throttled_frames == 2
 
@@ -234,7 +247,44 @@ def test_a_dropped_frame_never_receives_the_previous_numeric_overlay_result() ->
 
     assert first_analysis is not None
     assert dropped_analysis is None
-    assert raw.sum() == 0
+    assert raw.sum() > 0  # Short-lived geometry is retained; numeric analysis is not.
+
+
+def test_cached_geometry_expires_before_the_next_slow_sample() -> None:
+    clock = ManualClock()
+    landmarker = FakeLandmarker()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=clock,
+        analysis_interval_ms=1000,
+        geometry_ttl_ms=250,
+    )
+
+    first = pipeline.process(_rgb())
+    clock.advance(0.2)
+    retained = pipeline.process(_rgb())
+    clock.advance(0.051)
+    expired = pipeline.process(_rgb())
+
+    assert first.sum() > 0
+    assert retained.sum() > 0
+    assert expired.sum() == 0
+    assert len(landmarker.calls) == 1
+
+
+def test_reset_clears_cached_geometry_immediately() -> None:
+    clock = ManualClock()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(),
+        clock=clock,
+        analysis_interval_ms=1000,
+    )
+    pipeline.process(_rgb())
+
+    pipeline.reset_analysis()
+    raw = pipeline.process(_rgb())
+
+    assert raw.sum() > 0  # reset admits a fresh sample, never a cached one
 
 
 def test_detection_failures_keep_the_stream_running() -> None:
@@ -352,3 +402,20 @@ def test_reset_clears_the_export_history_together_with_analysis_state() -> None:
 
     assert analyzer.reset_calls == 1
     assert recorder.reset_calls == 1
+
+
+def test_realtime_face_midline_can_be_turned_off_without_restarting() -> None:
+    points = ((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5))
+    pipeline = _pipeline(
+        FakeLandmarker(points=points),
+        midline_indices=(0, 1, 2),
+        point_color=(0, 0, 0),
+        point_radius=0,
+    )
+
+    shown = pipeline.process(_rgb())
+    pipeline.set_midline_enabled(False)
+    hidden = pipeline.process(_rgb())
+
+    assert shown.sum() > 0
+    assert hidden.sum() == 0

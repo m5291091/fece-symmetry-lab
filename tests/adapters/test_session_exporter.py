@@ -49,11 +49,13 @@ def test_csv_and_json_records_have_the_same_meaning() -> None:
     csv_record = next(csv.DictReader(io.StringIO(csv_bytes(bundle).decode("utf-8"))))
     json_record = payload["records"][0]
 
-    assert csv_record["schema_version"] == json_record["schema_version"] == "1.1.0"
+    assert csv_record["schema_version"] == json_record["schema_version"] == "2.0.0"
     assert csv_record["metric_version"] == json_record["metric_version"]
     assert csv_record["config_fingerprint"] == json_record["config_fingerprint"]
     assert csv_record["segment_id"] == json_record["segment_id"]
     assert csv_record["analysis_status"] == json_record["analysis_status"] == "ERROR"
+    assert "skin_quality_score_raw" in csv_record
+    assert "skin_quality_score_raw" in json_record
     assert "NaN" not in csv_bytes(bundle).decode("utf-8")
     assert "Infinity" not in json_bytes(bundle).decode("utf-8")
 
@@ -61,7 +63,7 @@ def test_csv_and_json_records_have_the_same_meaning() -> None:
 def test_json_contains_the_reproducibility_manifest() -> None:
     manifest = json.loads(json_bytes(_bundle()))["manifest"]
 
-    assert manifest["schema_version"] == "1.1.0"
+    assert manifest["schema_version"] == "2.0.0"
     assert manifest["metric_version"] == "symmetry/test"
     assert manifest["models"][0]["version"] == "landmark/1"
     assert manifest["config_revisions"][0]["fingerprint"]
