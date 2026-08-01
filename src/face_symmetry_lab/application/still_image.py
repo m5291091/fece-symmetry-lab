@@ -12,8 +12,11 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
 from face_symmetry_lab.application.ports import ImageLandmarkProvider
+from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
+from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_POINT_COLOR,
     DEFAULT_POINT_RADIUS,
@@ -44,3 +47,38 @@ def detect_still_image_landmarks(
     frame = provider.detect(rgb_image)
     preview = draw_landmark_points(rgb_image, frame, color=color, radius=radius)
     return StillImageLandmarks(frame=frame, preview=preview)
+
+
+#: A still image cannot build a stability streak, so one valid frame is enough.
+STILL_IMAGE_THRESHOLDS = QualityThresholds(valid_frames_to_ok=1)
+
+
+@dataclass(frozen=True, slots=True)
+class StillImageAnalysis:
+    """Landmarks plus the symmetry outcome for one uploaded photo."""
+
+    landmarks: StillImageLandmarks
+    outcome: AnalysisOutcome
+
+    @property
+    def preview(self) -> NDArray[np.uint8]:
+        return self.landmarks.preview
+
+
+def analyze_still_image(
+    provider: ImageLandmarkProvider,
+    rgb_image: NDArray[np.uint8],
+    *,
+    config: MetricConfig,
+    thresholds: QualityThresholds | None = None,
+    color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
+    radius: int = DEFAULT_POINT_RADIUS,
+) -> StillImageAnalysis:
+    """Detect, draw, and score one photo. Stateless: no smoothing is applied."""
+    landmarks = detect_still_image_landmarks(provider, rgb_image, color=color, radius=radius)
+    analyzer = FrameAnalyzer(
+        config=config,
+        thresholds=thresholds or STILL_IMAGE_THRESHOLDS,
+    )
+    outcome = analyzer.analyze(landmarks.frame, at=0.0)
+    return StillImageAnalysis(landmarks=landmarks, outcome=outcome)

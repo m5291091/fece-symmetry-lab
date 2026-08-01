@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
 from face_symmetry_lab.application.ports import LandmarkProvider
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.overlay import (
@@ -40,6 +41,8 @@ class PipelineSnapshot:
     dropped_frames: int = 0
     consecutive_errors: int = 0
     processing_ms: float = 0.0
+    #: Present only when an analyzer is attached and the frame was scored.
+    analysis: AnalysisOutcome | None = None
 
     @property
     def needs_recovery(self) -> bool:
@@ -53,12 +56,14 @@ class RealtimeLandmarkPipeline:
         self,
         *,
         landmarker: LandmarkProvider,
+        analyzer: FrameAnalyzer | None = None,
         scheduler: FrameScheduler | None = None,
         clock: Callable[[], float] = time.monotonic,
         point_color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
         point_radius: int = DEFAULT_POINT_RADIUS,
     ) -> None:
         self._landmarker = landmarker
+        self._analyzer = analyzer
         self.scheduler = scheduler if scheduler is not None else FrameScheduler()
         self._clock = clock
         self._point_color = point_color
@@ -109,6 +114,14 @@ class RealtimeLandmarkPipeline:
             self._record_error()
             return rgb_image
 
+        analysis: AnalysisOutcome | None = None
+        if self._analyzer is not None:
+            try:
+                analysis = self._analyzer.analyze(frame, at=started)
+            except Exception:
+                # Scoring must never take the preview down with it.
+                analysis = None
+
         with self._state_lock:
             self._snapshot = PipelineSnapshot(
                 frame_id=frame.frame_id,
@@ -118,6 +131,7 @@ class RealtimeLandmarkPipeline:
                 dropped_frames=self.scheduler.dropped_frames,
                 consecutive_errors=0,
                 processing_ms=(self._clock() - started) * 1000.0,
+                analysis=analysis,
             )
         return painted
 
@@ -135,6 +149,14 @@ class RealtimeLandmarkPipeline:
         """Return the latest immutable result for the UI thread."""
         with self._state_lock:
             return replace(self._snapshot, dropped_frames=self.scheduler.dropped_frames)
+
+    def reset_analysis(self) -> None:
+        """Drop scores, smoothing, and hysteresis without stopping the stream."""
+        if self._analyzer is not None:
+            self._analyzer.reset()
+        self.scheduler.reset()
+        with self._state_lock:
+            self._snapshot = PipelineSnapshot()
 
     def close(self) -> None:
         """Release the landmark runtime and stop accepting frames."""

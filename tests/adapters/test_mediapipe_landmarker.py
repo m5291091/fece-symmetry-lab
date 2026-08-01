@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -274,3 +275,85 @@ def test_video_and_image_landmarkers_are_separate_instances(tmp_path: Path) -> N
     assert video_detector.closed is True
     assert image_detector.closed is False
     assert image.model_sha256 == video.model_sha256
+
+
+def _rotation_matrix_y(degrees: float) -> list[list[float]]:
+    angle = math.radians(degrees)
+    return [
+        [math.cos(angle), 0.0, math.sin(angle), 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [-math.sin(angle), 0.0, math.cos(angle), 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+class FakePoseDetector(FakeImageDetector):
+    def __init__(self, faces, matrices) -> None:
+        super().__init__(faces)
+        self.matrices = matrices
+
+    def detect(self, image: Any) -> SimpleNamespace:
+        super().detect(image)
+        return SimpleNamespace(
+            face_landmarks=self.faces,
+            facial_transformation_matrixes=self.matrices,
+        )
+
+
+def test_the_head_pose_is_read_from_the_transformation_matrix(tmp_path: Path) -> None:
+    detector = FakePoseDetector([_face((0.5, 0.5))], [_rotation_matrix_y(12.0)])
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_model_file(tmp_path),
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: detector,
+        image_factory=lambda rgb: rgb,
+    )
+
+    frame = landmarker.detect(_rgb())
+
+    assert frame.pose is not None
+    assert frame.pose.yaw_deg == pytest.approx(12.0, abs=1e-6)
+
+
+def test_an_unusable_pose_matrix_leaves_the_pose_empty(tmp_path: Path) -> None:
+    detector = FakePoseDetector([_face((0.5, 0.5))], [[[0.0] * 4] * 4])
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_model_file(tmp_path),
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: detector,
+        image_factory=lambda rgb: rgb,
+    )
+
+    frame = landmarker.detect(_rgb())
+
+    assert frame.face_count == 1
+    assert frame.pose is None
+
+
+def test_multi_face_results_carry_no_pose(tmp_path: Path) -> None:
+    detector = FakePoseDetector(
+        [_face((0.2, 0.2)), _face((0.8, 0.8))],
+        [_rotation_matrix_y(5.0), _rotation_matrix_y(-5.0)],
+    )
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_model_file(tmp_path),
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: detector,
+        image_factory=lambda rgb: rgb,
+    )
+
+    assert landmarker.detect(_rgb()).pose is None
+
+
+def test_the_frame_records_the_image_size_for_pixel_conversion(tmp_path: Path) -> None:
+    detector = FakePoseDetector([_face((0.5, 0.5))], [_rotation_matrix_y(0.0)])
+    landmarker = MediaPipeImageLandmarker(
+        model_path=_model_file(tmp_path),
+        model_version="face-landmarker/1.0.0",
+        detector_factory=lambda _: detector,
+        image_factory=lambda rgb: rgb,
+    )
+
+    frame = landmarker.detect(_rgb(height=48, width=64))
+
+    assert (frame.width, frame.height) == (64, 48)

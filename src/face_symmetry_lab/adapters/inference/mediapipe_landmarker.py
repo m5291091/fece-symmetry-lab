@@ -21,6 +21,7 @@ from face_symmetry_lab.domain.landmarks import (
     LandmarkFrame,
     build_landmark_frame,
 )
+from face_symmetry_lab.domain.pose import FacePose, PoseError, pose_from_matrix
 
 #: Detecting two faces is enough to report MULTI_FACE without ranking them.
 MAX_TRACKED_FACES = 2
@@ -66,6 +67,7 @@ def _create_detector(model_path: Path, running_mode_name: str) -> Any:
             base_options=BaseOptions(model_asset_path=str(model_path)),
             running_mode=getattr(RunningMode, running_mode_name),
             num_faces=MAX_TRACKED_FACES,
+            output_facial_transformation_matrixes=True,
         )
         return FaceLandmarker.create_from_options(options)
     except Exception as error:
@@ -95,18 +97,35 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _to_landmark_frame(result: Any, frame_id: int) -> LandmarkFrame:
+def _extract_pose(result: Any) -> FacePose | None:
+    """Read the head pose, or None when the matrix is unusable (§8.2.1)."""
+    matrices = list(getattr(result, "facial_transformation_matrixes", []) or [])
+    if len(matrices) != 1:
+        return None
+    try:
+        return pose_from_matrix(np.asarray(matrices[0], dtype=np.float64))
+    except PoseError:
+        # A missing pose becomes LOW_CONFIDENCE at the gate, not a dead frame.
+        return None
+
+
+def _to_landmark_frame(result: Any, frame_id: int, width: int, height: int) -> LandmarkFrame:
     """Convert a MediaPipe result without ever ranking or picking a face."""
     faces = list(getattr(result, "face_landmarks", []) or [])
     points: tuple[tuple[float, float], ...] = ()
+    pose: FacePose | None = None
     if len(faces) == 1:
         points = tuple((float(point.x), float(point.y)) for point in faces[0])
+        pose = _extract_pose(result)
 
     try:
         return build_landmark_frame(
             frame_id=frame_id,
             face_count=len(faces),
             points=points,
+            pose=pose,
+            width=width,
+            height=height,
         )
     except LandmarkError as error:
         raise LandmarkDetectionError("ランドマーク出力が不正です。") from error
@@ -188,7 +207,8 @@ class MediaPipeFaceLandmarker(_LandmarkerBase):
         except Exception as error:
             raise LandmarkDetectionError("ランドマークを検出できませんでした。") from error
 
-        return _to_landmark_frame(result, frame_id)
+        height, width = rgb_image.shape[:2]
+        return _to_landmark_frame(result, frame_id, int(width), int(height))
 
 
 class MediaPipeImageLandmarker(_LandmarkerBase):
@@ -220,4 +240,5 @@ class MediaPipeImageLandmarker(_LandmarkerBase):
         except Exception as error:
             raise LandmarkDetectionError("ランドマークを検出できませんでした。") from error
 
-        return _to_landmark_frame(result, frame_id)
+        height, width = rgb_image.shape[:2]
+        return _to_landmark_frame(result, frame_id, int(width), int(height))
