@@ -14,18 +14,21 @@ from face_symmetry_lab.adapters.inference.onnx_age_estimator import (
     AgeInferenceError,
     OnnxAgeEstimator,
 )
+from face_symmetry_lab.adapters.io.metric_config import load_metric_config
 from face_symmetry_lab.application.image_input import (
     ImageInputError,
     decode_uploaded_image,
 )
-from face_symmetry_lab.application.still_image import detect_still_image_landmarks
+from face_symmetry_lab.application.still_image import analyze_still_image
 from face_symmetry_lab.domain.landmarks import TrackingStatus
+from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.models import AGE_BANDS, AgeEstimate
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
     render_camera_section,
 )
 from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
+from face_symmetry_lab.ui.scores import render_scores
 
 APP_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_AGE_MODEL = APP_ROOT / "models" / "age_mobilenetv2_utkface_v1.onnx"
@@ -128,26 +131,31 @@ def release_image_landmarker() -> None:
 
 
 def _render_image_landmarks(rgb: np.ndarray) -> None:
-    """Detect and draw landmarks for one uploaded photo (stateless, §8.7)."""
-    st.subheader("静止画のランドマーク")
+    """Detect, draw, and score one uploaded photo (stateless, §8.7)."""
+    st.subheader("静止画のランドマークと左右差")
     model_path = resolve_ready_landmarker()
     if model_path is None:
         return
 
     try:
-        result = detect_still_image_landmarks(_session_image_landmarker(model_path), rgb)
-    except LandmarkDetectionError as error:
+        analysis = analyze_still_image(
+            _session_image_landmarker(model_path),
+            rgb,
+            config=load_metric_config(),
+        )
+    except (LandmarkDetectionError, MetricConfigError) as error:
         st.error(str(error))
         return
 
+    landmarks = analysis.landmarks
     preview_column, status_column = st.columns([7, 5])
     with preview_column:
-        st.image(result.preview, caption="検出したランドマーク", width="stretch")
+        st.image(landmarks.preview, caption="検出したランドマーク", width="stretch")
+        st.caption(_IMAGE_STATUS_MESSAGES[landmarks.frame.status])
+        st.caption(f"ランドマーク点数 {landmarks.landmark_count}")
     with status_column:
-        st.write(_IMAGE_STATUS_MESSAGES[result.frame.status])
-        st.metric("検出した顔の数", result.frame.face_count)
-        st.metric("ランドマーク点数", result.landmark_count)
-        st.caption("この結果は顔の位置情報であり、左右差スコアや年齢帯とは無関係です。")
+        # Still images are stateless, so the raw value is shown directly (§8.7).
+        render_scores(analysis.outcome, show_smoothed=False)
 
 
 def _render_image_section() -> None:

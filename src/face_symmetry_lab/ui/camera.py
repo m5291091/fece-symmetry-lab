@@ -21,12 +21,16 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
 )
+from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.realtime import (
     PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.domain.landmarks import TrackingStatus
+from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.ui.model_setup import landmark_asset, resolve_ready_landmarker
+from face_symmetry_lab.ui.scores import render_scores
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
@@ -78,7 +82,10 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         model_path=model_path,
         model_version=landmark_asset().version,
     )
-    return RealtimeLandmarkPipeline(landmarker=landmarker)
+    return RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        analyzer=FrameAnalyzer(config=load_metric_config()),
+    )
 
 
 def _session_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
@@ -113,6 +120,10 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
     if snapshot.needs_recovery:
         st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
 
+    if snapshot.analysis is not None:
+        st.divider()
+        render_scores(snapshot.analysis)
+
 
 def render_camera_section() -> None:
     """Render the realtime landmark preview. Call only after consent."""
@@ -125,7 +136,7 @@ def render_camera_section() -> None:
 
     try:
         pipeline = _session_pipeline(model_path)
-    except LandmarkDetectionError as error:
+    except (LandmarkDetectionError, MetricConfigError) as error:
         st.error(str(error))
         return
 
@@ -145,6 +156,10 @@ def render_camera_section() -> None:
     _render_status_panel(pipeline)
 
     st.caption("カメラ映像は `STOP` で停止します。")
-    if st.button("ランドマーク推論を停止してモデルを解放", key="release_landmarker"):
+    controls = st.columns(2)
+    if controls[0].button("スコアと平滑化をリセット", key="reset_analysis"):
+        pipeline.reset_analysis()
+        st.rerun()
+    if controls[1].button("推論を停止してモデルを解放", key="release_landmarker"):
         release_session_pipeline()
         st.rerun()
