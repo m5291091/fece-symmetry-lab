@@ -83,6 +83,11 @@ class FrameAnalyzer:
     def thresholds(self) -> QualityThresholds:
         return self._gate.thresholds
 
+    @property
+    def tau_seconds(self) -> float:
+        """The EMA's currently active time constant (§14.3d auto-tuning readback)."""
+        return self._ema.tau_seconds
+
     def update(
         self,
         *,

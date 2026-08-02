@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import (
@@ -172,6 +174,65 @@ def test_reset_with_a_new_history_capacity_rebounds_the_buffer() -> None:
     recorder.append_error(frame_id=12, elapsed_ms=3, processing_ms=1.0)
 
     assert [record.frame_id for record in recorder.records()] == [11, 12]
+
+
+def test_resize_history_capacity_preserves_existing_records() -> None:
+    """§14.3d: cadence auto-tuning must not fragment history like reset() does."""
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+        history_capacity=100,
+    )
+    old_segment = recorder.segment_id
+    old_revision = recorder.config_revision
+    recorder.append_error(frame_id=1, elapsed_ms=1, processing_ms=1.0)
+    recorder.append_error(frame_id=2, elapsed_ms=2, processing_ms=1.0)
+
+    recorder.resize_history_capacity(5)
+
+    assert [record.frame_id for record in recorder.records()] == [1, 2]
+    assert recorder.segment_id == old_segment
+    assert recorder.config_revision == old_revision
+
+
+def test_resize_history_capacity_drops_the_oldest_records_when_shrinking() -> None:
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+        history_capacity=100,
+    )
+    recorder.append_error(frame_id=1, elapsed_ms=1, processing_ms=1.0)
+    recorder.append_error(frame_id=2, elapsed_ms=2, processing_ms=1.0)
+    recorder.append_error(frame_id=3, elapsed_ms=3, processing_ms=1.0)
+
+    recorder.resize_history_capacity(2)
+
+    assert [record.frame_id for record in recorder.records()] == [2, 3]
+
+
+def test_resize_history_capacity_rejects_less_than_one() -> None:
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+    )
+
+    with pytest.raises(ValueError):
+        recorder.resize_history_capacity(0)
 
 
 def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -> None:

@@ -151,6 +151,21 @@ def test_update_policy_applies_to_the_existing_tracked_face_immediately() -> Non
     assert fake.received_shapes[1] == (round(0.2 * 800), round(0.2 * 1000))
 
 
+def test_policy_reads_back_the_constructor_default() -> None:
+    zoomer = TrackingZoomLandmarker(_FakeLandmarkProvider([]))
+
+    assert zoomer.policy == TrackingZoomPolicy()
+
+
+def test_policy_reads_back_the_latest_update_policy_call() -> None:
+    zoomer = TrackingZoomLandmarker(_FakeLandmarkProvider([]))
+    updated = TrackingZoomPolicy(margin_ratio=0.1, target_px=600)
+
+    zoomer.update_policy(updated)
+
+    assert zoomer.policy == updated
+
+
 def test_close_closes_the_wrapped_provider() -> None:
     fake = _FakeLandmarkProvider(["single"])
     zoomer = TrackingZoomLandmarker(fake)

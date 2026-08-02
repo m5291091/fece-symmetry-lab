@@ -378,3 +378,16 @@ class SessionRecorder:
                 self._records.clear()
             self._segment_id = str(uuid4())
             self._config_revision += 1
+
+    def resize_history_capacity(self, capacity: int) -> None:
+        """Grow/shrink the bounded history buffer without starting a new segment.
+
+        Unlike ``reset(history_capacity=...)``, existing records (up to the
+        new capacity, oldest dropped first) are preserved and segment/config
+        identity is untouched: `history_capacity` does not affect scoring
+        (§15.2), so cadence auto-tuning (§14.3d, FR-030) can resize it live.
+        """
+        if capacity < 1:
+            raise ValueError("history_capacity は 1 以上である必要があります。")
+        with self._lock:
+            self._records = deque(self._records, maxlen=capacity)

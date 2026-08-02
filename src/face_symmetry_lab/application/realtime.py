@@ -8,8 +8,10 @@ stream (§14.3, §14.4, NFR-017).
 
 from __future__ import annotations
 
+import statistics
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
@@ -26,6 +28,14 @@ from face_symmetry_lab.application.ports import (
 )
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.domain.auto_tuning import (
+    recommend_age_interval_ms,
+    recommend_analysis_interval_ms,
+    recommend_brightness_gain,
+    recommend_history_capacity,
+    recommend_sensitivity,
+    recommend_zoom_policy,
+)
 from face_symmetry_lab.domain.export import SessionExport
 from face_symmetry_lab.domain.frame_adjustments import (
     BACKGROUND_COLORS,
@@ -33,9 +43,10 @@ from face_symmetry_lab.domain.frame_adjustments import (
     FrameAdjustmentError,
     apply_brightness_gain,
     composite_background,
+    mean_luminance,
 )
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
-from face_symmetry_lab.domain.metrics import MetricConfig
+from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, with_tunables
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_MIDLINE_COLOR,
@@ -53,6 +64,18 @@ ERROR_CIRCUIT_THRESHOLD = 3
 #: Preview frames keep flowing, while landmark inference is capped at 8 Hz.
 DEFAULT_ANALYSIS_INTERVAL_MS = 125
 DEFAULT_GEOMETRY_TTL_MS = 250
+
+#: §14.3d cadence auto-tuning (FR-030): non-scoring, so no segment reset is needed.
+_CADENCE_PROCESSING_WINDOW = 20
+_MIN_CADENCE_SAMPLES = 5
+_CADENCE_RETUNE_INTERVAL_SECONDS = 2.0
+
+#: §14.3d sensitivity auto-tuning (FR-030): scoring-affecting, throttled and
+#: gated on a minimum relative change so it doesn't churn segments needlessly.
+_SENSITIVITY_DISTANCE_WINDOW = 24
+_MIN_SENSITIVITY_SAMPLES = 8
+_SENSITIVITY_RETUNE_INTERVAL_SECONDS = 10.0
+_SENSITIVITY_CHANGE_THRESHOLD = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +124,7 @@ class RealtimeLandmarkPipeline:
         point_radius: int = DEFAULT_POINT_RADIUS,
         brightness_gain: float = 1.0,
         background_mode: BackgroundMode = BackgroundMode.OFF,
+        auto_tune_enabled: bool = False,
     ) -> None:
         if analysis_interval_ms < 0:
             raise ValueError("analysis_interval_ms は 0 以上である必要があります。")
@@ -127,10 +151,17 @@ class RealtimeLandmarkPipeline:
         self._midline_color = midline_color
         self._brightness_gain = brightness_gain
         self._background_mode = background_mode
+        self._auto_tune_enabled = bool(auto_tune_enabled)
         self._analysis_interval_seconds = analysis_interval_ms / 1000.0
         self._geometry_ttl_seconds = geometry_ttl_ms / 1000.0
         self._started_at = clock()
         self._next_analysis_at = self._started_at
+        self._processing_ms_window: deque[float] = deque(maxlen=_CADENCE_PROCESSING_WINDOW)
+        self._next_cadence_retune_at = self._started_at
+        self._distance_windows: dict[str, deque[float]] = {
+            name: deque(maxlen=_SENSITIVITY_DISTANCE_WINDOW) for name in PART_NAMES
+        }
+        self._next_sensitivity_retune_at = self._started_at
         self._throttled_frames = 0
         self._frame_id = 0
         self._last_timestamp_ms = -1
@@ -224,9 +255,11 @@ class RealtimeLandmarkPipeline:
                 with self._overlay_lock:
                     self._cached_geometry = frame
                     self._cached_geometry_at = started
+                self._maybe_auto_tune_zoom(frame)
             else:
                 self._clear_cached_geometry()
             painted = self._paint_geometry(rgb_image, frame)
+            self._maybe_auto_tune_brightness(rgb_image)
             painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
             self._submit_demographic_sample(rgb_image, frame)
         except Exception:
@@ -279,6 +312,9 @@ class RealtimeLandmarkPipeline:
             except Exception:
                 # Export bookkeeping is secondary to keeping the camera alive.
                 pass
+
+        self._maybe_auto_tune_cadence(processing_ms, at=finished)
+        self._maybe_auto_tune_sensitivity(analysis, at=finished)
 
         with self._sample_lock:
             throttled_frames = self._throttled_frames
@@ -386,6 +422,150 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             self._cached_mask = None
             self._cached_mask_at = None
+
+    def _maybe_auto_tune_brightness(self, rgb_image: NDArray[np.uint8]) -> None:
+        """§14.3c: nudge `brightness_gain` toward mid-gray once per analysed frame.
+
+        Any failure to measure or compute a recommendation is swallowed and
+        the current gain is kept (AC-AUTOTUNE-01) — this is a display/
+        detection convenience, not part of the analysis pipeline that
+        NFR-017's stream-continuity guarantee already covers.
+        """
+        with self._overlay_lock:
+            enabled = self._auto_tune_enabled
+            current_gain = self._brightness_gain
+        if not enabled:
+            return
+        try:
+            measured = mean_luminance(rgb_image)
+            new_gain = recommend_brightness_gain(measured, current_gain=current_gain)
+        except Exception:
+            return
+        with self._overlay_lock:
+            self._brightness_gain = new_gain
+
+    def _maybe_auto_tune_zoom(self, frame: LandmarkFrame) -> None:
+        """§14.3c: retune the tracking-zoom policy from the tracked face area.
+
+        No-ops when auto-tune is off, the frame lacks a confirmed single-face
+        area, or the landmarker does not support zoom policies at all. Any
+        failure is swallowed, keeping the previous policy (AC-AUTOTUNE-01).
+        """
+        with self._overlay_lock:
+            enabled = self._auto_tune_enabled
+        if not enabled:
+            return
+        ratio = frame.face_area_ratio
+        if ratio is None:
+            return
+        update_zoom_policy = getattr(self._landmarker, "update_policy", None)
+        if not callable(update_zoom_policy):
+            return
+        try:
+            policy = recommend_zoom_policy(ratio)
+        except Exception:
+            return
+        update_zoom_policy(policy)
+
+    def _maybe_auto_tune_cadence(self, processing_ms: float, *, at: float) -> None:
+        """§14.3d: retune cadence settings from measured processing load.
+
+        `analysis_interval_ms`/`age_interval_ms`/`history_capacity` don't
+        affect scoring (§15.2), so this never touches config_revision,
+        segment, or EMA — only `_set_analysis_interval_ms`, the demographic
+        worker's own interval, and the recorder's non-disruptive resize.
+        """
+        with self._overlay_lock:
+            enabled = self._auto_tune_enabled
+        if not enabled:
+            return
+        self._processing_ms_window.append(processing_ms)
+        with self._sample_lock:
+            due = at >= self._next_cadence_retune_at
+            if due:
+                self._next_cadence_retune_at = at + _CADENCE_RETUNE_INTERVAL_SECONDS
+        if not due or len(self._processing_ms_window) < _MIN_CADENCE_SAMPLES:
+            return
+        try:
+            mean_processing_ms = statistics.fmean(self._processing_ms_window)
+            new_interval_ms = recommend_analysis_interval_ms(mean_processing_ms)
+        except Exception:
+            return
+        self._set_analysis_interval_ms(new_interval_ms)
+        if self._demographic_worker is not None:
+            try:
+                age_interval_ms = recommend_age_interval_ms(new_interval_ms)
+            except Exception:
+                pass
+            else:
+                self._demographic_worker.set_interval_ms(age_interval_ms)
+        if self._recorder is not None:
+            try:
+                capacity = recommend_history_capacity(new_interval_ms)
+            except Exception:
+                pass
+            else:
+                self._recorder.resize_history_capacity(capacity)
+
+    def _maybe_auto_tune_sensitivity(
+        self,
+        analysis: AnalysisOutcome | None,
+        *,
+        at: float,
+    ) -> None:
+        """§14.3d: retune `sensitivity` from each part's raw-distance jitter.
+
+        `part_weights` is never touched (§14.3d, "Explain, do not judge"). A
+        change is applied — via the same `apply_advanced_settings` path a
+        manual edit uses, so config_revision/segment/EMA reset exactly as
+        §15.2 already requires for a scoring-affecting change — only when at
+        least one part's recommendation differs from its current value by
+        more than `_SENSITIVITY_CHANGE_THRESHOLD`, so a stable signal never
+        churns the session.
+        """
+        with self._overlay_lock:
+            enabled = self._auto_tune_enabled
+        if not enabled or self._analyzer is None:
+            return
+        if analysis is not None and analysis.symmetry is not None:
+            for name in PART_NAMES:
+                distance = analysis.symmetry.distance(name)
+                if distance is not None:
+                    self._distance_windows[name].append(distance)
+        if at < self._next_sensitivity_retune_at:
+            return
+        self._next_sensitivity_retune_at = at + _SENSITIVITY_RETUNE_INTERVAL_SECONDS
+
+        config = self._analyzer.config
+        recommended: dict[str, float] = {}
+        changed = False
+        for name in PART_NAMES:
+            window = self._distance_windows[name]
+            base = config.sensitivity[name]
+            if len(window) < _MIN_SENSITIVITY_SAMPLES:
+                recommended[name] = base
+                continue
+            try:
+                mean = statistics.fmean(window)
+                stddev = statistics.pstdev(window, mu=mean)
+                value = recommend_sensitivity(base, distance_mean=mean, distance_stddev=stddev)
+            except Exception:
+                value = base
+            recommended[name] = value
+            if base > 0 and abs(value - base) / base > _SENSITIVITY_CHANGE_THRESHOLD:
+                changed = True
+        if not changed:
+            return
+        try:
+            new_config = with_tunables(config, weights=config.weights, sensitivity=recommended)
+            self.apply_advanced_settings(
+                thresholds=self._analyzer.thresholds,
+                tau_seconds=self._analyzer.tau_seconds,
+                zoom_policy=self.zoom_policy or TrackingZoomPolicy(),
+                metric_config=new_config,
+            )
+        except Exception:
+            return
 
     def _active_demographic_worker(self) -> DemographicSampler | None:
         """Return the worker only while the user has age/gender display on."""
@@ -580,6 +760,34 @@ class RealtimeLandmarkPipeline:
         """Update the display-only background replacement thread-safely."""
         with self._overlay_lock:
             self._background_mode = mode
+
+    def set_auto_tune_enabled(self, enabled: bool) -> None:
+        """Toggle AI-assisted brightness/zoom auto-tuning (§14.3c, FR-029).
+
+        While on, `brightness_gain` and the landmarker's zoom policy are
+        recomputed from frame statistics each analysed frame instead of
+        following manual UI input; turning it off freezes whatever values
+        auto-tuning last picked for manual editing to resume from.
+        """
+        with self._overlay_lock:
+            self._auto_tune_enabled = bool(enabled)
+
+    @property
+    def brightness_gain(self) -> float:
+        """The gain currently applied to detection input and display (§15.2)."""
+        with self._overlay_lock:
+            return self._brightness_gain
+
+    @property
+    def zoom_policy(self) -> TrackingZoomPolicy | None:
+        """The landmarker's active zoom policy, or None if it doesn't track one."""
+        return getattr(self._landmarker, "policy", None)
+
+    @property
+    def analysis_interval_ms(self) -> int:
+        """The currently active analysis cadence (§15.2, §14.3d auto-tuning readback)."""
+        with self._sample_lock:
+            return round(self._analysis_interval_seconds * 1000)
 
     @property
     def metric_config(self) -> MetricConfig | None:

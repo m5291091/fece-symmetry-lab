@@ -12,6 +12,12 @@ def test_the_first_sample_is_taken_as_is() -> None:
     assert ema.value == pytest.approx(80.0)
 
 
+def test_tau_seconds_reads_back_the_constructor_value() -> None:
+    ema = TimeBasedEma(tau_seconds=0.7)
+
+    assert ema.tau_seconds == pytest.approx(0.7)
+
+
 def test_smoothing_moves_toward_the_new_value_without_reaching_it() -> None:
     ema = TimeBasedEma(tau_seconds=0.4)
     ema.update(80.0, at=0.0)

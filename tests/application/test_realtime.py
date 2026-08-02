@@ -9,15 +9,24 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
 )
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
+from face_symmetry_lab.domain.auto_tuning import recommend_age_interval_ms
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
-from face_symmetry_lab.domain.frame_adjustments import BackgroundMode, FrameAdjustmentError
+from face_symmetry_lab.domain.frame_adjustments import (
+    MAX_BRIGHTNESS_GAIN,
+    BackgroundMode,
+    FrameAdjustmentError,
+)
 from face_symmetry_lab.domain.landmarks import (
     LandmarkFrame,
     TrackingStatus,
     build_landmark_frame,
 )
+from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
 from face_symmetry_lab.domain.models import AnalysisState, DemographicEstimate, Status
+from face_symmetry_lab.domain.symmetry import SymmetryResult
+from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 #: Spread-out points so `extract_face_crop` can derive a non-degenerate bbox.
 SPREAD_POINTS = ((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5))
@@ -36,9 +45,11 @@ class FakeLandmarker:
         self.received_images: list[NDArray[np.uint8]] = []
         self.closed = False
         self.policy_updates: list[object] = []
+        self.policy: object | None = None
 
     def update_policy(self, policy: object) -> None:
         self.policy_updates.append(policy)
+        self.policy = policy
 
     def detect_video(
         self,
@@ -148,6 +159,92 @@ class StubAnalyzer:
             self.config = config
 
 
+def _metric_config():
+    return build_metric_config(
+        metric_version="symmetry/test",
+        landmark_map_version="map/test",
+        landmark_count=16,
+        left_eye_corners=(0, 1),
+        right_eye_corners=(2, 3),
+        midline_indices=(4, 5, 6),
+        parts={
+            "contour": PartMap(pairs=((7, 8),), min_pairs=1),
+            "eyes": PartMap(pairs=((0, 3), (1, 2)), min_pairs=1),
+            "nose": PartMap(pairs=((9, 10),), min_pairs=1),
+            "mouth": PartMap(pairs=((11, 12),), min_pairs=1),
+        },
+        sensitivity=dict.fromkeys(PART_NAMES, 30.0),
+        weights=dict.fromkeys(PART_NAMES, 0.25),
+        sensitivity_frozen=True,
+    )
+
+
+class NoisyAnalyzer:
+    """A real config/thresholds/tau contract with an injectable distance signal.
+
+    Used only by the sensitivity auto-tune tests, which need `with_tunables`
+    to actually validate the recommended sensitivity against a real bundle.
+    """
+
+    def __init__(self, *, config=None, distances: dict[str, float] | None = None) -> None:
+        self.config = config if config is not None else _metric_config()
+        self._thresholds = QualityThresholds()
+        self._tau_seconds = 0.4
+        self.distances = distances if distances is not None else dict.fromkeys(PART_NAMES, 0.1)
+        self.update_calls: list[tuple[object, float, object]] = []
+        self.reset_calls = 0
+
+    @property
+    def thresholds(self) -> QualityThresholds:
+        return self._thresholds
+
+    @property
+    def tau_seconds(self) -> float:
+        return self._tau_seconds
+
+    def analyze(
+        self,
+        frame: LandmarkFrame,
+        *,
+        at: float,
+        rgb_image: np.ndarray | None = None,
+    ) -> AnalysisOutcome:
+        symmetry = SymmetryResult(
+            scores=dict.fromkeys(PART_NAMES, 90.0),
+            distances=dict(self.distances),
+            overall=90.0,
+            metric_version=self.config.metric_version,
+            landmark_map_version=self.config.landmark_map_version,
+        )
+        return AnalysisOutcome(
+            frame_id=frame.frame_id,
+            state=AnalysisState(status=Status.OK),
+            symmetry=symmetry,
+            overall_smooth=90.0,
+            pose=frame.pose,
+            face_area_ratio=frame.face_area_ratio,
+            metric_version=self.config.metric_version,
+            landmark_map_version=self.config.landmark_map_version,
+            sensitivity_frozen=self.config.sensitivity_frozen,
+        )
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+
+    def update(
+        self,
+        *,
+        thresholds: object,
+        tau_seconds: float,
+        config: object = None,
+    ) -> None:
+        self.update_calls.append((thresholds, tau_seconds, config))
+        self._thresholds = thresholds  # type: ignore[assignment]
+        self._tau_seconds = tau_seconds
+        if config is not None:
+            self.config = config
+
+
 class RecorderSpy:
     def __init__(self) -> None:
         self.analysis_frames: list[int] = []
@@ -155,6 +252,7 @@ class RecorderSpy:
         self.reset_calls = 0
         self.reset_kwargs: list[dict[str, object]] = []
         self.demographic_attachments: list[tuple[DemographicEstimate, int]] = []
+        self.resize_calls: list[int] = []
 
     def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
         self.analysis_frames.append(frame.frame_id)
@@ -165,6 +263,9 @@ class RecorderSpy:
     def reset(self, **kwargs) -> None:
         self.reset_calls += 1
         self.reset_kwargs.append(kwargs)
+
+    def resize_history_capacity(self, capacity: int) -> None:
+        self.resize_calls.append(capacity)
 
     def export_bundle(self) -> str:
         return "bundle"
@@ -963,3 +1064,218 @@ def test_re_enabling_demographics_resumes_submission() -> None:
     pipeline.process(_rgb(height=40, width=40))
 
     assert len(worker.submitted) == 1
+
+
+def test_auto_tune_is_off_by_default_and_never_touches_brightness_gain() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker)
+
+    pipeline.process(_flat_rgb(20))  # far from the 128 target
+
+    assert pipeline.brightness_gain == pytest.approx(1.0)
+
+
+def test_auto_tune_enabled_moves_brightness_gain_toward_the_target() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker, auto_tune_enabled=True)
+
+    pipeline.process(_flat_rgb(64))  # 128 target / 64 measured -> gain 2.0
+
+    assert pipeline.brightness_gain == pytest.approx(2.0)
+
+
+def test_auto_tuned_brightness_is_clamped_to_fr_028_bounds() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker, auto_tune_enabled=True)
+
+    pipeline.process(_flat_rgb(1))  # would recommend a gain far above 3.0
+
+    assert pipeline.brightness_gain == pytest.approx(MAX_BRIGHTNESS_GAIN)
+
+
+def test_set_auto_tune_enabled_can_be_turned_off_again() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker, auto_tune_enabled=True)
+
+    pipeline.process(_flat_rgb(64))
+    pipeline.set_auto_tune_enabled(False)
+    pipeline.process(_flat_rgb(1))  # would move gain again if auto-tune were still on
+
+    assert pipeline.brightness_gain == pytest.approx(2.0)
+
+
+def test_auto_tune_enabled_updates_the_landmarker_zoom_policy_from_face_area() -> None:
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    pipeline = _pipeline(landmarker, auto_tune_enabled=True)
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert landmarker.policy_updates != []
+    assert pipeline.zoom_policy is landmarker.policy
+    assert pipeline.zoom_policy.target_px != TrackingZoomPolicy().target_px
+
+
+def test_auto_tune_disabled_never_calls_update_policy() -> None:
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    pipeline = _pipeline(landmarker)
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert landmarker.policy_updates == []
+
+
+def test_auto_tune_zoom_is_skipped_without_a_single_confirmed_face() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = _pipeline(landmarker, auto_tune_enabled=True)
+
+    pipeline.process(_rgb())
+
+    assert landmarker.policy_updates == []
+
+
+def test_auto_tune_zoom_no_ops_when_the_landmarker_does_not_support_zoom() -> None:
+    class PlainLandmarker:
+        def detect_video(
+            self, rgb_image: NDArray[np.uint8], *, frame_id: int, timestamp_ms: int
+        ) -> LandmarkFrame:
+            return build_landmark_frame(
+                frame_id=frame_id,
+                face_count=1,
+                points=SPREAD_POINTS,
+                width=rgb_image.shape[1],
+                height=rgb_image.shape[0],
+            )
+
+        def close(self) -> None:
+            pass
+
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=PlainLandmarker(),
+        clock=StepClock(),
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+    )
+
+    pipeline.process(_rgb(height=40, width=40))
+
+    assert pipeline.zoom_policy is None
+    assert pipeline.snapshot().status is TrackingStatus.SINGLE_FACE
+
+
+def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_load() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    recorder = RecorderSpy()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        recorder=recorder,
+        clock=StepClock(step=0.2),  # every clock() call is 200ms apart
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+    )
+
+    for _ in range(10):
+        pipeline.process(_rgb())
+
+    # 200ms mean load only clears the slowest documented choice's utilization target.
+    assert pipeline.analysis_interval_ms == 333
+    assert recorder.resize_calls != []
+    assert recorder.reset_calls == 0  # cadence retuning must not fragment history
+
+
+def test_auto_tune_enabled_speeds_the_analysis_interval_back_up_under_light_load() -> None:
+    landmarker = FakeLandmarker(face_count=0)
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=StepClock(step=0.2),
+        analysis_interval_ms=333,
+        auto_tune_enabled=True,
+    )
+    for _ in range(10):  # let it settle at the slow interval first
+        pipeline.process(_rgb())
+    assert pipeline.analysis_interval_ms == 333
+
+    # A lighter but still admission-gate-realistic clock (50ms/tick, under the
+    # 125-choice's ~87.5ms utilization threshold either way).
+    fast_pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(face_count=0),
+        clock=StepClock(step=0.05),
+        analysis_interval_ms=333,
+        auto_tune_enabled=True,
+    )
+    for _ in range(100):
+        fast_pipeline.process(_rgb())
+
+    assert fast_pipeline.analysis_interval_ms == 125
+
+
+def test_auto_tune_disabled_never_changes_the_analysis_interval() -> None:
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(face_count=0),
+        clock=StepClock(step=0.2),
+        analysis_interval_ms=125,
+    )
+
+    for _ in range(10):
+        pipeline.process(_rgb())
+
+    assert pipeline.analysis_interval_ms == 125
+
+
+def test_auto_tune_enabled_retunes_the_demographic_worker_interval_with_cadence() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(face_count=0),
+        demographic_worker=worker,
+        clock=StepClock(step=0.2),
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+    )
+
+    for _ in range(10):
+        pipeline.process(_rgb())
+
+    assert worker.interval_updates != []
+    assert worker.interval_updates[-1] == recommend_age_interval_ms(333)
+
+
+def test_auto_tune_enabled_retunes_sensitivity_from_a_noisy_part() -> None:
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
+    recorder = RecorderSpy()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True)
+
+    for i in range(80):
+        analyzer.distances["contour"] = 0.05 if i % 2 == 0 else 0.35
+        pipeline.process(_rgb(height=40, width=40))
+
+    assert analyzer.update_calls != []
+    assert analyzer.config.sensitivity["contour"] != pytest.approx(30.0)
+    assert analyzer.config.sensitivity["eyes"] == pytest.approx(30.0)
+    assert analyzer.config.weights == dict.fromkeys(PART_NAMES, 0.25)  # part_weights frozen
+    assert analyzer.config.sensitivity_frozen is False
+    assert recorder.reset_calls >= 1  # a real scoring change starts a new segment
+
+
+def test_auto_tune_enabled_does_not_retune_sensitivity_when_distances_are_stable() -> None:
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
+    recorder = RecorderSpy()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True)
+
+    for _ in range(80):
+        pipeline.process(_rgb(height=40, width=40))
+
+    assert analyzer.update_calls == []
+    assert recorder.reset_calls == 0
+
+
+def test_auto_tune_disabled_never_retunes_sensitivity() -> None:
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
+    pipeline = _pipeline(landmarker, analyzer=analyzer)
+
+    for i in range(80):
+        analyzer.distances["contour"] = 0.05 if i % 2 == 0 else 0.35
+        pipeline.process(_rgb(height=40, width=40))
+
+    assert analyzer.update_calls == []

@@ -58,6 +58,17 @@ def apply_brightness_gain(rgb_image: NDArray[np.uint8], gain: float) -> NDArray[
     return np.rint(scaled).astype(np.uint8)
 
 
+def mean_luminance(rgb_image: NDArray[np.uint8]) -> float:
+    """The plain per-channel pixel average, used as an auto-exposure signal.
+
+    Deliberately not a perceptual (e.g. ITU-R BT.601) weighting: this feeds
+    §14.3c's auto brightness heuristic, which only needs a stable scalar to
+    drive gain toward a target, not a colorimetric measurement.
+    """
+    image = _validate_rgb(rgb_image)
+    return float(np.mean(image, dtype=np.float64))
+
+
 def composite_background(
     rgb_image: NDArray[np.uint8],
     foreground_mask: NDArray[np.floating],

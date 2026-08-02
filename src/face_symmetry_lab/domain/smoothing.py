@@ -42,6 +42,11 @@ class TimeBasedEma:
     def value(self) -> float | None:
         return self._value
 
+    @property
+    def tau_seconds(self) -> float:
+        """The currently active time constant (§14.3d auto-tuning readback)."""
+        return self._tau
+
     def reset(self) -> None:
         self._value = None
         self._at = None

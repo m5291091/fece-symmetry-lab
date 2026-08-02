@@ -39,6 +39,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Tracking-zoom geometry | `src/face_symmetry_lab/domain/tracking_zoom.py` |
 | MediaPipe segmentation adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_segmenter.py` |
 | Brightness / background compositing | `src/face_symmetry_lab/domain/frame_adjustments.py` |
+| 明るさ・追跡ズームの自動調整heuristic | `src/face_symmetry_lab/domain/auto_tuning.py` |
 | Segmentation model card | `docs/model-cards/mediapipe-selfie-segmenter.md` |
 | Age / gender adapter | `src/face_symmetry_lab/adapters/inference/opencv_demographic_estimator.py` |
 | Age / gender model card | `docs/model-cards/openvino-age-gender-retail-0013.md` |
@@ -71,6 +72,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, AC-ZOOM-01 |
 | Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, AC-ZOOM-01 |
 | Brightness / background compositing | `domain/frame_adjustments.py` | `tests/domain/test_frame_adjustments.py` | FR-027, FR-028, AC-DISPLAY-01 |
+| 明るさ・追跡ズームの自動調整heuristic | `domain/auto_tuning.py` | `tests/domain/test_auto_tuning.py` | FR-026, FR-028, FR-029, AC-AUTOTUNE-01 |
 | MediaPipe segmentation adapter | `adapters/inference/mediapipe_segmenter.py` | `tests/adapters/test_mediapipe_segmenter.py` | FR-027, AC-DISPLAY-01 |
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
@@ -95,7 +97,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `d62126793aa21682a6956b2e9b1424d85c9fa114eb255c98a5d6c314fd7ec3a0`_
+_File-list SHA-256: `48e8a4a3396b80e4245b9e2837bca79749da1d5552ec34bfad215b3e8e56d6a9`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -141,7 +143,7 @@ face-symmetry-lab/
     - `application/`
       - … (9 files)
     - `domain/`
-      - … (14 files)
+      - … (15 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
@@ -167,6 +169,7 @@ face-symmetry-lab/
     - `test_still_image.py`
   - `domain/`
     - `__init__.py`
+    - `test_auto_tuning.py`
     - `test_demographics.py`
     - `test_export.py`
     - `test_frame_adjustments.py`

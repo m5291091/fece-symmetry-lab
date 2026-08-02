@@ -299,7 +299,9 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     )
 
 
-def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
+def _render_advanced_settings(
+    pipeline: RealtimeLandmarkPipeline, *, auto_tune_enabled: bool
+) -> None:
     """§15.2 Advanced 設定. Hidden by default; basic users never see this."""
     with st.expander("Advanced 設定（検出信頼度・角度閾値など）", expanded=False):
         st.caption(
@@ -331,24 +333,65 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             )
 
         st.markdown("##### 追跡ズーム")
+        if auto_tune_enabled:
+            st.caption(
+                "「Advanced設定をAIが自動調整」がONのため、以下は表示専用です。"
+                "AIが顔の写り具合から自動算出した値を使用します。"
+            )
         zoom_columns = st.columns(5)
         margin_ratio = zoom_columns[0].slider(
-            "margin_ratio", 0.0, 3.0, 0.6, step=0.05, key="adv_zoom_margin"
+            "margin_ratio",
+            0.0,
+            3.0,
+            0.6,
+            step=0.05,
+            key="adv_zoom_margin",
+            disabled=auto_tune_enabled,
         )
         min_window_size = zoom_columns[1].slider(
-            "min_window", 0.01, 1.0, 0.18, step=0.01, key="adv_zoom_min_window"
+            "min_window",
+            0.01,
+            1.0,
+            0.18,
+            step=0.01,
+            key="adv_zoom_min_window",
+            disabled=auto_tune_enabled,
         )
         recheck_interval_ms = zoom_columns[2].slider(
-            "recheck_ms", 0, 5000, 1000, step=100, key="adv_zoom_recheck"
+            "recheck_ms",
+            0,
+            5000,
+            1000,
+            step=100,
+            key="adv_zoom_recheck",
+            disabled=auto_tune_enabled,
         )
         target_px = zoom_columns[3].slider(
-            "target_px", 32, 1920, 480, step=16, key="adv_zoom_target_px"
+            "target_px",
+            32,
+            1920,
+            480,
+            step=16,
+            key="adv_zoom_target_px",
+            disabled=auto_tune_enabled,
         )
         max_scale = zoom_columns[4].slider(
-            "max_scale", 1.0, 8.0, 4.0, step=0.5, key="adv_zoom_max_scale"
+            "max_scale",
+            1.0,
+            8.0,
+            4.0,
+            step=0.5,
+            key="adv_zoom_max_scale",
+            disabled=auto_tune_enabled,
         )
 
         st.markdown("##### 履歴・独立cadence")
+        if auto_tune_enabled:
+            st.caption(
+                f"「Advanced設定をAIが自動調整」がONのため、以下は表示専用です"
+                f"（現在: analysis_interval_ms={pipeline.analysis_interval_ms}）。"
+                "処理負荷からAIが自動算出します。左右差の計算条件は変わりません。"
+            )
         cadence_columns = st.columns(3)
         history_capacity = cadence_columns[0].slider(
             "history_capacity",
@@ -357,6 +400,7 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             DEFAULT_HISTORY_CAPACITY,
             step=100,
             key="adv_history_capacity",
+            disabled=auto_tune_enabled,
             help="セッション履歴の保持件数の上限です。左右差の計算には影響しません。",
         )
         age_interval_ms = cadence_columns[1].slider(
@@ -366,6 +410,7 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             DEFAULT_DEMOGRAPHIC_INTERVAL_MS,
             step=100,
             key="adv_age_interval_ms",
+            disabled=auto_tune_enabled,
             help="年齢・性別推定の実行間隔です。左右差分析の頻度とは独立しています。",
         )
         analysis_interval_ms = cadence_columns[2].radio(
@@ -374,6 +419,7 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             index=0,
             key="adv_analysis_interval_ms",
             horizontal=True,
+            disabled=auto_tune_enabled,
             help="映像フレームレートとは独立した、左右差分析の実行間隔です。",
         )
 
@@ -383,11 +429,19 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             "凍結済みの既定係数からの変更です。変更すると、これまでの記録や"
             "既定係数での結果と数値を比較できなくなります。"
         )
+        if auto_tune_enabled:
+            st.caption(
+                "「Advanced設定をAIが自動調整」がONのため、感度(sensitivity)は"
+                "検出のばらつき量からAIが自動算出します。部位の重み(part_weights)は"
+                "重要度の判断を伴うためAIの対象外とし、凍結既定値のまま固定されます。"
+            )
         confirm_tunables = st.checkbox(
             "既定値からの変更を理解し、比較不能になることに同意します",
             value=False,
             key="adv_confirm_tunables",
+            disabled=auto_tune_enabled,
         )
+        tunables_disabled = auto_tune_enabled or not confirm_tunables
         weight_columns = st.columns(4)
         weight_values = {
             name: weight_columns[index].slider(
@@ -397,7 +451,7 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
                 _DEFAULT_PART_WEIGHT,
                 step=0.01,
                 key=f"adv_weight_{name}",
-                disabled=not confirm_tunables,
+                disabled=tunables_disabled,
             )
             for index, name in enumerate(PART_NAMES)
         }
@@ -410,11 +464,11 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
                 _DEFAULT_SENSITIVITY[name],
                 step=0.1,
                 key=f"adv_sensitivity_{name}",
-                disabled=not confirm_tunables,
+                disabled=tunables_disabled,
             )
             for index, name in enumerate(PART_NAMES)
         }
-        if not confirm_tunables:
+        if not auto_tune_enabled and not confirm_tunables:
             st.caption("上の同意チェックが付くまで、重み・感度の変更は適用されません。")
 
         if st.button("設定を適用", key="apply_advanced_settings"):
@@ -430,15 +484,22 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
                     face_area_max=face_area_max,
                     valid_frames_to_ok=valid_frames_to_ok,
                 )
-                zoom_policy = TrackingZoomPolicy(
-                    margin_ratio=margin_ratio,
-                    min_window_size=min_window_size,
-                    recheck_interval_ms=recheck_interval_ms,
-                    target_px=target_px,
-                    max_scale=max_scale,
-                )
+                if auto_tune_enabled:
+                    # The sliders above are display-only while AI auto-tuning
+                    # owns the zoom policy; keep whatever it last picked
+                    # instead of overwriting it with the disabled sliders.
+                    zoom_policy = pipeline.zoom_policy or TrackingZoomPolicy()
+                else:
+                    zoom_policy = TrackingZoomPolicy(
+                        margin_ratio=margin_ratio,
+                        min_window_size=min_window_size,
+                        recheck_interval_ms=recheck_interval_ms,
+                        target_px=target_px,
+                        max_scale=max_scale,
+                    )
                 metric_config = None
-                if confirm_tunables and pipeline.metric_config is not None:
+                manual_tunables = not auto_tune_enabled and confirm_tunables
+                if manual_tunables and pipeline.metric_config is not None:
                     metric_config = with_tunables(
                         pipeline.metric_config,
                         weights=weight_values,
@@ -447,14 +508,17 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             except (QualityConfigError, TrackingZoomError, MetricConfigError) as error:
                 st.error(str(error))
             else:
+                # While auto-tune owns cadence/sensitivity, leave them as None
+                # ("keep current value") instead of overwriting AI-picked
+                # values with the disabled sliders' stale defaults.
                 pipeline.apply_advanced_settings(
                     thresholds=thresholds,
                     tau_seconds=ema_tau_seconds,
                     zoom_policy=zoom_policy,
                     metric_config=metric_config,
-                    history_capacity=history_capacity,
-                    age_interval_ms=age_interval_ms,
-                    analysis_interval_ms=analysis_interval_ms,
+                    history_capacity=None if auto_tune_enabled else history_capacity,
+                    age_interval_ms=None if auto_tune_enabled else age_interval_ms,
+                    analysis_interval_ms=None if auto_tune_enabled else analysis_interval_ms,
                 )
                 st.success("設定を適用し、新しい比較区間を開始しました。")
 
@@ -506,7 +570,32 @@ def render_camera_section() -> None:
     pipeline.set_midline_enabled(show_midline)
     pipeline.set_demographic_enabled(show_demographics)
 
-    brightness_column, background_column = st.columns(2)
+    auto_tune_column, brightness_column, background_column = st.columns(3)
+    with auto_tune_column:
+        auto_tune_enabled = st.toggle(
+            "Advanced設定をAIが自動調整",
+            value=False,
+            key="camera_auto_tune_enabled",
+            help=(
+                "新しいAIモデルは追加せず、映像・処理負荷・検出ノイズの統計から、"
+                "明るさgain・追跡ズーム・history_capacity・age_interval_ms・"
+                "analysis_interval_ms・sensitivityを自動算出します。ONの間、"
+                "対応する手動スライダーは表示専用になります。"
+                "品質ゲート閾値（姿勢角・顔サイズなど）とpart_weights（部位の重み）は"
+                "対象外で、常に手動のままです。左右差・年齢性別・肌表面参考値の"
+                "計算式自体は変えません。"
+            ),
+        )
+        pipeline.set_auto_tune_enabled(auto_tune_enabled)
+        if auto_tune_enabled:
+            zoom_policy = pipeline.zoom_policy
+            zoom_caption = (
+                f" · ズーム目標 {zoom_policy.target_px}px" if zoom_policy is not None else ""
+            )
+            st.caption(
+                f"AI調整中: 明るさ ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
+                f"analysis_interval_ms={pipeline.analysis_interval_ms}"
+            )
     with brightness_column:
         brightness_gain = st.slider(
             "映像の明るさ",
@@ -515,9 +604,11 @@ def render_camera_section() -> None:
             value=1.0,
             step=0.05,
             key="camera_brightness_gain",
+            disabled=auto_tune_enabled,
             help="暗い環境での検出・見やすさを補助する表示調整です。左右差の計算方法自体は変えません。",
         )
-        pipeline.set_brightness_gain(brightness_gain)
+        if not auto_tune_enabled:
+            pipeline.set_brightness_gain(brightness_gain)
     with background_column:
         segmenter_path = configured_segmenter_path()
         if segmenter_status(segmenter_path) is InstallStatus.READY:
@@ -533,7 +624,7 @@ def render_camera_section() -> None:
         else:
             st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
 
-    _render_advanced_settings(pipeline)
+    _render_advanced_settings(pipeline, auto_tune_enabled=auto_tune_enabled)
 
     preview_column, result_column = st.columns([7, 5], gap="large")
     with preview_column:

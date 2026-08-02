@@ -220,6 +220,14 @@ def test_the_outcome_reports_pose_and_face_area() -> None:
     assert 0.0 < outcome.face_area_ratio < 1.0
 
 
+def test_tau_seconds_reads_back_the_currently_active_value() -> None:
+    analyzer = _analyzer()
+
+    analyzer.update(thresholds=QualityThresholds(), tau_seconds=0.9)
+
+    assert analyzer.tau_seconds == pytest.approx(0.9)
+
+
 def test_update_swaps_thresholds_and_resets_the_gate_and_smoothing() -> None:
     """§15.2: applying new Advanced settings must not keep stale EMA history."""
     analyzer = _analyzer()

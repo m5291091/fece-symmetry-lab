@@ -9,6 +9,7 @@ from face_symmetry_lab.domain.frame_adjustments import (
     FrameAdjustmentError,
     apply_brightness_gain,
     composite_background,
+    mean_luminance,
 )
 
 
@@ -131,3 +132,21 @@ def test_composite_rejects_a_non_rgb_image() -> None:
         composite_background(
             np.zeros((4, 4), dtype=np.uint8), np.ones((4, 4), dtype=np.float32), (0, 0, 0)
         )
+
+
+def test_mean_luminance_of_a_flat_image_is_its_pixel_value() -> None:
+    assert mean_luminance(_image(value=64)) == pytest.approx(64.0)
+
+
+def test_mean_luminance_averages_uneven_channels() -> None:
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    image[..., 0] = 30  # R
+    image[..., 1] = 60  # G
+    image[..., 2] = 90  # B
+
+    assert mean_luminance(image) == pytest.approx(60.0)
+
+
+def test_mean_luminance_rejects_a_non_rgb_image() -> None:
+    with pytest.raises(FrameAdjustmentError):
+        mean_luminance(np.zeros((4, 4), dtype=np.uint8))

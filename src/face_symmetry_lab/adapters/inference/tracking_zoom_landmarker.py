@@ -85,6 +85,11 @@ class TrackingZoomLandmarker:
     def close(self) -> None:
         self._inner.close()
 
+    @property
+    def policy(self) -> TrackingZoomPolicy:
+        """The currently active zoom policy (§15.2, §14.3c auto-tuning readback)."""
+        return self._policy
+
     def update_policy(self, policy: TrackingZoomPolicy) -> None:
         """Swap the zoom policy (§15.2 Advanced settings).
 

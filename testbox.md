@@ -14,20 +14,21 @@
 | `tests/domain/test_geometry.py` | 正規化の不変性と TLS 中心線・鏡映 | FR-011, AC-SCORE-02, AC-SCORE-03 |
 | `tests/domain/test_symmetry.py` | RMS→スコア変換、単調性、欠測、重み | FR-011, AC-SCORE-01〜03 |
 | `tests/domain/test_pose.py` | 極分解と intrinsic Y-X-Z の符号 contract | FR-009, §8.2.1, OD-04 |
-| `tests/domain/test_smoothing.py` | 時間ベース EMA と reset 条件 | FR-012, §8.7, §8.8 |
+| `tests/domain/test_smoothing.py` | 時間ベース EMA と reset 条件、`tau_seconds`読み出し | FR-012, §8.7, §8.8 |
 | `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何 | FR-026, §14.3a, AC-ZOOM-01 |
-| `tests/domain/test_frame_adjustments.py` | 明るさgainの乗算・clip、背景合成のmask blend・検証 | FR-027, FR-028, §14.3b, AC-DISPLAY-01 |
+| `tests/domain/test_frame_adjustments.py` | 明るさgainの乗算・clip、背景合成のmask blend・検証、mean_luminance | FR-027, FR-028, §14.3b, AC-DISPLAY-01 |
+| `tests/domain/test_auto_tuning.py` | 明るさ・追跡ズーム・cadence（analysis/age_interval_ms・history_capacity）・感度の自動調整heuristicの範囲clamp・不正入力拒否 | FR-026, FR-028, FR-029, FR-030, §14.3c, §14.3d, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | `tests/application/test_image_input.py` | JPEG / PNG uploadの形式・容量・画素・animation・推論用顔crop検証 | FR-006, FR-007, FR-022, AC-INPUT-01 |
-| `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot、年齢・性別workerの提出/収集/失敗分離、Advanced設定（metric_config・history_capacity・age_interval_ms・analysis_interval_ms）の伝播 | FR-008, FR-013, FR-022〜024, NFR-006, NFR-007, NFR-017, §15.2 |
+| `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot、年齢・性別workerの提出/収集/失敗分離、Advanced設定（metric_config・history_capacity・age_interval_ms・analysis_interval_ms）の伝播、自動調整ON/OFFの明るさ・zoom policy反映と失敗許容、cadence自動調整（segment/EMA非破壊）と感度自動調整（閾値超過時のみsegment/EMA reset、part_weights凍結）| FR-008, FR-013, FR-022〜024, FR-029, FR-030, NFR-006, NFR-007, NFR-017, §15.2, §14.3c, §14.3d, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | `tests/application/test_demographic_worker.py` | 年齢・性別推定workerのcapacity-1・独自cadence・segment世代破棄・失敗分離・`set_interval_ms`によるcadence編集 | FR-022〜024, §14.3, §15.2 |
 | `tests/application/test_still_image.py` | 静止画ランドマークの stateless 検出、中心線切替、プレビュー生成 | FR-006, FR-008, FR-013 |
 | `tests/application/test_quality.py` | 品質ゲート、理由コード、OK/HOLD ヒステリシス | FR-010, §6.2〜6.4, AC-STATE-01 |
-| `tests/application/test_analyzer.py` | ゲート→幾何／補正後の肌表面参考値→平滑化の統合と失敗分離、`update`によるmetric config差し替え | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01, §15.2 |
-| `tests/application/test_session.py` | session履歴上限、segment、設定fingerprint、肌表面・年齢・性別の合流、`reset`によるmetric_config差し替え・history_capacity resize | FR-016, FR-017, FR-020, FR-023, FR-025, NFR-012, §15.2 |
+| `tests/application/test_analyzer.py` | ゲート→幾何／補正後の肌表面参考値→平滑化の統合と失敗分離、`update`によるmetric config差し替え、`tau_seconds`読み出し | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01, §15.2 |
+| `tests/application/test_session.py` | session履歴上限、segment、設定fingerprint、肌表面・年齢・性別の合流、`reset`によるmetric_config差し替え・history_capacity resize、`resize_history_capacity`による非破壊resize（segment/revision不変） | FR-016, FR-017, FR-020, FR-023, FR-025, NFR-012, §15.2, §14.3d |
 | `tests/runtime/test_frame_scheduler.py` | capacity 1 の latest-frame-wins gate | NFR-006, NFR-007 |
 | `tests/adapters/test_opencv_demographic_estimator.py` | 派生ONNX用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
 | `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
-| `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
+| `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播、`policy`読み出し（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
 | `tests/adapters/test_mediapipe_segmenter.py` | Image Segmenter contract（VIDEO）、frame order、shape/finite検証、close | FR-027, §14.3b, AC-DISPLAY-01 |
 | `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、取得再試行、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
 | `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件 | FR-011, FR-020, AC-SCORE-04 |
