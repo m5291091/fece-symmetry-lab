@@ -214,7 +214,14 @@ class RealtimeLandmarkPipeline:
         self,
         rgb_image: NDArray[np.uint8],
     ) -> tuple[NDArray[np.uint8], AnalysisOutcome | None]:
-        """Return only the analysis belonging to this exact preview frame."""
+        """Return only the analysis belonging to this exact preview frame.
+
+        §14.3b: brightness gain is applied only to the frame handed to the
+        landmark detector (inside `_analyse`), never to what's returned here
+        — the user always sees the raw camera feed, and the AI's detection
+        aid stays invisible. This also means `apply_brightness_gain` only
+        runs at the analysis cadence (~8Hz) instead of on every video frame.
+        """
         if self._closed:
             return rgb_image, None
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
@@ -223,17 +230,16 @@ class RealtimeLandmarkPipeline:
             self._record_error()
             return rgb_image, None
 
-        adjusted = self._apply_brightness(rgb_image)
-
         if not self._admit_latest_sample():
-            return self._draw_cached(adjusted), None
+            return self._draw_cached(rgb_image), None
 
         with self.scheduler.slot() as acquired:
             if not acquired:
-                return self._draw_cached(adjusted), None
-            return self._analyse(adjusted)
+                return self._draw_cached(rgb_image), None
+            return self._analyse(rgb_image)
 
     def _apply_brightness(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        """Brighten a copy for the landmark detector only (§14.3b)."""
         with self._overlay_lock:
             gain = self._brightness_gain
         if gain == 1.0:
@@ -275,8 +281,11 @@ class RealtimeLandmarkPipeline:
         landmark_ms = 0.0
         segmentation_ms = 0.0
         try:
+            # §14.3b: brightened only for the detector; `rgb_image` (raw)
+            # stays what gets painted on and returned for display below.
+            detection_input = self._apply_brightness(rgb_image)
             frame = self._landmarker.detect_video(
-                rgb_image,
+                detection_input,
                 frame_id=self._frame_id,
                 timestamp_ms=timestamp_ms,
             )
@@ -473,9 +482,10 @@ class RealtimeLandmarkPipeline:
         """Throttle brightness/zoom recomputation to `_DISPLAY_RETUNE_INTERVAL_SECONDS`.
 
         `apply_brightness_gain` caches its lookup table per exact gain value
-        (§14.3b); holding gain stable between retunes keeps that cache hot on
-        the full-video-rate `_apply_brightness` path instead of computing a
-        fresh recommendation, and rebuilding the LUT, on every analysed frame.
+        (§14.3b); `_apply_brightness` only runs at the analysis cadence now
+        (never on every video frame — §14.3b no longer touches display
+        output), but holding gain stable between retunes still keeps that
+        cache hot rather than rebuilding the LUT on every analysed frame.
         """
         with self._sample_lock:
             due = at >= self._next_display_retune_at
@@ -491,19 +501,22 @@ class RealtimeLandmarkPipeline:
     ) -> None:
         """§14.3c: nudge `brightness_gain` toward mid-gray on a slow cadence.
 
-        Any failure to measure or compute a recommendation is swallowed and
-        the current gain is kept (AC-AUTOTUNE-01) — this is a display/
+        `rgb_image` is the raw (pre-correction) frame — §14.3b no longer
+        brightens display output, so the measurement is a direct reading of
+        ambient luminance rather than an already-corrected one, and the
+        recommendation is an absolute target gain (no `current_gain` input
+        needed). Any failure to measure or compute a recommendation is
+        swallowed and the current gain is kept (AC-AUTOTUNE-01) — this is a
         detection convenience, not part of the analysis pipeline that
         NFR-017's stream-continuity guarantee already covers.
         """
         with self._overlay_lock:
             enabled = self._auto_tune_enabled
-            current_gain = self._brightness_gain
         if not enabled or not retune_due:
             return
         try:
             measured = mean_luminance(rgb_image)
-            new_gain = recommend_brightness_gain(measured, current_gain=current_gain)
+            new_gain = recommend_brightness_gain(measured)
         except Exception:
             return
         with self._overlay_lock:

@@ -677,14 +677,16 @@ def _flat_rgb(value: int, height: int = 20, width: int = 20) -> NDArray[np.uint8
     return np.full((height, width, 3), value, dtype=np.uint8)
 
 
-def test_brightness_gain_reaches_both_the_detector_and_the_display() -> None:
+def test_brightness_gain_reaches_the_detector_but_never_the_display() -> None:
+    """§14.3b: the user always sees the raw camera feed; only the frame
+    handed to the landmark detector is brightened."""
     landmarker = FakeLandmarker(face_count=0)  # no overlay drawn, so display == input
     pipeline = _pipeline(landmarker, brightness_gain=2.0)
 
     painted = pipeline.process(_flat_rgb(100))
 
     assert np.all(landmarker.received_images[0] == 200)
-    assert np.all(painted == 200)
+    assert np.all(painted == 100)
 
 
 def test_a_default_gain_of_one_leaves_frames_unchanged() -> None:
@@ -694,6 +696,7 @@ def test_a_default_gain_of_one_leaves_frames_unchanged() -> None:
     painted = pipeline.process(_flat_rgb(100))
 
     assert np.all(painted == 100)
+    assert np.all(landmarker.received_images[0] == 100)
 
 
 def test_an_out_of_range_brightness_gain_is_refused_at_construction() -> None:
@@ -701,14 +704,15 @@ def test_an_out_of_range_brightness_gain_is_refused_at_construction() -> None:
         _pipeline(FakeLandmarker(), brightness_gain=10.0)
 
 
-def test_set_brightness_gain_updates_the_running_pipeline() -> None:
+def test_set_brightness_gain_updates_the_detector_input_only() -> None:
     landmarker = FakeLandmarker(face_count=0)
     pipeline = _pipeline(landmarker)
 
     pipeline.set_brightness_gain(0.5)
     painted = pipeline.process(_flat_rgb(100))
 
-    assert np.all(painted == 50)
+    assert np.all(landmarker.received_images[0] == 50)
+    assert np.all(painted == 100)
 
 
 def test_background_mode_off_never_calls_the_segmenter() -> None:

@@ -17,9 +17,9 @@
 | `tests/domain/test_smoothing.py` | 時間ベース EMA と reset 条件、`tau_seconds`読み出し | FR-012, §8.7, §8.8 |
 | `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何 | FR-026, §14.3a, AC-ZOOM-01 |
 | `tests/domain/test_frame_adjustments.py` | 明るさgainの乗算・clip、背景合成のmask blend・検証、mean_luminance | FR-027, FR-028, §14.3b, AC-DISPLAY-01 |
-| `tests/domain/test_auto_tuning.py` | 明るさ・追跡ズーム・cadence（analysis/age_interval_ms・history_capacity）・感度の自動調整heuristicの範囲clamp・不正入力拒否 | FR-026, FR-028, FR-029, FR-030, §14.3c, §14.3d, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
+| `tests/domain/test_auto_tuning.py` | 明るさ（生映像の輝度から絶対gainを直接算出）・追跡ズーム・cadence（analysis/age_interval_ms・history_capacity）・感度の自動調整heuristicの範囲clamp・不正入力拒否 | FR-026, FR-028, FR-029, FR-030, §14.3b, §14.3c, §14.3d, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | `tests/application/test_image_input.py` | JPEG / PNG uploadの形式・容量・画素・animation・推論用顔crop検証 | FR-006, FR-007, FR-022, AC-INPUT-01 |
-| `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot、年齢・性別workerの提出/収集/失敗分離、Advanced設定（metric_config・history_capacity・age_interval_ms・analysis_interval_ms）の伝播、自動調整ON/OFFの明るさ・zoom policy反映と失敗許容、cadence自動調整（segment/EMA非破壊）と感度自動調整（閾値超過時のみsegment/EMA reset、part_weights凍結）、幾何/mask cache TTLのauto-tune連動、処理段階別タイミング（landmark_ms/segmentation_ms/scoring_ms）の内訳計測 | FR-008, FR-013, FR-022〜024, FR-029, FR-030, NFR-002, NFR-006, NFR-007, NFR-017, §15.2, §14.3c, §14.3d, §14.3f, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
+| `tests/application/test_realtime.py` | latest-frame cadence、frame drop、単調時刻、失敗分離、immutable snapshot、年齢・性別workerの提出/収集/失敗分離、Advanced設定（metric_config・history_capacity・age_interval_ms・analysis_interval_ms）の伝播、自動調整ON/OFFの明るさ・zoom policy反映と失敗許容、cadence自動調整（segment/EMA非破壊）と感度自動調整（閾値超過時のみsegment/EMA reset、part_weights凍結）、幾何/mask cache TTLのauto-tune連動、処理段階別タイミング（landmark_ms/segmentation_ms/scoring_ms）の内訳計測、明るさ補正がlandmark検出入力にのみ届きdisplay出力には届かないことの検証 | FR-008, FR-013, FR-022〜024, FR-028, FR-029, FR-030, NFR-002, NFR-006, NFR-007, NFR-017, §14.3b, §15.2, §14.3c, §14.3d, §14.3f, AC-AUTOTUNE-01, AC-AUTOTUNE-02, AC-DISPLAY-01 |
 | `tests/application/test_demographic_worker.py` | 年齢・性別推定workerのcapacity-1・独自cadence・segment世代破棄・失敗分離・`set_interval_ms`によるcadence編集 | FR-022〜024, §14.3, §15.2 |
 | `tests/application/test_still_image.py` | 静止画ランドマークの stateless 検出、中心線切替、プレビュー生成 | FR-006, FR-008, FR-013 |
 | `tests/application/test_quality.py` | 品質ゲート、理由コード、OK/HOLD ヒステリシス | FR-010, §6.2〜6.4, AC-STATE-01 |
@@ -41,7 +41,7 @@
 | `tests/model/test_real_segmenter.py` | 実asset由来のImage Segmenter load・出力shape/有限値smoke、domain合成との結合（未配置時は skip） | FR-002, FR-027, §14.3b, §21.1 |
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
 | `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、sample 間の直近数値表示、frame callback、表示位置プリセット・参考年齢性別のoverlayへの伝播 | FR-005, FR-013, FR-032, FR-033, NFR-006, NFR-009, AC-PRIV-02 |
-| `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示、位置誘導メッセージ（全ReasonCode網羅）、四隅の表示位置プリセット、参考年齢・参考性別の追記描画 | FR-013, FR-014, FR-031, FR-032, FR-033, AC-A11Y-01, AC-GUIDE-01, AC-LAYOUT-01 |
+| `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示（OVERALLは平滑値のみ、部位別直後に参考年齢・参考性別を強調表示）、位置誘導メッセージ関数の全ReasonCode網羅（映像へは描画しないことの回帰guard含む）、四隅の表示位置プリセット | FR-013, FR-014, FR-031, FR-032, FR-033, AC-A11Y-01, AC-GUIDE-01, AC-LAYOUT-01 |
 | `tests/ui/test_model_setup.py` | manifest由来のlandmark・派生ONNX解決、元IR provenance・個別hash検証、状態表示 | FR-001, FR-002, FR-020, FR-024 |
 | `tests/test_cli.py` | localhost 限定の Streamlit 起動 command | NFR-009, AC-SEC-01 |
 | `tests/repository/test_generate_structure.py` | 安全で bounded な `STRUCTURE.md` 生成 | 開発効率・リポジトリ規約 |

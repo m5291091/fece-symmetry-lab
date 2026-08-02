@@ -64,22 +64,17 @@ def _demographic() -> DemographicEstimate:
 
 
 def test_overlay_lines_put_scores_and_pose_in_the_camera_view() -> None:
+    """The compact video panel shows the smoothed value only — the raw
+    pre-smoothing value stays in the side panel/export (§8.7, requirement.md
+    "UIは平滑値を主表示し、生値は詳細・エクスポートで確認可能にする")."""
     lines = metric_overlay_lines(_outcome())
 
     assert lines[0] == "LIVE SAMPLE | OK"
-    assert "OVERALL 81.2 · RAW 81.5" in lines
+    assert "OVERALL 81.2" in lines
+    assert all("RAW" not in line for line in lines)
     assert any("C 80.0" in line for line in lines)
     assert any("YAW +1.2" in line for line in lines)
     assert any("SKIN REF 74.0" in line for line in lines)
-
-
-def test_overlay_exposes_the_raw_pre_smoothing_score_next_to_the_smoothed_one() -> None:
-    """The live camera panel must show the EMA gap, not only the smoothed value."""
-    outcome = _outcome()
-    lines = metric_overlay_lines(outcome)
-
-    assert outcome.overall_smooth != outcome.overall_raw
-    assert any(line.startswith("OVERALL") and "RAW" in line for line in lines)
 
 
 def test_overlay_labels_reused_numbers_as_the_last_sample() -> None:
@@ -186,35 +181,20 @@ def test_the_default_position_is_top_left_for_backward_compatibility() -> None:
     assert np.array_equal(default_position, explicit_top_left)
 
 
-def test_a_guidance_banner_is_drawn_when_the_gate_is_not_satisfied() -> None:
-    source = np.full((720, 1280, 3), 20, dtype=np.uint8)
-
-    painted = draw_camera_metrics(source, _outcome(ok=False, reason=ReasonCode.TOO_FAR))
-
-    assert painted.max() > 150  # a bright banner exists somewhere in the frame
-
-
-def test_no_guidance_banner_is_drawn_when_the_gate_is_satisfied() -> None:
-    """The panel itself is still bright (it always is), so compare against a
-    no-analysis baseline instead of asserting the whole frame is dark."""
+def test_draw_camera_metrics_never_draws_a_guidance_banner() -> None:
+    """Regression guard: Japanese guidance text drawn onto the frame with
+    PIL's default bitmap font rendered as unreadable tofu boxes (no CJK
+    glyphs). Guidance now lives only in the "ライブ解析" side panel, which
+    renders Japanese natively through the browser."""
     source = np.full((720, 1280, 3), 20, dtype=np.uint8)
 
     ok_frame = draw_camera_metrics(source, _outcome(ok=True), position=OverlayPosition.BOTTOM_RIGHT)
-    no_outcome_frame = draw_camera_metrics(source, None, position=OverlayPosition.BOTTOM_RIGHT)
-
-    # With the score panel confined to the bottom-right, the top band should
-    # look the same whether or not the frame is "OK" — no banner sneaks in.
-    assert np.array_equal(ok_frame[:80, :], no_outcome_frame[:80, :])
-
-
-def test_guidance_banner_avoids_a_bottom_anchored_score_panel() -> None:
-    """The banner sits opposite the score panel so the two never overlap."""
-    source = np.full((720, 1280, 3), 20, dtype=np.uint8)
-
-    painted = draw_camera_metrics(
+    hold_frame = draw_camera_metrics(
         source,
         _outcome(ok=False, reason=ReasonCode.TOO_FAR),
         position=OverlayPosition.BOTTOM_RIGHT,
     )
 
-    assert painted[:80, :].max() > 150  # banner near the top, opposite the bottom panel
+    # With the score panel confined to the bottom-right, the top band must be
+    # identical regardless of gate status -- nothing else gets drawn there.
+    assert np.array_equal(ok_frame[:80, :], hold_frame[:80, :])

@@ -21,39 +21,35 @@ from face_symmetry_lab.domain.frame_adjustments import MAX_BRIGHTNESS_GAIN, MIN_
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 
-def test_a_frame_already_at_target_luminance_keeps_the_current_gain() -> None:
-    gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE, current_gain=1.0)
+def test_a_frame_already_at_target_luminance_recommends_a_gain_of_one() -> None:
+    """§14.3b: measured is always the raw frame now (never post-correction),
+    so the recommendation is an absolute target gain, not a relative update."""
+    gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE)
 
     assert gain == pytest.approx(1.0)
 
 
 def test_a_dark_frame_recommends_a_higher_gain() -> None:
-    gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE / 2.0, current_gain=1.0)
+    gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE / 2.0)
 
     assert gain == pytest.approx(2.0)
 
 
 def test_a_bright_frame_recommends_a_lower_gain() -> None:
-    gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE * 2.0, current_gain=1.0)
+    gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE * 2.0)
 
     assert gain == pytest.approx(0.5)
 
 
 def test_the_recommended_gain_never_exceeds_frs_028_bounds() -> None:
-    assert recommend_brightness_gain(1.0, current_gain=1.0) == pytest.approx(MAX_BRIGHTNESS_GAIN)
-    assert recommend_brightness_gain(2000.0, current_gain=1.0) == pytest.approx(MIN_BRIGHTNESS_GAIN)
+    assert recommend_brightness_gain(1.0) == pytest.approx(MAX_BRIGHTNESS_GAIN)
+    assert recommend_brightness_gain(2000.0) == pytest.approx(MIN_BRIGHTNESS_GAIN)
 
 
 @pytest.mark.parametrize("measured", [0.0, -1.0, float("nan"), float("inf")])
 def test_an_invalid_measured_luminance_is_refused(measured: float) -> None:
     with pytest.raises(AutoTuningError):
-        recommend_brightness_gain(measured, current_gain=1.0)
-
-
-@pytest.mark.parametrize("current_gain", [0.0, -1.0, float("nan")])
-def test_an_invalid_current_gain_is_refused(current_gain: float) -> None:
-    with pytest.raises(AutoTuningError):
-        recommend_brightness_gain(TARGET_MEAN_LUMINANCE, current_gain=current_gain)
+        recommend_brightness_gain(measured)
 
 
 def test_a_face_at_the_reference_area_ratio_returns_the_default_policy() -> None:

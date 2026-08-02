@@ -37,19 +37,18 @@ class AutoTuningError(ValueError):
     """Invalid frame statistic supplied to an auto-tuning heuristic."""
 
 
-def recommend_brightness_gain(measured_mean_luminance: float, *, current_gain: float) -> float:
-    """A new absolute brightness gain that nudges the frame toward mid-gray.
+def recommend_brightness_gain(measured_mean_luminance: float) -> float:
+    """An absolute brightness gain that would put the frame at mid-gray.
 
-    ``measured_mean_luminance`` is the mean pixel value of the frame the
-    caller measured *after* ``current_gain`` was already applied to it, so
-    the recommendation is ``current_gain * target / measured``, clamped to
-    FR-028's ``[MIN_BRIGHTNESS_GAIN, MAX_BRIGHTNESS_GAIN]``.
+    ``measured_mean_luminance`` is always a reading of the raw, uncorrected
+    frame (§14.3b: gain is applied only to the landmark detector's input,
+    never to what's displayed, so there is no "already-corrected" frame to
+    measure), so the recommendation is a direct ``target / measured``,
+    clamped to FR-028's ``[MIN_BRIGHTNESS_GAIN, MAX_BRIGHTNESS_GAIN]``.
     """
     if not math.isfinite(measured_mean_luminance) or measured_mean_luminance <= 0:
         raise AutoTuningError("measured_mean_luminance は正の有限値である必要があります。")
-    if not math.isfinite(current_gain) or current_gain <= 0:
-        raise AutoTuningError("current_gain は正の有限値である必要があります。")
-    gain = current_gain * TARGET_MEAN_LUMINANCE / measured_mean_luminance
+    gain = TARGET_MEAN_LUMINANCE / measured_mean_luminance
     return min(max(gain, MIN_BRIGHTNESS_GAIN), MAX_BRIGHTNESS_GAIN)
 
 

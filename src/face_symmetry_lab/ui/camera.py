@@ -356,8 +356,9 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
     st.caption(
         "Advanced設定はAIが自動調整します（明るさ・追跡ズーム・"
         "history_capacity・age_interval_ms・analysis_interval_ms・sensitivity）。"
-        f"現在値: 明るさ ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
+        f"現在値: 検出用の明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
         f"analysis_interval_ms={pipeline.analysis_interval_ms}。"
+        "明るさ補正はlandmark検出にだけ使い、映像表示は常にカメラの生映像です。"
         "品質ゲート閾値と部位の重み(part_weights)は固定既定値です。"
     )
 
@@ -368,7 +369,7 @@ def render_camera_section() -> None:
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
         "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
-        "状態・左右差・姿勢の数値はカメラ映像の左上にも大きく表示します。"
+        "状態・左右差・参考年齢性別の数値はカメラ映像内にも大きく表示します（表示位置は選択可能）。"
     )
 
     model_path = resolve_ready_landmarker()

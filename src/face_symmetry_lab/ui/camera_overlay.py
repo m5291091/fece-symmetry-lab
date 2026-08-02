@@ -70,21 +70,29 @@ def _number(value: float | None, *, signed: bool = False) -> str:
     return f"{value:+.1f}" if signed else f"{value:.1f}"
 
 
+#: Index of the reference age/gender line within `metric_overlay_lines`'
+#: output when a `demographic` estimate is supplied — `draw_camera_metrics`
+#: uses this to give that one line its own, more prominent font tier.
+DEMOGRAPHIC_LINE_INDEX: Final[int] = 3
+
+
 def metric_overlay_lines(
     outcome: AnalysisOutcome,
     *,
     current_sample: bool = True,
     demographic: DemographicEstimate | None = None,
 ) -> tuple[str, ...]:
-    """Format the same score and pose data exposed by the text panel (§5.4).
+    """Format the score/reference data shown in the movable video panel (§5.4).
 
-    `demographic` appends one reference age/gender line (FR-033) so the same
-    information a browser's native video fullscreen would otherwise hide
-    stays visible — it is never used to judge or identify anyone (§10.7).
+    Ordered so the items the panel is meant to make clear at a glance —
+    overall score, part breakdown, then reference age/gender (FR-033, right
+    after the scores so it isn't buried under pose/skin detail) — come
+    before the lower-priority skin/pose readout, which stays available for
+    completeness but is drawn smaller (`draw_camera_metrics`). `demographic`
+    is never used to judge or identify anyone (§10.7).
     """
     symmetry = outcome.symmetry
     overall = outcome.overall_smooth
-    raw = outcome.overall_raw
     if overall is None and symmetry is not None:
         overall = symmetry.overall
     parts = {
@@ -93,14 +101,9 @@ def metric_overlay_lines(
     }
     pose = outcome.pose
     skin_quality = outcome.skin_quality
-    #: Surfaces the EMA gap (§8.7) live so a jump between a photo and the
-    #: camera view can be told apart from smoothing lag instead of guessed at.
-    overall_line = f"OVERALL {_number(overall)}"
-    if raw is not None:
-        overall_line += f" · RAW {_number(raw)}"
     lines = [
         f"{'LIVE SAMPLE' if current_sample else 'LAST SAMPLE'} | {outcome.state.status.value}",
-        overall_line,
+        f"OVERALL {_number(overall)}",
         " ".join(
             (
                 f"C {_number(parts['contour'])}",
@@ -109,20 +112,25 @@ def metric_overlay_lines(
                 f"M {_number(parts['mouth'])}",
             )
         ),
-        f"SKIN REF {_number(skin_quality.score if skin_quality else None)} | CAPTURE-DEPENDENT",
+    ]
+    if demographic is not None:
+        assert len(lines) == DEMOGRAPHIC_LINE_INDEX
+        lines.append(
+            f"REF AGE {demographic.estimated_age_years:.0f} · "
+            f"REF GENDER {demographic.gender.value.upper()}"
+        )
+    lines.append(
+        f"SKIN REF {_number(skin_quality.score if skin_quality else None)} | CAPTURE-DEPENDENT"
+    )
+    lines.append(
         " ".join(
             (
                 f"YAW {_number(pose.yaw_deg if pose else None, signed=True)}",
                 f"PITCH {_number(pose.pitch_deg if pose else None, signed=True)}",
                 f"ROLL {_number(pose.roll_deg if pose else None, signed=True)}",
             )
-        ),
-    ]
-    if demographic is not None:
-        lines.append(
-            f"REF AGE {demographic.estimated_age_years:.0f} · "
-            f"REF GENDER {demographic.gender.value.upper()}"
         )
+    )
     return tuple(lines)
 
 
@@ -141,54 +149,6 @@ def _panel_origin(
     return x, y
 
 
-def _draw_guidance_banner(
-    image: Image.Image,
-    message: str,
-    *,
-    width: int,
-    height: int,
-    scale: float,
-    panel_position: OverlayPosition,
-) -> Image.Image:
-    """Draw a short instruction banner opposite the score panel (§14.3e).
-
-    Anchored to the top when the panel is at the bottom, and vice versa, so
-    the two never overlap regardless of which corner the panel was moved to.
-    """
-    font = _font(max(16, round(24 * scale)))
-    drawing_probe = ImageDraw.Draw(image)
-    box = drawing_probe.textbbox((0, 0), message, font=font)
-    text_width = box[2] - box[0]
-    text_height = box[3] - box[1]
-    padding_x = max(16, round(24 * scale))
-    padding_y = max(10, round(14 * scale))
-    banner_width = min(width, text_width + padding_x * 2)
-    banner_height = text_height + padding_y * 2
-    origin_x = max(0, (width - banner_width) // 2)
-    at_top = panel_position in (OverlayPosition.BOTTOM_LEFT, OverlayPosition.BOTTOM_RIGHT)
-    margin = max(6, round(6 * scale))
-    origin_y = margin if at_top else height - banner_height - margin
-
-    banner = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    banner_drawing = ImageDraw.Draw(banner)
-    banner_drawing.rounded_rectangle(
-        (origin_x, origin_y, origin_x + banner_width - 1, origin_y + banner_height - 1),
-        radius=max(8, round(14 * scale)),
-        fill=(120, 53, 15, 235),
-        outline=(251, 191, 36, 255),
-        width=max(2, round(3 * scale)),
-    )
-    composited = Image.alpha_composite(image, banner)
-    drawing = ImageDraw.Draw(composited)
-    drawing.text(
-        (origin_x + padding_x, origin_y + padding_y),
-        message,
-        font=font,
-        fill=(255, 251, 235, 255),
-    )
-    return composited
-
-
 def draw_camera_metrics(
     rgb_image: NDArray[np.uint8],
     outcome: AnalysisOutcome | None,
@@ -197,7 +157,12 @@ def draw_camera_metrics(
     demographic: DemographicEstimate | None = None,
     position: OverlayPosition = OverlayPosition.TOP_LEFT,
 ) -> NDArray[np.uint8]:
-    """Draw score/guidance/reference values over a copy of the camera image."""
+    """Draw score/reference values over a copy of the camera image.
+
+    Position guidance (§14.3e, FR-031) is shown only in the "ライブ解析" side
+    panel, never here — PIL's default bitmap font (`_font`) has no Japanese
+    glyphs, so Japanese text drawn onto the frame renders as tofu boxes.
+    """
     painted = rgb_image.copy()
     if outcome is None or painted.ndim != 3 or painted.shape[2] != 3:
         return painted
@@ -209,11 +174,19 @@ def draw_camera_metrics(
     scale = max(0.65, min(1.0, width / 1280, height / 720))
     status_size = max(16, round(22 * scale))
     overall_size = max(30, round(50 * scale))
-    detail_size = max(15, round(21 * scale))
+    #: Between `overall_size` and `detail_size`: reference age/gender (FR-033)
+    #: reads clearly at a glance without competing with the overall score.
+    emphasis_size = max(22, round(34 * scale))
+    detail_size = max(13, round(18 * scale))
     status_font = _font(status_size)
     overall_font = _font(overall_size)
+    emphasis_font = _font(emphasis_size)
     detail_font = _font(detail_size)
-    fonts = [status_font, overall_font] + [detail_font] * (len(lines) - 2)
+    has_demographic_line = demographic is not None
+    fonts = [status_font, overall_font] + [
+        emphasis_font if has_demographic_line and i == DEMOGRAPHIC_LINE_INDEX else detail_font
+        for i in range(2, len(lines))
+    ]
     padding = max(12, round(18 * scale))
     gap_after_status = max(5, round(8 * scale))
     gap_after_overall = max(7, round(11 * scale))
@@ -261,9 +234,4 @@ def draw_camera_metrics(
         if index < len(gaps):
             top += line_height + gaps[index]
 
-    message = guidance_message(outcome.state)
-    if message is not None:
-        image = _draw_guidance_banner(
-            image, message, width=width, height=height, scale=scale, panel_position=position
-        )
     return np.asarray(image.convert("RGB"), dtype=np.uint8).copy()

@@ -304,10 +304,10 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-025 | P1 | 補正後の肌表面参考値 | 顔cropへ端末内のGray-worldホワイトバランスとrobust明度正規化を適用し、頬領域の色調均一性と局所テクスチャを独立した参考値として算出する。補正係数・指標版・未校正状態を記録し、肌色、疾患、健康、美的品質を推定せず、幾何の全体スコアへ混合しない |
 | FR-026 | P1 | 追跡ズーム | リアルタイムのVIDEOモードで、直前フレームの単一顔bboxを追跡し周辺を切り出して拡大した上でlandmark検出へ渡し、結果を元フレーム座標へ写像する。初回検出・顔見失い時は全体フレームへ復帰し、既定間隔ごとに全体フレームを再検査して2顔以上の出現を見逃さない |
 | FR-027 | P1 | 背景の黒/白置換（表示専用） | `selfie_segmenter`による前景confidence maskを使い、表示用frameの背景だけを黒または白へ置換する。既定OFFのON/OFF切替を持ち、左右差・年齢性別・肌表面参考値のいずれの入力にも使わない。合成失敗時は元映像へfallbackし、分析を止めない |
-| FR-028 | P1 | 映像の明るさ調整（表示・検出共通） | 0.25〜3.0倍のgainを映像へ乗算し、landmark検出前とdisplay出力の双方に一貫して適用する。既定gain 1.0（無調整）とし、範囲外の値は拒否する |
+| FR-028 | P1 | 映像の明るさ調整（検出専用、非表示） | 0.25〜3.0倍のgainを、landmark検出directlyへ渡すframeにだけ乗算する。display出力（ユーザーに見える映像）には適用せず、常にカメラの生映像を表示する。既定gain 1.0（無調整）とし、範囲外の値は拒否する。AIによる検出補助が画面へ視覚的に現れないようにするための意図的な分離であり、遅延低減も兼ねる（毎映像フレームではなく解析cadenceの頻度でしか演算しなくなるため） |
 | FR-029 | P1 | 明るさ・追跡ズームの自動調整 | 手動スライダーは持たず、新規MLモデルを追加せず、既存のフレーム統計（フレーム平均輝度、追跡中の顔bbox面積比）から`brightness_gain`と追跡ズームpolicy（`zoom_margin_ratio`・`zoom_target_px`）をFR-028・FR-026それぞれの許容範囲内でheuristicに算出し、一定間隔で常時自動更新する。対称性・年齢性別・肌表面参考値の入力・スコア計算には一切使わない（FR-027・FR-028と同じ表示・検出補助専用の扱い） |
 | FR-030 | P1 | Advanced設定 cadence・感度の自動調整 | FR-029と同じく手動UIを持たず常時、次の2系統を自動更新する。(a) scoringに影響しないcadence設定 — 直近の`processing_ms`から`analysis_interval_ms`（既定候補125/200/333msの中から選択）、それに連動する`age_interval_ms`（500〜10,000ms）、一定時間分の履歴を保つ`history_capacity`（100〜20,000件）を、config_revision・segment・EMAを変えずに継続更新する。(b) scoringに影響する`sensitivity` — 直近フレームの部位別RMS距離のばらつき（検出ノイズの指標）からheuristicに算出し、既存値との差が一定割合を超えた場合のみ、既存のAdvanced設定適用と同じ手順（config_revision・segment更新、EMA・履歴reset）で反映する。`part_weights`は固定既定値のまま変更しない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）も固定既定値のまま、手動UI・AI調整のいずれの対象にもしない |
-| FR-031 | P1 | リアルタイム位置誘導 | 品質ゲートが算出済みの理由コード（`ReasonCode`: `NO_FACE`・`MULTIPLE_FACES`・`OFF_AXIS_YAW`・`OFF_AXIS_PITCH`・`OFF_AXIS_ROLL`・`TOO_CLOSE`・`TOO_FAR`・`LOW_CONFIDENCE`・`UNSTABLE`等）を、新たな判定ロジックを追加せずに日本語の短い指示文へ変換し、カメラ映像内と「ライブ解析」パネルの両方に表示する。理由が複数該当する場合は`AnalysisState.reason`（既存の優先順位で決まる先頭の理由）を1件だけ表示し、同時に矛盾する指示を出さない。品質ゲートを満たしている間は指示文を表示しない |
+| FR-031 | P1 | リアルタイム位置誘導 | 品質ゲートが算出済みの理由コード（`ReasonCode`: `NO_FACE`・`MULTIPLE_FACES`・`OFF_AXIS_YAW`・`OFF_AXIS_PITCH`・`OFF_AXIS_ROLL`・`TOO_CLOSE`・`TOO_FAR`・`LOW_CONFIDENCE`・`UNSTABLE`等）を、新たな判定ロジックを追加せずに日本語の短い指示文へ変換し、「ライブ解析」パネルに表示する。理由が複数該当する場合は`AnalysisState.reason`（既存の優先順位で決まる先頭の理由）を1件だけ表示し、同時に矛盾する指示を出さない。品質ゲートを満たしている間は指示文を表示しない。カメラ映像pixelへの直接描画は行わない（PIL既定bitmapフォントに日本語グリフが無く文字化けするため。§14.3e） |
 | FR-032 | P1 | 表示位置のプリセット選択 | カメラ映像内のスコア表示は四隅（左上・右上・左下・右下）から、「ライブ解析」パネルは動画に対する配置（右・左・下）から、利用者がその場で選べる。選択はスコア計算・分析結果に影響しない表示専用設定であり、既定値はそれぞれ現行の左上・右を維持する |
 | FR-033 | P1 | 全画面表示でも参照値が分かる | ブラウザの動画全画面表示は`<video>`要素だけを拡大しStreamlit側のDOMを含めないため、全体・部位別左右差、姿勢角に加えて参考年齢・参考性別もカメラ映像のpixelへ直接描画し、全画面時にも同じ情報が読み取れるようにする。年齢・性別表示がOFF、または年齢・性別推定が未取得の場合はこの区画を描画しない |
 
@@ -656,8 +656,8 @@ NFR-002の`processing_ms`は、landmark検出・背景セグメンテーショ�
 - **AC-AGE-02**: 元XML/BINの一方なし・hash不一致、派生ONNXなし・hash不一致、不正shape、18〜75外、NaN/Inf、推論例外の各場合に年齢・性別を表示せず、左右差分析は継続する。
 - **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
 - **AC-ZOOM-01**: リアルタイムの追跡ズームは、単一顔のbboxを追跡して検出入力を拡大しつつ、既定`zoom_recheck_interval_ms`ごとに全体フレームを再検査する。再検査で2顔以上を検出した場合は追跡状態を破棄して`MULTI_FACE`を報告し、顔を見失った場合は次フレームで全体フレーム検索へ復帰する。
-- **AC-DISPLAY-01**: 背景の黒/白置換はON/OFF切替可能で既定OFF、失敗時は元映像へfallbackし左右差・年齢性別・肌表面参考値の分析を止めない。明るさgainは検出入力とdisplay出力の両方へ一貫して適用され、範囲外の値は保存前に拒否される。
-- **AC-AUTOTUNE-01**: `brightness_gain`はFR-028の0.25〜3.0倍、追跡ズームpolicyはFR-026の各範囲を超えて算出されない。算出に使う統計取得や計算が失敗しても既存gain/policyを維持し、フレーム処理・対称性分析を止めない（NFR-017と同じ1フレーム失敗許容）。手動での編集UIは持たない。
+- **AC-DISPLAY-01**: 背景の黒/白置換はON/OFF切替可能で既定OFF、失敗時は元映像へfallbackし左右差・年齢性別・肌表面参考値の分析を止めない。明るさgainはlandmark検出入力にだけ適用され、display出力には適用されない（AC-AUTOTUNE-01のraw測定と合わせて一貫）。範囲外の値は保存前に拒否される。
+- **AC-AUTOTUNE-01**: `brightness_gain`はFR-028の0.25〜3.0倍、追跡ズームpolicyはFR-026の各範囲を超えて算出されない。算出は生映像（補正前）の平均輝度から直接行い、検出専用に適用される。算出に使う統計取得や計算が失敗しても既存gain/policyを維持し、フレーム処理・対称性分析を止めない（NFR-017と同じ1フレーム失敗許容）。手動での編集UIは持たない。
 - **AC-AUTOTUNE-02**: cadence設定（`analysis_interval_ms`・`age_interval_ms`・`history_capacity`）の自動更新はscoringに影響しないため、`config_revision`・`segment_id`・EMAを変更しない。`sensitivity`の自動更新は、直近算出値との差が一定割合を超えた場合だけ適用され、適用のたびに既存のAdvanced設定適用（§15.2末尾）と同じく`config_revision`・`segment_id`を更新しEMA・履歴をリセットする。`part_weights`と品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は固定既定値のまま、手動UI・AI調整のいずれの対象にもしない。
 - **AC-GUIDE-01**: `AnalysisState.reason`が非nullの間、対応する日本語指示文をカメラ映像内と「ライブ解析」パネルの双方に表示し、`reason`がnull（品質ゲートを満たす）の間は指示文を表示しない。`ReasonCode`の全メンバーに指示文が定義されている。
 - **AC-LAYOUT-01**: 動画内スコアパネルの四隅選択、および「ライブ解析」パネルの左・右・下選択は、選択を変えてもスコア値・`config_revision`・分析結果を変化させない。全画面表示中（`<video>`要素のみが拡大される状況）でも、全体・部位別左右差、姿勢角、参考年齢、参考性別が映像pixel内の表示から読み取れる。
@@ -828,7 +828,7 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 
 いずれも表示専用または検出補助専用であり、左右差・年齢性別推定・肌表面参考値のスコア計算入力を変えない。
 
-- 明るさ調整は`domain.frame_adjustments.apply_brightness_gain`で実装する純粋関数で、landmark検出directlyへ渡す前のframeとdisplay出力の両方に同じgainを適用する。既定1.0（無調整）。暗い部屋での検出補助を目的とするため、検出入力にも適用する点が背景置換と異なる。
+- 明るさ調整は`domain.frame_adjustments.apply_brightness_gain`で実装する純粋関数で、landmark検出directlyへ渡す前のframeにだけ適用する。display出力には適用せず、ユーザーには常にカメラの生映像を見せる。既定1.0（無調整）。暗い部屋での検出補助が目的であり、その補助自体をユーザーへ視覚的に見せる必要はないため、AC-AUTOTUNE-01の自動算出も含めて完全に非表示（AIによる調整を画面に映さない）。副次的に、解析cadence（既定125〜333ms間隔）でしか演算しなくなるため、映像fps相当（間引きなし）で毎フレーム演算していた場合と比べ表示経路の処理量が減る。
 - 背景置換は`selfie_segmenter`（`adapters.inference.mediapipe_segmenter.MediaPipeSegmenter`）による前景confidence maskを`domain.frame_adjustments.composite_background`で合成し、**display出力にだけ**適用する。landmark検出、品質ゲート、対称性指標、年齢・性別推定、肌表面参考値のいずれの入力にもならない。
 - 背景置換はON/OFF切替可能で既定OFF。モデル未配置・sha256不一致・推論失敗のいずれでも、その旨をUIへ表示しつつ元映像へfallbackし、左右差分析は継続する（NFR-017と同じ「1フレーム失敗でstreamを止めない」方針の適用）。
 - `composite_background`はONの間、`apply_brightness_gain`（§14.3c）と同じく毎映像フレーム（間引きフレームはcache済みmaskで）実行される。maskがpixelごとに異なる値を持つため`apply_brightness_gain`のようなlookup table化はできないが、`(H, W, 1)`のmaskを`(H, W, 3)`へbroadcastしてから1回で演算する実装は、channelごとに2次元演算へ分解した実装よりも有意に遅い（実測で約1.5〜2倍）。そのためchannelごとのfloat32演算に分解し、float64ではなくfloat32を用いる。結果は元のfloat64実装と最大1階調（0〜255段階中±1）の丸め差を許容する（表示専用のため）。
@@ -837,9 +837,10 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 
 `brightness_gain`・追跡ズームpolicyは手動UIを持たず、次のheuristicで常時自動更新する。新規MLモデルは追加しない（不変条件7・10）。既存の`domain.frame_adjustments`・`domain.tracking_zoom`が扱う値域をそのまま再利用する。
 
-- `domain.auto_tuning.recommend_brightness_gain`は、直近フレームのRGB平均輝度（`domain.frame_adjustments.mean_luminance`）と現在のgainから、目標輝度へ近づける新しいgainを算出し、`MIN_BRIGHTNESS_GAIN`〜`MAX_BRIGHTNESS_GAIN`（FR-028と同じ0.25〜3.0）へclampする。適用先はFR-028と同じ、検出入力とdisplay出力の両方。
+- `domain.auto_tuning.recommend_brightness_gain`は、生映像（補正前）frameのRGB平均輝度（`domain.frame_adjustments.mean_luminance`）から目標輝度へ到達するgainを直接算出し、`MIN_BRIGHTNESS_GAIN`〜`MAX_BRIGHTNESS_GAIN`（FR-028と同じ0.25〜3.0）へclampする。適用先はFR-028と同じ、landmark検出入力にだけ。displayには適用しない。
 - `domain.auto_tuning.recommend_zoom_policy`は、直近フレームで確定した単一顔のbbox面積比（`LandmarkFrame.face_area_ratio`）から、顔が小さいほど`zoom_target_px`と`zoom_margin_ratio`を大きくする`TrackingZoomPolicy`を算出し、`TrackingZoomPolicy`が既に強制する範囲（FR-026と同じ）へ収まる。単一顔が確定していないフレームでは前回のpolicyを維持する。
-- どちらも解析cadence（`analysis_interval_ms`）より粗い既定1秒間隔で自動更新し、`apply_advanced_settings`が行うEMA・履歴・segmentのresetは発生させない（明るさ・ズームは表示・検出補助専用であり、スコア計算条件ではないため）。この間隔は`apply_brightness_gain`が同一gain値ごとに保持するlookup tableのcache有効性のために存在する。`brightness_gain`は`_apply_brightness`を通じて解析cadenceとは無関係に映像fps相当（間引きなし）で毎フレーム適用されるため、値が毎フレーム違えばcacheが効かず、暗い室内などgainが1.0から外れ続ける状況で映像表示に目に見える遅延を生む（実測、旧float64実装で720pあたり約8ms/フレーム）。そのため実際の適用は`domain.frame_adjustments`側でgain値ごとにlookup tableをcacheし、AI側の再評価は1秒間隔に抑えてcache有効性を保つ。
+- どちらも解析cadence（`analysis_interval_ms`）より粗い既定1秒間隔で自動更新し、`apply_advanced_settings`が行うEMA・履歴・segmentのresetは発生させない（明るさ・ズームは検出補助専用であり、スコア計算条件ではないため）。明るさgainがdisplayに触れなくなったことで映像fps相当の頻度で演算する必要は無くなったが、検出対象frameへの適用は引き続き解析cadence（既定125〜333ms）ごとに発生するため、`apply_brightness_gain`が同一gain値ごとに保持するlookup tableのcacheを安定させる目的でこの1秒間隔を維持する。
+- gainが1.0から外れて`apply_brightness_gain`のfloat演算が実行されるのは解析cadenceの頻度（最大8Hz程度）だけであり、映像fps相当（間引きなし）の頻度では発生しない。
 - 自動調整中も、統計取得や算出に失敗した1フレームは既存値を維持して継続する（NFR-017）。
 
 #### 14.3d cadence・感度の自動調整（FR-030, AC-AUTOTUNE-02）
@@ -854,7 +855,7 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 
 いずれも表示専用で、対称性・年齢性別・肌表面参考値のスコア計算入力を変えない。
 
-- **位置誘導（FR-031）**: `ui.camera_overlay.guidance_message(state: AnalysisState) -> str | None`が、既存の品質ゲート（`application.quality.QualityGate`）が既に算出済みの`AnalysisState.reason`を、新しい判定ロジックを追加せずに1件の日本語指示文へ変換する。`reason`が`None`（品質ゲートを満たす）なら`None`を返し、呼び出し側は指示文を表示しない。カメラ映像内の描画（`draw_camera_metrics`）と「ライブ解析」パネル（`ui.camera._render_snapshot`）の両方が同じ関数を呼ぶため、文言は常に一致する。
+- **位置誘導（FR-031）**: `ui.camera_overlay.guidance_message(state: AnalysisState) -> str | None`が、既存の品質ゲート（`application.quality.QualityGate`）が既に算出済みの`AnalysisState.reason`を、新しい判定ロジックを追加せずに1件の日本語指示文へ変換する。`reason`が`None`（品質ゲートを満たす）なら`None`を返し、呼び出し側は指示文を表示しない。「ライブ解析」パネル（`ui.camera._render_snapshot`）だけがこれを表示する。カメラ映像pixelへは描画しない（PILの既定bitmapフォント`ImageFont.load_default`に日本語グリフが無く、`draw_camera_metrics`内で描画すると文字化けするため）。
 - **表示位置プリセット（FR-032）**: `ui.camera_overlay.OverlayPosition`（`TOP_LEFT`/`TOP_RIGHT`/`BOTTOM_LEFT`/`BOTTOM_RIGHT`）が動画内スコアパネルの描画原点を決める。「ライブ解析」パネルは`ui.camera`内の選択（右・左・下）に応じて`st.columns`の並び順・比率を切り替えるか、動画の下へ積む。マウスドラッグやカスタムJS componentは導入しない（プリセット選択のみ）。選択は`st.session_state`に保持し、WebRTCコールバック（別スレッド）はそれを直接読まず、コールバック生成時（メインスレッド、毎rerun）に渡された値を閉包として使う（§14.3の「callbackはst.\*に触れない」制約を維持するため）。
 - **全画面時の参照値（FR-033）**: `draw_camera_metrics`は`demographic: DemographicEstimate | None`引数を受け取り、年齢・性別表示がONかつ推定値がある場合だけ、参考年齢・参考性別を対称性スコアと同じ movable panel 内へ追記描画する。ブラウザの動画全画面はStreamlit側のDOMを含まないため、これがpixelへ焼き込まれる唯一の経路である。
 
