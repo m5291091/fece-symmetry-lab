@@ -274,6 +274,15 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
             f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
             f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
         )
+        # §14.3f: a NFR-002 diagnostic breakdown of the total above, so a slow
+        # session can be traced to a stage before considering GPU/deployment
+        # changes. segmentation/scoring only show once that stage has run.
+        breakdown = [f"landmark {snapshot.landmark_ms:.1f} ms"]
+        if snapshot.segmentation_ms > 0.0:
+            breakdown.append(f"背景置換 {snapshot.segmentation_ms:.1f} ms")
+        if snapshot.scoring_ms > 0.0:
+            breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
+        st.caption("内訳: " + " · ".join(breakdown))
         if snapshot.needs_recovery:
             st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
 

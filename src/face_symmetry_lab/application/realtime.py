@@ -106,6 +106,13 @@ class PipelineSnapshot:
     dropped_frames: int = 0
     consecutive_errors: int = 0
     processing_ms: float = 0.0
+    #: §14.3f: a NFR-002 diagnostic breakdown of `processing_ms`, not an
+    #: exhaustive accounting (overlay drawing, auto-tune bookkeeping, and
+    #: recorder writes are not included). 0.0 when that stage did not run
+    #: this frame (e.g. `segmentation_ms` with background replacement off).
+    landmark_ms: float = 0.0
+    segmentation_ms: float = 0.0
+    scoring_ms: float = 0.0
     #: Present only when an analyzer is attached and the frame was scored.
     analysis: AnalysisOutcome | None = None
     #: §14.3, FR-022〜024: produced off-cadence by a `DemographicSampler`.
@@ -265,12 +272,15 @@ class RealtimeLandmarkPipeline:
         )
         self._last_timestamp_ms = timestamp_ms
 
+        landmark_ms = 0.0
+        segmentation_ms = 0.0
         try:
             frame = self._landmarker.detect_video(
                 rgb_image,
                 frame_id=self._frame_id,
                 timestamp_ms=timestamp_ms,
             )
+            landmark_ms = (self._clock() - started) * 1000.0
             display_retune_due = self._display_retune_due(at=started)
             if frame.has_single_face:
                 with self._overlay_lock:
@@ -281,7 +291,16 @@ class RealtimeLandmarkPipeline:
                 self._clear_cached_geometry()
             painted = self._paint_geometry(rgb_image, frame)
             self._maybe_auto_tune_brightness(rgb_image, retune_due=display_retune_due)
-            painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
+            with self._overlay_lock:
+                background_active = (
+                    self._background_mode is not BackgroundMode.OFF and self._segmenter is not None
+                )
+            if background_active:
+                segmentation_started = self._clock()
+                painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
+                segmentation_ms = (self._clock() - segmentation_started) * 1000.0
+            else:
+                painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
             self._submit_demographic_sample(rgb_image, frame)
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
@@ -293,8 +312,10 @@ class RealtimeLandmarkPipeline:
             )
             return rgb_image, None
 
+        scoring_ms = 0.0
         analysis: AnalysisOutcome | None = None
         if self._analyzer is not None:
+            scoring_started = self._clock()
             try:
                 analysis = self._analyzer.analyze(
                     frame,
@@ -304,6 +325,7 @@ class RealtimeLandmarkPipeline:
             except Exception:
                 # Scoring must never take the preview down with it.
                 analysis = None
+            scoring_ms = (self._clock() - scoring_started) * 1000.0
 
         demographic_sample = self._collect_demographic_sample(timestamp_ms)
 
@@ -349,6 +371,9 @@ class RealtimeLandmarkPipeline:
                 dropped_frames=self.scheduler.dropped_frames,
                 consecutive_errors=0,
                 processing_ms=processing_ms,
+                landmark_ms=landmark_ms,
+                segmentation_ms=segmentation_ms,
+                scoring_ms=scoring_ms,
                 analysis=analysis,
                 demographic_estimate=(
                     demographic_sample[0] if demographic_sample is not None else None

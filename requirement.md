@@ -641,6 +641,8 @@ flowchart LR
 | NFR-020 | 後方互換 | `schema_version` の破壊的変更は major、追加互換は minor、修正は patch を上げる |
 | NFR-021 | 年齢・性別推論 | critical path と capacity 1 worker を分離し、R1/R2 で推論 p95 500ms 以下。未準備・失敗時も左右差 UI を操作できる |
 
+NFR-002の`processing_ms`は、landmark検出・背景セグメンテーション（ON時）・対称性scoringの内訳を`PipelineSnapshot.landmark_ms`/`segmentation_ms`/`scoring_ms`として保持し、「ライブ解析」パネルに常時表示する（§14.3f）。GPUや配置環境の変更を検討する前に、どの段階が支配的かを利用者自身が判断できるようにするための診断用計測であり、新たな性能目標を課すものではない。
+
 ## 12. 受け入れ基準
 
 ### 12.1 機能・UX
@@ -855,6 +857,16 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 - **位置誘導（FR-031）**: `ui.camera_overlay.guidance_message(state: AnalysisState) -> str | None`が、既存の品質ゲート（`application.quality.QualityGate`）が既に算出済みの`AnalysisState.reason`を、新しい判定ロジックを追加せずに1件の日本語指示文へ変換する。`reason`が`None`（品質ゲートを満たす）なら`None`を返し、呼び出し側は指示文を表示しない。カメラ映像内の描画（`draw_camera_metrics`）と「ライブ解析」パネル（`ui.camera._render_snapshot`）の両方が同じ関数を呼ぶため、文言は常に一致する。
 - **表示位置プリセット（FR-032）**: `ui.camera_overlay.OverlayPosition`（`TOP_LEFT`/`TOP_RIGHT`/`BOTTOM_LEFT`/`BOTTOM_RIGHT`）が動画内スコアパネルの描画原点を決める。「ライブ解析」パネルは`ui.camera`内の選択（右・左・下）に応じて`st.columns`の並び順・比率を切り替えるか、動画の下へ積む。マウスドラッグやカスタムJS componentは導入しない（プリセット選択のみ）。選択は`st.session_state`に保持し、WebRTCコールバック（別スレッド）はそれを直接読まず、コールバック生成時（メインスレッド、毎rerun）に渡された値を閉包として使う（§14.3の「callbackはst.\*に触れない」制約を維持するため）。
 - **全画面時の参照値（FR-033）**: `draw_camera_metrics`は`demographic: DemographicEstimate | None`引数を受け取り、年齢・性別表示がONかつ推定値がある場合だけ、参考年齢・参考性別を対称性スコアと同じ movable panel 内へ追記描画する。ブラウザの動画全画面はStreamlit側のDOMを含まないため、これがpixelへ焼き込まれる唯一の経路である。
+
+#### 14.3f 処理段階別タイミングの計測（NFR-002 診断用）
+
+`processing_ms`は`_analyse`全体（landmark検出、背景セグメンテーション、対称性scoring、overlay描画、auto-tune記帳を含む）の合計であり、単独では遅延の主要因を特定できない。`RealtimeLandmarkPipeline`は次の3つを`PipelineSnapshot`へ個別に保持する。
+
+- `landmark_ms`: `LandmarkProvider.detect_video`（追跡ズームのcrop/拡大込み）の所要時間。
+- `segmentation_ms`: 背景置換ON時の`_apply_background`（`SegmentationProvider.segment`推論とcompositing）の所要時間。OFF時または未配置時は0。
+- `scoring_ms`: `FrameAnalyzer.analyze`（正規化・対称性・肌表面参考値）の所要時間。分析器未接続時は0。
+
+3値の合計は`processing_ms`の一部を占めるに過ぎず（overlay描画・auto-tune記帳・recorder追記などは含まない）、厳密な内訳ではなく「どの段階が支配的か」を利用者が自分で判断するための目安である。計測自体の失敗はフレーム処理を止めない（NFR-017）。「ライブ解析」パネルは`処理 X ms`の隣にこの3値を表示する。
 
 ### 14.4 エラーと回復
 

@@ -96,9 +96,17 @@ class FakeSegmenter:
 
 
 class StepClock:
-    """Monotonic clock stub advancing by a fixed step per call."""
+    """Monotonic clock stub advancing by a fixed step per call.
 
-    def __init__(self, step: float = 0.05) -> None:
+    Defaults to a small step so tests using the bare default (no explicit
+    `step=`) don't accidentally rack up simulated elapsed time across the
+    several `self._clock()` calls one `_analyse` now makes for its §14.3f
+    per-stage timing breakdown — a real clock only advances by microseconds
+    over the same span, so this default is about keeping fixture-driven
+    elapsed time realistic, not about testing any specific cadence.
+    """
+
+    def __init__(self, step: float = 0.001) -> None:
         self.now = 0.0
         self.step = step
 
@@ -544,6 +552,50 @@ def test_snapshot_is_immutable() -> None:
 
     with pytest.raises((AttributeError, TypeError)):
         snapshot.face_count = 99  # type: ignore[misc]
+
+
+def test_snapshot_reports_landmark_timing() -> None:
+    """§14.3f: a NFR-002 diagnostic breakdown of processing_ms."""
+    pipeline = _pipeline(FakeLandmarker())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().landmark_ms > 0.0
+
+
+def test_snapshot_reports_zero_segmentation_timing_when_background_is_off() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().segmentation_ms == 0.0
+
+
+def test_snapshot_reports_segmentation_timing_when_background_replacement_runs() -> None:
+    segmenter = FakeSegmenter()
+    pipeline = _pipeline(
+        FakeLandmarker(face_count=0), segmenter=segmenter, background_mode=BackgroundMode.BLACK
+    )
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().segmentation_ms > 0.0
+
+
+def test_snapshot_reports_zero_scoring_timing_without_an_analyzer() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().scoring_ms == 0.0
+
+
+def test_snapshot_reports_scoring_timing_with_an_analyzer() -> None:
+    pipeline = _pipeline(FakeLandmarker(), analyzer=StubAnalyzer())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().scoring_ms > 0.0
 
 
 def test_close_releases_the_landmarker_and_stops_processing() -> None:
@@ -1310,11 +1362,13 @@ def test_auto_tune_enabled_speeds_the_analysis_interval_back_up_under_light_load
         pipeline.process(_rgb())
     assert pipeline.analysis_interval_ms == 333
 
-    # A lighter but still admission-gate-realistic clock (50ms/tick, under the
-    # 125-choice's ~87.5ms utilization threshold either way).
+    # A lighter but still admission-gate-realistic clock (10ms/tick; with the
+    # ~4 clock() calls _analyse now makes per frame for the §14.3f timing
+    # breakdown, that's ~40ms measured load, still under the 125-choice's
+    # ~87.5ms utilization threshold).
     fast_pipeline = RealtimeLandmarkPipeline(
         landmarker=FakeLandmarker(face_count=0),
-        clock=StepClock(step=0.05),
+        clock=StepClock(step=0.01),
         analysis_interval_ms=333,
         auto_tune_enabled=True,
     )
@@ -1354,15 +1408,35 @@ def test_auto_tune_enabled_retunes_the_demographic_worker_interval_with_cadence(
     assert worker.interval_updates[-1] == recommend_age_interval_ms(333)
 
 
+#: `ManualClock` (not `StepClock`) controls elapsed time explicitly via
+#: `.advance()` between iterations, independent of how many `self._clock()`
+#: calls one `_analyse` happens to make internally (§14.3f's per-stage
+#: timing breakdown added several) — robust against that count changing
+#: again later, unlike computing elapsed time from a per-call step.
+def _sensitivity_pipeline(
+    landmarker, clock: ManualClock, **kwargs: object
+) -> RealtimeLandmarkPipeline:
+    return RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=clock,
+        analysis_interval_ms=0,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
 def test_auto_tune_enabled_retunes_sensitivity_from_a_noisy_part() -> None:
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
     analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
     recorder = RecorderSpy()
-    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True)
+    clock = ManualClock()
+    pipeline = _sensitivity_pipeline(
+        landmarker, clock, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True
+    )
 
-    for i in range(80):
+    for i in range(15):  # 15 * 1s > the 10s retune interval, well past 8 samples
         analyzer.distances["contour"] = 0.05 if i % 2 == 0 else 0.35
         pipeline.process(_rgb(height=40, width=40))
+        clock.advance(1.0)
 
     assert analyzer.update_calls != []
     assert analyzer.config.sensitivity["contour"] != pytest.approx(30.0)
@@ -1376,10 +1450,14 @@ def test_auto_tune_enabled_does_not_retune_sensitivity_when_distances_are_stable
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
     analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
     recorder = RecorderSpy()
-    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True)
+    clock = ManualClock()
+    pipeline = _sensitivity_pipeline(
+        landmarker, clock, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True
+    )
 
-    for _ in range(80):
+    for _ in range(15):
         pipeline.process(_rgb(height=40, width=40))
+        clock.advance(1.0)
 
     assert analyzer.update_calls == []
     assert recorder.reset_calls == 0
@@ -1388,10 +1466,12 @@ def test_auto_tune_enabled_does_not_retune_sensitivity_when_distances_are_stable
 def test_auto_tune_disabled_never_retunes_sensitivity() -> None:
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
     analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
-    pipeline = _pipeline(landmarker, analyzer=analyzer)
+    clock = ManualClock()
+    pipeline = _sensitivity_pipeline(landmarker, clock, analyzer=analyzer)
 
-    for i in range(80):
+    for i in range(15):
         analyzer.distances["contour"] = 0.05 if i % 2 == 0 else 0.35
         pipeline.process(_rgb(height=40, width=40))
+        clock.advance(1.0)
 
     assert analyzer.update_calls == []
