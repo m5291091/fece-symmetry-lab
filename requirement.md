@@ -271,7 +271,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 - `HOLD` から `OK` への遷移は、内側閾値を満たす 5 連続有効フレームを必要とする。
 - `OK` から `HOLD` への遷移は、外側閾値を超えた 1 分析フレームで反映する。`MULTI_FACE` と処理例外も即時反映する。
 - 内側閾値の初期候補は yaw / pitch / roll = 15° / 15° / 25°、外側閾値は 17° / 17° / 28° とし、実機評価後に固定する。
-- 閾値と復帰フレーム数は Advanced 設定で変更できるが、変更時は EMA と比較 segment をリセットする。
+- 閾値と復帰フレーム数は固定既定値であり、手動編集UI・AI自動調整のいずれの対象にもしない（§15.2）。測定条件の一貫性を保つための、意図的な非公開化である。
 
 ## 7. 機能要件
 
@@ -305,8 +305,8 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-026 | P1 | 追跡ズーム | リアルタイムのVIDEOモードで、直前フレームの単一顔bboxを追跡し周辺を切り出して拡大した上でlandmark検出へ渡し、結果を元フレーム座標へ写像する。初回検出・顔見失い時は全体フレームへ復帰し、既定間隔ごとに全体フレームを再検査して2顔以上の出現を見逃さない |
 | FR-027 | P1 | 背景の黒/白置換（表示専用） | `selfie_segmenter`による前景confidence maskを使い、表示用frameの背景だけを黒または白へ置換する。既定OFFのON/OFF切替を持ち、左右差・年齢性別・肌表面参考値のいずれの入力にも使わない。合成失敗時は元映像へfallbackし、分析を止めない |
 | FR-028 | P1 | 映像の明るさ調整（表示・検出共通） | 0.25〜3.0倍のgainを映像へ乗算し、landmark検出前とdisplay出力の双方に一貫して適用する。既定gain 1.0（無調整）とし、範囲外の値は拒否する |
-| FR-029 | P1 | 明るさ・追跡ズームの自動調整 | 「自動調整」ON時、新規MLモデルを追加せず、既存のフレーム統計（フレーム平均輝度、追跡中の顔bbox面積比）から`brightness_gain`と追跡ズームpolicy（`zoom_margin_ratio`・`zoom_target_px`）をFR-028・FR-026それぞれの許容範囲内でheuristicに算出し、既存の手動スライダーへ流し込む代わりに一定間隔で自動更新する。OFF時は既定通り手動値のみを使う。対称性・年齢性別・肌表面参考値の入力・スコア計算には一切使わない（FR-027・FR-028と同じ表示・検出補助専用の扱い） |
-| FR-030 | P1 | Advanced設定 cadence・感度の自動調整 | 同じ「自動調整」ON時、FR-029に加えて次の2系統を自動更新する。(a) scoringに影響しないcadence設定 — 直近の`processing_ms`から`analysis_interval_ms`（既定候補125/200/333msの中から選択）、それに連動する`age_interval_ms`（500〜10,000ms）、一定時間分の履歴を保つ`history_capacity`（100〜20,000件）を、config_revision・segment・EMAを変えずに継続更新する。(b) scoringに影響する`sensitivity` — 直近フレームの部位別RMS距離のばらつき（検出ノイズの指標）からheuristicに算出し、既存値との差が一定割合を超えた場合のみ、既存のAdvanced設定適用と同じ手順（config_revision・segment更新、EMA・履歴reset）で反映する。`part_weights`は凍結既定値のまま変更しない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は自動調整の対象外とする |
+| FR-029 | P1 | 明るさ・追跡ズームの自動調整 | 手動スライダーは持たず、新規MLモデルを追加せず、既存のフレーム統計（フレーム平均輝度、追跡中の顔bbox面積比）から`brightness_gain`と追跡ズームpolicy（`zoom_margin_ratio`・`zoom_target_px`）をFR-028・FR-026それぞれの許容範囲内でheuristicに算出し、一定間隔で常時自動更新する。対称性・年齢性別・肌表面参考値の入力・スコア計算には一切使わない（FR-027・FR-028と同じ表示・検出補助専用の扱い） |
+| FR-030 | P1 | Advanced設定 cadence・感度の自動調整 | FR-029と同じく手動UIを持たず常時、次の2系統を自動更新する。(a) scoringに影響しないcadence設定 — 直近の`processing_ms`から`analysis_interval_ms`（既定候補125/200/333msの中から選択）、それに連動する`age_interval_ms`（500〜10,000ms）、一定時間分の履歴を保つ`history_capacity`（100〜20,000件）を、config_revision・segment・EMAを変えずに継続更新する。(b) scoringに影響する`sensitivity` — 直近フレームの部位別RMS距離のばらつき（検出ノイズの指標）からheuristicに算出し、既存値との差が一定割合を超えた場合のみ、既存のAdvanced設定適用と同じ手順（config_revision・segment更新、EMA・履歴reset）で反映する。`part_weights`は固定既定値のまま変更しない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）も固定既定値のまま、手動UI・AI調整のいずれの対象にもしない |
 
 ---
 
@@ -652,8 +652,8 @@ flowchart LR
 - **AC-A11Y-01**: キーボードのみで同意、入力選択、分析開始、停止、リセット、エクスポートを完了できる。
 - **AC-ZOOM-01**: リアルタイムの追跡ズームは、単一顔のbboxを追跡して検出入力を拡大しつつ、既定`zoom_recheck_interval_ms`ごとに全体フレームを再検査する。再検査で2顔以上を検出した場合は追跡状態を破棄して`MULTI_FACE`を報告し、顔を見失った場合は次フレームで全体フレーム検索へ復帰する。
 - **AC-DISPLAY-01**: 背景の黒/白置換はON/OFF切替可能で既定OFF、失敗時は元映像へfallbackし左右差・年齢性別・肌表面参考値の分析を止めない。明るさgainは検出入力とdisplay出力の両方へ一貫して適用され、範囲外の値は保存前に拒否される。
-- **AC-AUTOTUNE-01**: 「自動調整」ONの間、`brightness_gain`はFR-028の0.25〜3.0倍、追跡ズームpolicyはFR-026の各範囲を超えて算出されない。算出に使う統計取得や計算が失敗しても既存gain/policyを維持し、フレーム処理・対称性分析を止めない（NFR-017と同じ1フレーム失敗許容）。OFFへ戻すと、その時点の値を保持したまま手動スライダーでの編集を再開できる。
-- **AC-AUTOTUNE-02**: cadence設定（`analysis_interval_ms`・`age_interval_ms`・`history_capacity`）の自動更新はscoringに影響しないため、`config_revision`・`segment_id`・EMAを変更しない。`sensitivity`の自動更新は、直近算出値との差が一定割合を超えた場合だけ適用され、適用のたびに既存のAdvanced設定適用（§15.2末尾）と同じく`config_revision`・`segment_id`を更新しEMA・履歴をリセットする。`part_weights`と品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は自動調整の対象外のまま変化しない。
+- **AC-AUTOTUNE-01**: `brightness_gain`はFR-028の0.25〜3.0倍、追跡ズームpolicyはFR-026の各範囲を超えて算出されない。算出に使う統計取得や計算が失敗しても既存gain/policyを維持し、フレーム処理・対称性分析を止めない（NFR-017と同じ1フレーム失敗許容）。手動での編集UIは持たない。
+- **AC-AUTOTUNE-02**: cadence設定（`analysis_interval_ms`・`age_interval_ms`・`history_capacity`）の自動更新はscoringに影響しないため、`config_revision`・`segment_id`・EMAを変更しない。`sensitivity`の自動更新は、直近算出値との差が一定割合を超えた場合だけ適用され、適用のたびに既存のAdvanced設定適用（§15.2末尾）と同じく`config_revision`・`segment_id`を更新しEMA・履歴をリセットする。`part_weights`と品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は固定既定値のまま、手動UI・AI調整のいずれの対象にもしない。
 
 ### 12.2 プライバシー・セキュリティ
 
@@ -827,16 +827,16 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 
 #### 14.3c 明るさ・追跡ズームの自動調整（FR-029, AC-AUTOTUNE-01）
 
-Advanced設定の`brightness_gain`・追跡ズームpolicyは既定で手動スライダーだが、「自動調整」トグルをONにすると次のheuristicで自動更新する。新規MLモデルは追加しない（不変条件7・10）。既存の`domain.frame_adjustments`・`domain.tracking_zoom`が扱う値域をそのまま再利用する。
+`brightness_gain`・追跡ズームpolicyは手動UIを持たず、次のheuristicで常時自動更新する。新規MLモデルは追加しない（不変条件7・10）。既存の`domain.frame_adjustments`・`domain.tracking_zoom`が扱う値域をそのまま再利用する。
 
 - `domain.auto_tuning.recommend_brightness_gain`は、直近フレームのRGB平均輝度（`domain.frame_adjustments.mean_luminance`）と現在のgainから、目標輝度へ近づける新しいgainを算出し、`MIN_BRIGHTNESS_GAIN`〜`MAX_BRIGHTNESS_GAIN`（FR-028と同じ0.25〜3.0）へclampする。適用先はFR-028と同じ、検出入力とdisplay出力の両方。
 - `domain.auto_tuning.recommend_zoom_policy`は、直近フレームで確定した単一顔のbbox面積比（`LandmarkFrame.face_area_ratio`）から、顔が小さいほど`zoom_target_px`と`zoom_margin_ratio`を大きくする`TrackingZoomPolicy`を算出し、`TrackingZoomPolicy`が既に強制する範囲（FR-026と同じ）へ収まる。単一顔が確定していないフレームでは前回のpolicyを維持する。
-- どちらも`RealtimeLandmarkPipeline`が解析cadence（`analysis_interval_ms`）と同じ頻度で自動更新し、`apply_advanced_settings`が行うEMA・履歴・segmentのresetは発生させない（明るさ・ズームは表示・検出補助専用であり、スコア計算条件ではないため）。
-- 自動調整中も、統計取得や算出に失敗した1フレームは既存値を維持して継続する（NFR-017）。手動スライダーはOFF時のみ値を反映し、ON中はUIが直近の自動算出値を表示専用で示す。
+- どちらも解析cadence（`analysis_interval_ms`）より粗い既定1秒間隔で自動更新し、`apply_advanced_settings`が行うEMA・履歴・segmentのresetは発生させない（明るさ・ズームは表示・検出補助専用であり、スコア計算条件ではないため）。この間隔は`apply_brightness_gain`が同一gain値ごとに保持するlookup tableのcache有効性のために存在する。`brightness_gain`は`_apply_brightness`を通じて解析cadenceとは無関係に映像fps相当（間引きなし）で毎フレーム適用されるため、値が毎フレーム違えばcacheが効かず、暗い室内などgainが1.0から外れ続ける状況で映像表示に目に見える遅延を生む（実測、旧float64実装で720pあたり約8ms/フレーム）。そのため実際の適用は`domain.frame_adjustments`側でgain値ごとにlookup tableをcacheし、AI側の再評価は1秒間隔に抑えてcache有効性を保つ。
+- 自動調整中も、統計取得や算出に失敗した1フレームは既存値を維持して継続する（NFR-017）。
 
 #### 14.3d cadence・感度の自動調整（FR-030, AC-AUTOTUNE-02）
 
-「自動調整」ONは14.3cに加えて次の2系統も継続更新する。品質ゲート閾値と`part_weights`はどちらの系統にも含めない（前者は測定条件そのものを緩めてしまうため、後者は最適化すべき正解が無く「AIが部位の重要度を判断した」という誤った印象を与えるため）。
+14.3cに加えて次の2系統も常時自動更新する。品質ゲート閾値と`part_weights`はどちらの系統にも含めず、固定値のまま手動UIもAI調整も持たない（前者は測定条件そのものを緩めてしまうため、後者は最適化すべき正解が無く「AIが部位の重要度を判断した」という誤った印象を与えるため）。
 
 - **cadence（scoringに影響しない）**: 直近`processing_ms`の移動平均から`domain.auto_tuning.recommend_analysis_interval_ms`が既定候補（125/200/333ms）の中から選び、`RealtimeLandmarkPipeline._set_analysis_interval_ms`で即時反映する。同じ値から`recommend_age_interval_ms`・`recommend_history_capacity`を導出し、`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`（履歴を消さずに上限だけ変える、`reset`とは別の非破壊API）へ渡す。数秒間隔で再評価し、config_revision・segment・EMAには触れない。
 - **感度（scoringに影響する）**: 直近フレームの部位別RMS距離（`SymmetryResult.distances`、sensitivity適用前の生値）の平均・標準偏差から`domain.auto_tuning.recommend_sensitivity`が部位ごとに新しい`sensitivity`を算出する。既存値との相対差が閾値を超える部位がある場合だけ、`domain.metrics.with_tunables`で`part_weights`は変えずに`sensitivity`だけを差し替えた`MetricConfig`を作り、既存の`RealtimeLandmarkPipeline.apply_advanced_settings`を（現在の`thresholds`・`tau_seconds`・zoom policyをそのまま渡して）呼ぶ。§15.2既存規約どおりconfig_revision・segmentが進み、EMA・履歴がresetされる。差が閾値以下ならresetは発生しない。
@@ -865,32 +865,32 @@ Advanced設定の`brightness_gain`・追跡ズームpolicyは既定で手動ス�
 
 ### 15.2 Advanced 設定
 
-| 設定 | 初期候補 | 検証 | UI |
-|---|---:|---|---|
-| `yaw_inner_deg` / `yaw_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` | Advanced設定（既定非表示） |
-| `pitch_inner_deg` / `pitch_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` | Advanced設定 |
-| `roll_inner_deg` / `roll_outer_deg` | 25 / 28 | `0 < inner < outer ≤ 45` | Advanced設定 |
-| `valid_frames_to_ok` | 5 | 1〜30 | Advanced設定 |
-| `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` | Advanced設定 |
-| `ema_tau_seconds` | 0.4 | 0.05〜5.0 | Advanced設定 |
-| `history_capacity` | 3,000 | 100〜20,000 | Advanced設定（`auto_tune_enabled`ON時はFR-030のcadence自動調整が上書きし、スライダーは表示専用） |
-| `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 | Advanced設定（同上） |
-| `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない | Advanced設定（同上） |
-| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 | Advanced設定内の専用区画（既定非活性、frozen bundle、「比較不能」確認チェック必須）。`auto_tune_enabled`ONでも凍結既定値のまま自動調整の対象外 |
-| `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 | Advanced設定内の専用区画（同上）。`auto_tune_enabled`ON時はFR-030の自動調整が代わりに算出・適用し、確認チェックとスライダーは表示専用になる |
-| `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026） | Advanced設定 |
-| `zoom_min_window` | 0.18 | 0 超〜1.0（同上） | Advanced設定 |
-| `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） | Advanced設定 |
-| `zoom_target_px` | 480 | 正の整数（同上） | Advanced設定 |
-| `zoom_max_scale` | 4.0 | 1.0 以上（同上） | Advanced設定 |
-| `brightness_gain` | 1.0 | 0.25〜3.0（FR-028） | 基本UI（常時表示のスライダー、`auto_tune_enabled`ON時は表示専用） |
-| `background_mode` | OFF | OFF / BLACK / WHITE（FR-027） | 基本UI（常時表示のラジオボタン、モデル未配置時は無効） |
-| `auto_tune_enabled` | OFF | ON / OFF（FR-029, FR-030） | 基本UI（常時表示のトグル）。ONで`brightness_gain`・追跡ズームpolicy・`history_capacity`・`age_interval_ms`・`analysis_interval_ms`・`sensitivity`をAIがheuristicに自動算出し、対応する手動スライダー・確認チェックを無効化する。品質ゲート閾値と`part_weights`は対象外で常に手動のまま |
+Advanced設定に手動編集UIは存在しない。品質ゲート閾値と`part_weights`は固定既定値（コード定数）とし、それ以外はFR-029・FR-030のAIが常時自動算出する。いずれもUIの`st.slider`等では公開せず、`ui/camera.py`は現在値を読み取り専用で表示するだけである。
 
-- scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。`ui/camera.py`の`_render_advanced_settings`は「設定を適用」ボタン経由で`RealtimeLandmarkPipeline.apply_advanced_settings`を呼び、`FrameAnalyzer.update`（`metric_config`を含む）・`TrackingZoomLandmarker.update_policy`・`SessionRecorder.reset(thresholds=..., tau_seconds=..., metric_config=..., history_capacity=..., analysis_interval_ms=...)`・`DemographicWorker.set_interval_ms`・pipeline自身の`analysis_interval_ms`をまとめて実行する。
-- 基本ユーザーには検出信頼度、角度閾値、係数、model path を常時表示しない（`st.expander`で既定非表示）。`brightness_gain`/`background_mode`は幾何・スコア計算に影響しない表示専用設定のため、Advanced設定の外（常時表示）に置く。
-- 設定モデルは immutable。UI 入力から新しい instance を生成し、成功後に atomic swap する。`part_weights`/`sensitivity`の編集は`domain.metrics.with_tunables`で凍結bundleから新しい`MetricConfig`を導出し、結果は常に`sensitivity_frozen=False`として記録する。
-- `part_weights`・`sensitivity`の編集は既定で非活性（disabled）のスライダーとして表示し、「既定値からの変更を理解し、比較不能になることに同意します」チェックを付けた場合だけ、その適用操作で値が反映される。チェックなしで「設定を適用」を押した場合、これら2項目は変更前の値のまま維持される。
+| 設定 | 既定 / 初期候補 | 検証・値域 | 決定方法 |
+|---|---:|---|---|
+| `yaw_inner_deg` / `yaw_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` | 固定既定値（コード定数、UI非公開） |
+| `pitch_inner_deg` / `pitch_outer_deg` | 15 / 17 | `0 < inner < outer ≤ 45` | 固定既定値（同上） |
+| `roll_inner_deg` / `roll_outer_deg` | 25 / 28 | `0 < inner < outer ≤ 45` | 固定既定値（同上） |
+| `valid_frames_to_ok` | 5 | 1〜30 | 固定既定値（同上） |
+| `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` | 固定既定値（同上） |
+| `ema_tau_seconds` | 0.4 | 0.05〜5.0 | 固定既定値（同上） |
+| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 | 固定既定値（frozen bundle、コード定数、UI非公開）。FR-030でAI調整の対象外と明記 |
+| `history_capacity` | 3,000 | 100〜20,000 | AIが常時自動算出（FR-030, §14.3d）。UIは読み取り専用表示のみ |
+| `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 | AIが常時自動算出（同上） |
+| `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない | AIが常時自動算出（同上） |
+| `sensitivity` | 指標 bundle 値 | 各正数 | AIが常時自動算出（FR-030, §14.3d）。変化が閾値を超えた場合のみ適用し`config_revision`・`segment_id`を更新、EMA・履歴をreset |
+| `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026） | AIが常時自動算出（FR-029, §14.3c）。UIは読み取り専用表示のみ |
+| `zoom_min_window` | 0.18 | 0 超〜1.0（同上） | 固定既定値（AIはmargin_ratio/target_pxのみ算出。同上） |
+| `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） | 固定既定値（同上） |
+| `zoom_target_px` | 480 | 正の整数（同上） | AIが常時自動算出（同上） |
+| `zoom_max_scale` | 4.0 | 1.0 以上（同上） | 固定既定値（同上） |
+| `brightness_gain` | 1.0 | 0.25〜3.0（FR-028） | AIが常時自動算出（FR-029, §14.3c）。UIは読み取り専用表示のみ |
+| `background_mode` | OFF | OFF / BLACK / WHITE（FR-027） | 基本UI（常時表示のラジオボタン、モデル未配置時は無効）。表示専用の二値選択でAI調整の対象外 |
+
+- `sensitivity`の変更のみ`config_revision`と`segment_id`を更新し、EMAをresetする（scoringに影響するため）。`RealtimeLandmarkPipeline`が自身の`_maybe_auto_tune_sensitivity`から`apply_advanced_settings`を（現在の`thresholds`・`tau_seconds`・zoom policyをそのまま渡して）呼び、`FrameAnalyzer.update`・`SessionRecorder.reset`・`TrackingZoomLandmarker.update_policy`をまとめて実行する。cadence（`history_capacity`・`age_interval_ms`・`analysis_interval_ms`）・`brightness_gain`・追跡ズームpolicyの自動更新はこの経路を使わず、`config_revision`・`segment_id`・EMAを変更しない非破壊な更新（`_set_analysis_interval_ms`・`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`・`TrackingZoomLandmarker.update_policy`の直接呼び出し）で行う。
+- 基本ユーザーには検出信頼度、角度閾値、係数、model path を表示しない。`background_mode`のみ、幾何・スコア計算に影響しない表示専用設定として常時表示する。
+- 設定モデルは immutable。`sensitivity`の自動更新は`domain.metrics.with_tunables`で凍結bundleから新しい`MetricConfig`を導出し（`part_weights`は変更しない）、結果は常に`sensitivity_frozen=False`として記録する。
 
 ## 16. リポジトリ構成
 

@@ -1162,6 +1162,52 @@ def test_auto_tune_zoom_no_ops_when_the_landmarker_does_not_support_zoom() -> No
     assert pipeline.snapshot().status is TrackingStatus.SINGLE_FACE
 
 
+def test_brightness_auto_tune_is_throttled_within_the_retune_interval() -> None:
+    """Perf regression guard: recomputing every analysed frame defeated
+    apply_brightness_gain's per-gain LUT cache and caused visible video lag."""
+    landmarker = FakeLandmarker(face_count=0)
+    clock = ManualClock()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=clock,
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+    )
+
+    pipeline.process(_flat_rgb(64))  # first call is always due -> gain becomes 2.0
+    assert pipeline.brightness_gain == pytest.approx(2.0)
+
+    clock.advance(0.1)  # well within the 1s retune interval
+    pipeline.process(_flat_rgb(1))  # would push gain to MAX if retuned now
+    assert pipeline.brightness_gain == pytest.approx(2.0)  # unchanged: throttled
+
+    clock.advance(2.0)  # past the interval
+    pipeline.process(_flat_rgb(1))
+    assert pipeline.brightness_gain == pytest.approx(MAX_BRIGHTNESS_GAIN)
+
+
+def test_zoom_auto_tune_is_throttled_within_the_retune_interval() -> None:
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    clock = ManualClock()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=clock,
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+    )
+
+    pipeline.process(_rgb(height=40, width=40))
+    assert len(landmarker.policy_updates) == 1
+
+    clock.advance(0.1)
+    pipeline.process(_rgb(height=40, width=40))
+    assert len(landmarker.policy_updates) == 1  # unchanged: throttled
+
+    clock.advance(2.0)
+    pipeline.process(_rgb(height=40, width=40))
+    assert len(landmarker.policy_updates) == 2
+
+
 def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_load() -> None:
     landmarker = FakeLandmarker(face_count=0)
     recorder = RecorderSpy()

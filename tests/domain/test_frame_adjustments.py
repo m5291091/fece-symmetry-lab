@@ -150,3 +150,32 @@ def test_mean_luminance_averages_uneven_channels() -> None:
 def test_mean_luminance_rejects_a_non_rgb_image() -> None:
     with pytest.raises(FrameAdjustmentError):
         mean_luminance(np.zeros((4, 4), dtype=np.uint8))
+
+
+@pytest.mark.parametrize("gain", [0.37, 0.99, 1.01, 1.3, 2.71, 2.99])
+def test_gain_matches_the_reference_float64_transform_for_every_input_value(
+    gain: float,
+) -> None:
+    """Whatever the internal implementation (e.g. a cached LUT), the output
+    must match ``round(clip(pixel * gain, 0, 255))`` computed in float64 for
+    every possible uint8 input value — not just a few round numbers."""
+    gradient = np.arange(256, dtype=np.uint8).reshape(1, 256, 1)
+    image = np.repeat(gradient, 3, axis=2)
+
+    result = apply_brightness_gain(image, gain)
+
+    reference = np.rint(np.clip(image.astype(np.float64) * gain, 0.0, 255.0)).astype(np.uint8)
+    assert np.array_equal(result, reference)
+
+
+def test_repeated_calls_with_different_gains_do_not_leak_into_each_other() -> None:
+    """A cached per-gain lookup table must not be reused across gains."""
+    image = _image(value=100)
+
+    darker = apply_brightness_gain(image, 0.5)
+    brighter = apply_brightness_gain(image, 2.0)
+    darker_again = apply_brightness_gain(image, 0.5)
+
+    assert np.all(darker == 50)
+    assert np.all(brighter == 200)
+    assert np.all(darker_again == 50)

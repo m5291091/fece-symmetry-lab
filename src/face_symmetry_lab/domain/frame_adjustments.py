@@ -10,6 +10,7 @@ gate.
 from __future__ import annotations
 
 from enum import StrEnum
+from functools import lru_cache
 from typing import Final
 
 import numpy as np
@@ -44,6 +45,18 @@ def _validate_rgb(rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
     return image
 
 
+@lru_cache(maxsize=32)
+def _brightness_lut(gain: float) -> NDArray[np.uint8]:
+    """The 256-entry ``round(clip(value * gain, 0, 255))`` table for ``gain``.
+
+    Cached because realtime playback calls `apply_brightness_gain` on every
+    video frame (§14.3b) with a `gain` that only changes when Advanced
+    settings or auto-tuning (§14.3c) update it — building this from scratch
+    per frame was the dominant cost of a continuously nonzero gain.
+    """
+    return np.clip(np.rint(np.arange(256, dtype=np.float64) * gain), 0.0, 255.0).astype(np.uint8)
+
+
 def apply_brightness_gain(rgb_image: NDArray[np.uint8], gain: float) -> NDArray[np.uint8]:
     """Multiply pixel values by ``gain`` and clip back into ``[0, 255]``."""
     image = _validate_rgb(rgb_image)
@@ -54,8 +67,7 @@ def apply_brightness_gain(rgb_image: NDArray[np.uint8], gain: float) -> NDArray[
         )
     if gain == 1.0:
         return image
-    scaled = np.clip(image.astype(np.float64) * gain, 0.0, 255.0)
-    return np.rint(scaled).astype(np.uint8)
+    return _brightness_lut(gain)[image]
 
 
 def mean_luminance(rgb_image: NDArray[np.uint8]) -> float:

@@ -65,6 +65,13 @@ ERROR_CIRCUIT_THRESHOLD = 3
 DEFAULT_ANALYSIS_INTERVAL_MS = 125
 DEFAULT_GEOMETRY_TTL_MS = 250
 
+#: §14.3c brightness/zoom auto-tuning (FR-029): recomputed on a slower cadence
+#: than analysis, since `apply_brightness_gain` caches its lookup table per
+#: exact gain value — holding gain stable for longer keeps that cache hot on
+#: the full-video-rate `_apply_brightness` path instead of rebuilding it on
+#: every analysed frame.
+_DISPLAY_RETUNE_INTERVAL_SECONDS = 1.0
+
 #: §14.3d cadence auto-tuning (FR-030): non-scoring, so no segment reset is needed.
 _CADENCE_PROCESSING_WINDOW = 20
 _MIN_CADENCE_SAMPLES = 5
@@ -156,6 +163,7 @@ class RealtimeLandmarkPipeline:
         self._geometry_ttl_seconds = geometry_ttl_ms / 1000.0
         self._started_at = clock()
         self._next_analysis_at = self._started_at
+        self._next_display_retune_at = self._started_at
         self._processing_ms_window: deque[float] = deque(maxlen=_CADENCE_PROCESSING_WINDOW)
         self._next_cadence_retune_at = self._started_at
         self._distance_windows: dict[str, deque[float]] = {
@@ -251,15 +259,16 @@ class RealtimeLandmarkPipeline:
                 frame_id=self._frame_id,
                 timestamp_ms=timestamp_ms,
             )
+            display_retune_due = self._display_retune_due(at=started)
             if frame.has_single_face:
                 with self._overlay_lock:
                     self._cached_geometry = frame
                     self._cached_geometry_at = started
-                self._maybe_auto_tune_zoom(frame)
+                self._maybe_auto_tune_zoom(frame, retune_due=display_retune_due)
             else:
                 self._clear_cached_geometry()
             painted = self._paint_geometry(rgb_image, frame)
-            self._maybe_auto_tune_brightness(rgb_image)
+            self._maybe_auto_tune_brightness(rgb_image, retune_due=display_retune_due)
             painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
             self._submit_demographic_sample(rgb_image, frame)
         except Exception:
@@ -423,8 +432,27 @@ class RealtimeLandmarkPipeline:
             self._cached_mask = None
             self._cached_mask_at = None
 
-    def _maybe_auto_tune_brightness(self, rgb_image: NDArray[np.uint8]) -> None:
-        """§14.3c: nudge `brightness_gain` toward mid-gray once per analysed frame.
+    def _display_retune_due(self, *, at: float) -> bool:
+        """Throttle brightness/zoom recomputation to `_DISPLAY_RETUNE_INTERVAL_SECONDS`.
+
+        `apply_brightness_gain` caches its lookup table per exact gain value
+        (§14.3b); holding gain stable between retunes keeps that cache hot on
+        the full-video-rate `_apply_brightness` path instead of computing a
+        fresh recommendation, and rebuilding the LUT, on every analysed frame.
+        """
+        with self._sample_lock:
+            due = at >= self._next_display_retune_at
+            if due:
+                self._next_display_retune_at = at + _DISPLAY_RETUNE_INTERVAL_SECONDS
+        return due
+
+    def _maybe_auto_tune_brightness(
+        self,
+        rgb_image: NDArray[np.uint8],
+        *,
+        retune_due: bool,
+    ) -> None:
+        """§14.3c: nudge `brightness_gain` toward mid-gray on a slow cadence.
 
         Any failure to measure or compute a recommendation is swallowed and
         the current gain is kept (AC-AUTOTUNE-01) — this is a display/
@@ -434,7 +462,7 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             enabled = self._auto_tune_enabled
             current_gain = self._brightness_gain
-        if not enabled:
+        if not enabled or not retune_due:
             return
         try:
             measured = mean_luminance(rgb_image)
@@ -444,16 +472,17 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             self._brightness_gain = new_gain
 
-    def _maybe_auto_tune_zoom(self, frame: LandmarkFrame) -> None:
+    def _maybe_auto_tune_zoom(self, frame: LandmarkFrame, *, retune_due: bool) -> None:
         """§14.3c: retune the tracking-zoom policy from the tracked face area.
 
-        No-ops when auto-tune is off, the frame lacks a confirmed single-face
-        area, or the landmarker does not support zoom policies at all. Any
-        failure is swallowed, keeping the previous policy (AC-AUTOTUNE-01).
+        No-ops when auto-tune is off, it isn't due yet, the frame lacks a
+        confirmed single-face area, or the landmarker does not support zoom
+        policies at all. Any failure is swallowed, keeping the previous
+        policy (AC-AUTOTUNE-01).
         """
         with self._overlay_lock:
             enabled = self._auto_tune_enabled
-        if not enabled:
+        if not enabled or not retune_due:
             return
         ratio = frame.face_area_ratio
         if ratio is None:
