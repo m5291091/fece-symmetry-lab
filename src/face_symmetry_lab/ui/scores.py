@@ -38,7 +38,7 @@ _REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
     ReasonCode.LOW_QUALITY: "この画像では計算できませんでした。",
 }
 
-_GENDER_LABELS: Final[dict[GenderLabel, str]] = {
+GENDER_LABELS: Final[dict[GenderLabel, str]] = {
     GenderLabel.FEMALE: "女性",
     GenderLabel.MALE: "男性",
 }
@@ -154,7 +154,7 @@ def render_demographic_estimate(
     st.subheader("モデル推定の参考年齢・参考性別")
     age_column, gender_column = st.columns(2)
     age_column.metric("参考年齢", f"{estimate.estimated_age_years:.1f}歳")
-    gender_column.metric("外見由来の参考性別", _GENDER_LABELS[estimate.gender])
+    gender_column.metric("外見由来の参考性別", GENDER_LABELS[estimate.gender])
     st.caption(
         f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
         "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"

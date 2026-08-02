@@ -341,7 +341,7 @@ def render_app() -> None:
         st.caption("LOCAL PROCESSING · NO IMAGE STORAGE · RESEARCH USE")
         st.write(
             "顔のランドマーク、撮影補正後の肌表面参考値、モデル推定の参考年齢・参考性別を端末内で確認します。"
-            "リアルタイム映像には左右差スコアと姿勢角を重ね、"
+            "リアルタイム映像にはランドマークと中心線を重ね、スコアは映像の隣に表示します。"
             "数値履歴は再現性メタデータ付きの CSV / JSON として保存できます。"
         )
         boundary, metric, cadence = st.columns(3)

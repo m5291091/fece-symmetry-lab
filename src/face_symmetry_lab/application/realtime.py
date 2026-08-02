@@ -57,14 +57,18 @@ ERROR_CIRCUIT_THRESHOLD = 3
 
 #: Preview frames keep flowing, while landmark inference is capped at 8 Hz.
 DEFAULT_ANALYSIS_INTERVAL_MS = 125
-DEFAULT_GEOMETRY_TTL_MS = 250
 
-#: FR-013: the effective geometry/mask cache TTL never drops below this floor,
-#: but is widened to `analysis_interval_ms * this` whenever cadence auto-tuning
+#: FR-013: how long a throttled frame may keep redrawing the last geometry
+#: and reusing the last background mask. Both answer the same question — what
+#: may a frame we did not analyse still show — so they share one TTL.
+DEFAULT_DISPLAY_TTL_MS = 250
+
+#: §1.2(17): the effective display cache TTL never drops below its floor, but
+#: is widened to `analysis_interval_ms * this` whenever cadence auto-tuning
 #: (§14.3d) picks a slower interval — a TTL shorter than the sampling interval
 #: would expire the cache every single cycle, which is exactly what caused the
 #: reported background-replacement flicker at the 333ms candidate.
-_GEOMETRY_TTL_SAFETY_MULTIPLIER = 2.0
+_DISPLAY_TTL_SAFETY_MULTIPLIER = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +116,7 @@ class RealtimeLandmarkPipeline:
         demographic_worker: DemographicSampler | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
-        geometry_ttl_ms: int = DEFAULT_GEOMETRY_TTL_MS,
+        display_ttl_ms: int = DEFAULT_DISPLAY_TTL_MS,
         midline_indices: tuple[int, ...] = (),
         midline_enabled: bool = True,
         midline_color: tuple[int, int, int] = DEFAULT_MIDLINE_COLOR,
@@ -124,8 +128,8 @@ class RealtimeLandmarkPipeline:
     ) -> None:
         if analysis_interval_ms < 0:
             raise ValueError("analysis_interval_ms は 0 以上である必要があります。")
-        if geometry_ttl_ms < 0:
-            raise ValueError("geometry_ttl_ms は 0 以上である必要があります。")
+        if display_ttl_ms < 0:
+            raise ValueError("display_ttl_ms は 0 以上である必要があります。")
         # §14.3b: validated by trying it once against a throwaway pixel,
         # reusing the same bounds `apply_brightness_gain` itself enforces.
         apply_brightness_gain(np.zeros((1, 1, 3), dtype=np.uint8), brightness_gain)
@@ -148,12 +152,12 @@ class RealtimeLandmarkPipeline:
         self._brightness_gain = brightness_gain
         self._background_mode = background_mode
         self._analysis_interval_seconds = analysis_interval_ms / 1000.0
-        #: Floor for the effective TTL widened by `_recompute_geometry_ttl`,
+        #: Floor for the effective TTL widened by `_recompute_display_ttl`,
         #: which only cadence auto-tuning calls (§14.3d) — an explicitly
-        #: configured `geometry_ttl_ms`/`analysis_interval_ms` pair (e.g. from
+        #: configured `display_ttl_ms`/`analysis_interval_ms` pair (e.g. from
         #: `apply_advanced_settings` or a test) is respected as-is otherwise.
-        self._base_geometry_ttl_seconds = geometry_ttl_ms / 1000.0
-        self._geometry_ttl_seconds = self._base_geometry_ttl_seconds
+        self._base_display_ttl_seconds = display_ttl_ms / 1000.0
+        self._display_ttl_seconds = self._base_display_ttl_seconds
         self._started_at = clock()
         self._next_analysis_at = self._started_at
         #: §14.3c/d: owns every retune window and throttle. Only ever touched
@@ -190,11 +194,17 @@ class RealtimeLandmarkPipeline:
     ) -> tuple[NDArray[np.uint8], AnalysisOutcome | None]:
         """Return only the analysis belonging to this exact preview frame.
 
-        §14.3b: brightness gain is applied only to the frame handed to the
-        landmark detector (inside `_analyse`), never to what's returned here
-        — the user always sees the raw camera feed, and the AI's detection
-        aid stays invisible. This also means `apply_brightness_gain` only
-        runs at the analysis cadence (~8Hz) instead of on every video frame.
+        FR-013: only landmarks and the midline are drawn onto the returned
+        frame (~1ms); the numeric panel deliberately is not, since drawing
+        it cost 18.6ms per frame and surfaced as lag. Every number reaches
+        the UI through `snapshot` instead. When there is no geometry to draw
+        and background replacement is off, `rgb_image` itself comes back, so
+        the caller can skip re-encoding entirely.
+
+        §14.3b: brightness gain reaches only the frame handed to the
+        landmark detector (inside `_analyse`), so the AI's detection aid
+        stays invisible and `apply_brightness_gain` runs at the analysis
+        cadence (~8Hz) rather than on every video frame.
         """
         if self._closed:
             return rgb_image, None
@@ -212,6 +222,11 @@ class RealtimeLandmarkPipeline:
                 return self._draw_cached(rgb_image), None
             return self._analyse(rgb_image)
 
+    def _draw_cached(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        """Redraw a throttled frame from the last analysis, within the TTL."""
+        painted = self._draw_cached_geometry(rgb_image)
+        return self._composite_cached_background(painted)
+
     def _apply_brightness(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Brighten a copy for the landmark detector only (§14.3b)."""
         with self._overlay_lock:
@@ -225,10 +240,6 @@ class RealtimeLandmarkPipeline:
             # itself is unusable, so fall through and let detection fail on
             # the original image instead of masking the real problem.
             return rgb_image
-
-    def _draw_cached(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
-        painted = self._draw_cached_geometry(rgb_image)
-        return self._composite_cached_background(painted)
 
     def _admit_latest_sample(self) -> bool:
         """Admit by cadence only; skipped frames are never queued for later."""
@@ -255,8 +266,8 @@ class RealtimeLandmarkPipeline:
         landmark_ms = 0.0
         segmentation_ms = 0.0
         try:
-            # §14.3b: brightened only for the detector; `rgb_image` (raw)
-            # stays what gets painted on and returned for display below.
+            # §14.3b: brightened only for the detector; `rgb_image` (raw) is
+            # what gets returned for display below.
             detection_input = self._apply_brightness(rgb_image)
             frame = self._landmarker.detect_video(
                 detection_input,
@@ -271,7 +282,7 @@ class RealtimeLandmarkPipeline:
             else:
                 self._clear_cached_geometry()
             # §14.3c: measured on the raw frame, and only ever affecting the
-            # *next* one, so where this sits relative to painting is free.
+            # *next* one, so its position relative to painting is free.
             self._apply_display_tuning(self._auto_tune.display_tuning(rgb_image, frame, at=started))
             painted = self._paint_geometry(rgb_image, frame)
             painted, segmentation_ms = self._apply_background(
@@ -368,6 +379,13 @@ class RealtimeLandmarkPipeline:
         rgb_image: NDArray[np.uint8],
         frame: LandmarkFrame,
     ) -> NDArray[np.uint8]:
+        """Draw the landmarks and, when enabled, the midline (FR-013).
+
+        Returns `rgb_image` itself when there is nothing to draw, letting
+        the caller skip re-encoding a frame it never changed.
+        """
+        if not frame.points:
+            return rgb_image
         painted = draw_landmark_points(
             rgb_image,
             frame,
@@ -390,7 +408,7 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             frame = self._cached_geometry
             cached_at = self._cached_geometry_at
-        if frame is None or cached_at is None or now - cached_at > self._geometry_ttl_seconds:
+        if frame is None or cached_at is None or now - cached_at > self._display_ttl_seconds:
             self._clear_cached_geometry()
             return rgb_image
         return self._paint_geometry(rgb_image, frame)
@@ -411,7 +429,8 @@ class RealtimeLandmarkPipeline:
         """Composite a solid background onto the display frame only (§14.3b).
 
         Returns the frame and how long segmentation took (§14.3f), which is
-        ``0.0`` whenever replacement is off or unavailable and nothing ran.
+        ``0.0`` whenever replacement is off or unavailable and nothing ran —
+        in which case ``painted`` comes back untouched.
 
         Segmentation runs on the source frame, not ``painted``, so overlay
         graphics never leak into the mask. A failure here is display-only
@@ -435,6 +454,11 @@ class RealtimeLandmarkPipeline:
         return composited, (self._clock() - started) * 1000.0
 
     def _composite_cached_background(self, painted: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        """Reuse the last mask on a throttled frame, or pass the frame through.
+
+        Returns ``painted`` unchanged whenever replacement is off, no mask is
+        cached, or the mask has expired.
+        """
         with self._overlay_lock:
             mode = self._background_mode
             mask = self._cached_mask
@@ -442,7 +466,7 @@ class RealtimeLandmarkPipeline:
         if mode is BackgroundMode.OFF or mask is None or cached_at is None:
             return painted
         now = self._clock()
-        if now - cached_at > self._geometry_ttl_seconds:
+        if now - cached_at > self._display_ttl_seconds:
             self._clear_cached_mask()
             return painted
         try:
@@ -485,7 +509,7 @@ class RealtimeLandmarkPipeline:
         if new_interval_ms is None:
             return
         self._set_analysis_interval_ms(new_interval_ms)
-        self._recompute_geometry_ttl()
+        self._recompute_display_ttl()
         if self._demographic_worker is not None:
             try:
                 age_interval_ms = recommend_age_interval_ms(new_interval_ms)
@@ -628,6 +652,7 @@ class RealtimeLandmarkPipeline:
             self._recorder.reset()
         self.scheduler.reset()
         self._clear_cached_geometry()
+        self._clear_cached_geometry()
         self._clear_cached_mask()
         self._reset_demographic_worker()
         with self._sample_lock:
@@ -704,19 +729,19 @@ class RealtimeLandmarkPipeline:
             self._analysis_interval_seconds = interval_ms / 1000.0
             self._next_analysis_at = self._clock()
 
-    def _recompute_geometry_ttl(self) -> None:
-        """FR-013: widen the geometry/mask cache TTL to track auto-tuned cadence.
+    def _recompute_display_ttl(self) -> None:
+        """§1.2(17): widen the display cache TTL to track auto-tuned cadence.
 
-        Called only from `_maybe_auto_tune_cadence` — a TTL shorter than the
+        Called only from the cadence auto-tune path — a TTL shorter than the
         sampling interval would expire the cache every single cycle, which is
         what caused the reported background-replacement flicker once cadence
         auto-tuning picked the 333ms candidate. Never called for an explicitly
         configured `analysis_interval_ms` (constructor or `apply_advanced_settings`),
-        whose caller-provided `geometry_ttl_ms` is respected as-is.
+        whose caller-provided `display_ttl_ms` is respected as-is.
         """
-        self._geometry_ttl_seconds = max(
-            self._base_geometry_ttl_seconds,
-            self._analysis_interval_seconds * _GEOMETRY_TTL_SAFETY_MULTIPLIER,
+        self._display_ttl_seconds = max(
+            self._base_display_ttl_seconds,
+            self._analysis_interval_seconds * _DISPLAY_TTL_SAFETY_MULTIPLIER,
         )
 
     def set_midline_enabled(self, enabled: bool) -> None:
@@ -751,14 +776,14 @@ class RealtimeLandmarkPipeline:
             return round(self._analysis_interval_seconds * 1000)
 
     @property
-    def geometry_ttl_ms(self) -> int:
-        """The currently active geometry/mask cache TTL (FR-013 readback).
+    def display_ttl_ms(self) -> int:
+        """The currently active geometry/mask cache TTL (§1.2(17) readback).
 
         Widened by cadence auto-tuning (§14.3d) to always exceed
         `analysis_interval_ms`, so a throttled frame between two analysed
         ones never finds the cache already expired.
         """
-        return round(self._geometry_ttl_seconds * 1000)
+        return round(self._display_ttl_seconds * 1000)
 
     @property
     def metric_config(self) -> MetricConfig | None:

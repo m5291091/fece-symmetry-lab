@@ -48,12 +48,8 @@ from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
-from face_symmetry_lab.ui.camera_overlay import (
-    OverlayPosition,
-    draw_camera_metrics,
-    guidance_message,
-)
 from face_symmetry_lab.ui.export_panel import render_export_panel
+from face_symmetry_lab.ui.guidance import guidance_message
 from face_symmetry_lab.ui.model_setup import (
     configured_demographic_path,
     configured_segmenter_path,
@@ -64,7 +60,11 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_asset,
     segmenter_status,
 )
-from face_symmetry_lab.ui.scores import render_demographic_estimate, render_scores
+from face_symmetry_lab.ui.scores import (
+    GENDER_LABELS,
+    render_demographic_estimate,
+    render_scores,
+)
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.OFF: "しない",
@@ -72,13 +72,7 @@ _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.WHITE: "白",
 }
 
-#: FR-032: display-only placement presets. Neither affects scoring.
-_SCORE_POSITION_LABELS: Final[dict[OverlayPosition, str]] = {
-    OverlayPosition.TOP_LEFT: "左上",
-    OverlayPosition.TOP_RIGHT: "右上",
-    OverlayPosition.BOTTOM_LEFT: "左下",
-    OverlayPosition.BOTTOM_RIGHT: "右下",
-}
+#: FR-032: display-only placement preset. Does not affect scoring.
 _PANEL_LAYOUT_RIGHT: Final[str] = "動画の右"
 _PANEL_LAYOUT_LEFT: Final[str] = "動画の左"
 _PANEL_LAYOUT_BELOW: Final[str] = "動画の下"
@@ -114,41 +108,33 @@ _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
 VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
 
-def build_video_frame_callback(
-    pipeline: RealtimeLandmarkPipeline,
-    *,
-    position: OverlayPosition = OverlayPosition.TOP_LEFT,
-) -> VideoFrameCallback:
+def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrameCallback:
     """Adapt the realtime pipeline to the streamlit-webrtc frame callback.
 
-    `position` is captured by value at call time (this function is called
-    fresh on every Streamlit rerun, §14.3e) rather than read from Streamlit's
-    session state inside `callback` — the callback runs on the WebRTC worker
-    thread, which must never touch Streamlit's own APIs (§14.3).
+    FR-013: the pipeline draws only landmarks and the midline (~1ms per
+    frame). The numeric panel is deliberately not drawn here — rendering it
+    cost 18.6ms of the 33ms available per frame at 720p/30fps and was what
+    surfaced as lag — so the numbers live in the panel beside the video
+    instead. When nothing changed the pixels, the frame that arrived is
+    handed straight back with no re-encode.
     """
 
     def callback(frame: av.VideoFrame) -> av.VideoFrame:
         try:
             rgb = np.asarray(frame.to_ndarray(format="rgb24"), dtype=np.uint8)
-            painted, analysis = pipeline.process_with_analysis(rgb)
-            snapshot = pipeline.snapshot()
-            latest = analysis if analysis is not None else snapshot.analysis
-            painted = draw_camera_metrics(
-                painted,
-                latest,
-                current_sample=analysis is not None,
-                demographic=snapshot.demographic_estimate,
-                position=position,
-            )
-            annotated = av.VideoFrame.from_ndarray(painted, format="rgb24")
+            painted, _ = pipeline.process_with_analysis(rgb)
+            if painted is rgb:
+                # Untouched: skip re-encoding it into a new VideoFrame.
+                return frame
+            replaced = av.VideoFrame.from_ndarray(painted, format="rgb24")
         except Exception:
             # Returning the source frame keeps the preview alive (NFR-017).
             return frame
         if frame.pts is not None:
-            annotated.pts = frame.pts
+            replaced.pts = frame.pts
         if frame.time_base is not None:
-            annotated.time_base = frame.time_base
-        return annotated
+            replaced.time_base = frame.time_base
+        return replaced
 
     return callback
 
@@ -243,8 +229,36 @@ def _render_status_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     _render_snapshot(pipeline.snapshot())
 
 
+def _render_headline_metrics(snapshot: PipelineSnapshot) -> None:
+    """FR-013: total score, gender and age, right beside the video.
+
+    Kept at the very top of the panel and free of surrounding detail, since
+    these three are what the user is watching for; everything else in the
+    panel is supporting context below them. Missing values show `—` rather
+    than a stale or zeroed number (NFR-013).
+    """
+    symmetry = snapshot.analysis.symmetry if snapshot.analysis is not None else None
+    overall = snapshot.analysis.overall_smooth if snapshot.analysis is not None else None
+    if overall is None and symmetry is not None:
+        overall = symmetry.overall
+    estimate = snapshot.demographic_estimate
+
+    score_column, gender_column, age_column = st.columns(3)
+    score_column.metric("全体スコア", "—" if overall is None else f"{overall:.1f}")
+    gender_column.metric(
+        "参考性別",
+        "—" if estimate is None else GENDER_LABELS[estimate.gender],
+    )
+    age_column.metric(
+        "参考年齢",
+        "—" if estimate is None else f"{estimate.estimated_age_years:.0f}歳",
+    )
+
+
 def _render_snapshot(snapshot: PipelineSnapshot) -> None:
     with st.container(border=True):
+        _render_headline_metrics(snapshot)
+        st.divider()
         message = _STATUS_MESSAGES[snapshot.status]
         if snapshot.status is TrackingStatus.ERROR:
             st.error(message)
@@ -336,7 +350,7 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
         "history_capacity・age_interval_ms・analysis_interval_ms・sensitivity）。"
         f"現在値: 検出用の明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
         f"analysis_interval_ms={pipeline.analysis_interval_ms}。"
-        "明るさ補正はlandmark検出にだけ使い、映像表示は常にカメラの生映像です。"
+        "明るさ補正はlandmark検出にだけ使い、表示される映像の明るさは変えません。"
         "品質ゲート閾値と部位の重み(part_weights)は固定既定値です。"
     )
 
@@ -347,7 +361,7 @@ def render_camera_section() -> None:
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
         "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
-        "状態・左右差・参考年齢性別の数値はカメラ映像内にも大きく表示します（表示位置は選択可能）。"
+        "映像にはランドマークと中心線だけを重ね、全体スコア・参考性別・参考年齢は映像のすぐ隣に大きく表示します。"
     )
 
     model_path = resolve_ready_landmarker()
@@ -360,8 +374,6 @@ def render_camera_section() -> None:
         st.error(str(error))
         return
 
-    # One compact row for every display toggle, instead of stacking each on
-    # its own line, to keep the controls above the video short.
     midline_column, demographic_column = st.columns(2)
     with midline_column:
         show_midline = st.toggle(
@@ -406,25 +418,14 @@ def render_camera_section() -> None:
     with status_column:
         _render_auto_tune_status(pipeline)
 
-    # FR-032: display-only placement presets ("movable" via preset choice,
-    # not mouse drag — see §14.3e). Neither changes scoring.
-    score_position_column, panel_layout_column = st.columns(2)
-    with score_position_column:
-        score_position = st.radio(
-            "動画内スコアの表示位置",
-            options=list(_SCORE_POSITION_LABELS),
-            format_func=lambda position: _SCORE_POSITION_LABELS[position],
-            key="camera_score_position",
-            horizontal=True,
-            help="全画面表示でも見える、映像に焼き込むスコア表示の位置です。",
-        )
-    with panel_layout_column:
-        panel_layout = st.radio(
-            "「ライブ解析」パネルの配置",
-            options=_PANEL_LAYOUT_OPTIONS,
-            key="camera_panel_layout",
-            horizontal=True,
-        )
+    # FR-032: display-only placement preset ("movable" via preset choice, not
+    # mouse drag — see §14.3e). Does not change scoring.
+    panel_layout = st.radio(
+        "「ライブ解析」パネルの配置",
+        options=_PANEL_LAYOUT_OPTIONS,
+        key="camera_panel_layout",
+        horizontal=True,
+    )
 
     result_column: DeltaGenerator | None
     if panel_layout == _PANEL_LAYOUT_BELOW:
@@ -441,7 +442,7 @@ def render_camera_section() -> None:
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=LOOPBACK_RTC_CONFIGURATION,
             media_stream_constraints=MEDIA_STREAM_CONSTRAINTS,
-            video_frame_callback=build_video_frame_callback(pipeline, position=score_position),
+            video_frame_callback=build_video_frame_callback(pipeline),
             async_processing=True,
         )
 

@@ -9,6 +9,9 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
 )
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.application.auto_tune_controller import (
+    CADENCE_RETUNE_INTERVAL_SECONDS,
+)
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.auto_tuning import recommend_age_interval_ms
@@ -93,6 +96,30 @@ class FakeSegmenter:
 
     def close(self) -> None:
         self.closed = True
+
+
+class WorkingLandmarker(FakeLandmarker):
+    """A landmarker that advances a `ManualClock` to simulate real work.
+
+    Lets a cadence test state the load it wants directly (`work_seconds`)
+    instead of inferring it from how many times `_analyse` reads the clock,
+    which is an implementation detail that has changed more than once.
+    """
+
+    def __init__(self, clock: "ManualClock", work_seconds: float, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._work_clock = clock
+        self._work_seconds = work_seconds
+
+    def detect_video(
+        self,
+        rgb_image: NDArray[np.uint8],
+        *,
+        frame_id: int,
+        timestamp_ms: int,
+    ) -> LandmarkFrame:
+        self._work_clock.advance(self._work_seconds)
+        return super().detect_video(rgb_image, frame_id=frame_id, timestamp_ms=timestamp_ms)
 
 
 class StepClock:
@@ -342,22 +369,28 @@ def _pipeline(landmarker: FakeLandmarker, **kwargs: object) -> RealtimeLandmarkP
     )
 
 
-def test_single_face_frames_are_annotated_with_landmarks() -> None:
+def test_a_detected_face_gets_landmarks_drawn_on_the_frame() -> None:
+    """FR-013: geometry (and only geometry) is drawn onto the video."""
     pipeline = _pipeline(FakeLandmarker(face_count=1))
+    source = _rgb()
 
-    annotated = pipeline.process(_rgb())
+    painted = pipeline.process(source)
 
-    assert annotated.shape == (20, 20, 3)
-    assert annotated.sum() > 0
+    assert painted is not source
+    assert painted.sum() > 0
+    assert np.all(source == 0)  # the caller's frame is never mutated
     assert pipeline.snapshot().status is TrackingStatus.SINGLE_FACE
 
 
-def test_multi_face_frames_are_not_annotated() -> None:
+def test_multi_face_frames_leave_the_frame_untouched() -> None:
+    """No single face means no geometry, so there is nothing to draw and the
+    frame passes straight through."""
     pipeline = _pipeline(FakeLandmarker(face_count=2))
+    source = _rgb()
 
-    annotated = pipeline.process(_rgb())
+    returned = pipeline.process(source)
 
-    assert annotated.sum() == 0
+    assert returned is source
     snapshot = pipeline.snapshot()
     assert snapshot.status is TrackingStatus.MULTI_FACE
     assert snapshot.face_count == 2
@@ -415,7 +448,7 @@ def test_pipeline_samples_latest_frames_at_default_cadence() -> None:
     assert first is None  # No analyzer is attached, but landmark inference ran.
     assert second is None
     assert fourth is None
-    assert skipped_frame.sum() > 0
+    assert skipped_frame.sum() > 0  # throttled frames redraw the cached geometry
     assert len(landmarker.calls) == 2
     assert pipeline.snapshot().throttled_frames == 2
 
@@ -455,44 +488,34 @@ def test_a_dropped_frame_never_receives_the_previous_numeric_overlay_result() ->
 
     assert first_analysis is not None
     assert dropped_analysis is None
-    assert raw.sum() > 0  # Short-lived geometry is retained; numeric analysis is not.
+    assert raw.sum() > 0  # short-lived geometry is redrawn; numeric analysis is not
 
 
-def test_cached_geometry_expires_before_the_next_slow_sample() -> None:
+def test_a_cached_background_mask_expires_after_the_display_ttl() -> None:
+    """The mask cache is the only per-frame cache left (FR-013 dropped the
+    geometry one): it spares a throttled frame a re-segmentation, but must
+    not outlive its TTL."""
     clock = ManualClock()
-    landmarker = FakeLandmarker()
-    pipeline = RealtimeLandmarkPipeline(
-        landmarker=landmarker,
-        clock=clock,
-        analysis_interval_ms=1000,
-        geometry_ttl_ms=250,
-    )
-
-    first = pipeline.process(_rgb())
-    clock.advance(0.2)
-    retained = pipeline.process(_rgb())
-    clock.advance(0.051)
-    expired = pipeline.process(_rgb())
-
-    assert first.sum() > 0
-    assert retained.sum() > 0
-    assert expired.sum() == 0
-    assert len(landmarker.calls) == 1
-
-
-def test_reset_clears_cached_geometry_immediately() -> None:
-    clock = ManualClock()
+    segmenter = FakeSegmenter(mask_value=0.0)  # fully background -> visibly black
     pipeline = RealtimeLandmarkPipeline(
         landmarker=FakeLandmarker(),
+        segmenter=segmenter,
+        background_mode=BackgroundMode.BLACK,
         clock=clock,
         analysis_interval_ms=1000,
+        display_ttl_ms=250,
     )
-    pipeline.process(_rgb())
 
-    pipeline.reset_analysis()
-    raw = pipeline.process(_rgb())
+    first = pipeline.process(_flat_rgb(200))
+    clock.advance(0.2)
+    retained = pipeline.process(_flat_rgb(200))
+    clock.advance(0.051)
+    expired = pipeline.process(_flat_rgb(200))
 
-    assert raw.sum() > 0  # reset admits a fresh sample, never a cached one
+    assert first.max() == 0  # segmented on the analysed frame
+    assert retained.max() == 0  # throttled frame reused the cached mask
+    assert expired.max() == 200  # TTL passed: frame passes through untouched
+    assert len(segmenter.calls) == 1
 
 
 def test_detection_failures_keep_the_stream_running() -> None:
@@ -654,23 +677,6 @@ def test_reset_clears_the_export_history_together_with_analysis_state() -> None:
 
     assert analyzer.reset_calls == 1
     assert recorder.reset_calls == 1
-
-
-def test_realtime_face_midline_can_be_turned_off_without_restarting() -> None:
-    points = ((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5))
-    pipeline = _pipeline(
-        FakeLandmarker(points=points),
-        midline_indices=(0, 1, 2),
-        point_color=(0, 0, 0),
-        point_radius=0,
-    )
-
-    shown = pipeline.process(_rgb())
-    pipeline.set_midline_enabled(False)
-    hidden = pipeline.process(_rgb())
-
-    assert shown.sum() > 0
-    assert hidden.sum() == 0
 
 
 def _flat_rgb(value: int, height: int = 20, width: int = 20) -> NDArray[np.uint8]:
@@ -1265,18 +1271,19 @@ def test_zoom_auto_tune_is_throttled_within_the_retune_interval() -> None:
 
 
 def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_load() -> None:
-    landmarker = FakeLandmarker(face_count=0)
+    clock = ManualClock()
     recorder = RecorderSpy()
     pipeline = RealtimeLandmarkPipeline(
-        landmarker=landmarker,
+        landmarker=WorkingLandmarker(clock, 0.2, face_count=0),  # 200ms per frame
         recorder=recorder,
-        clock=StepClock(step=0.2),  # every clock() call is 200ms apart
+        clock=clock,
         analysis_interval_ms=0,
         auto_tune_enabled=True,
     )
 
     for _ in range(10):
         pipeline.process(_rgb())
+        clock.advance(CADENCE_RETUNE_INTERVAL_SECONDS)
 
     # 200ms mean load only clears the slowest documented choice's utilization target.
     assert pipeline.analysis_interval_ms == 333
@@ -1284,7 +1291,7 @@ def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_lo
     assert recorder.reset_calls == 0  # cadence retuning must not fragment history
 
 
-def test_auto_tuned_cadence_widens_the_geometry_ttl_past_the_new_interval() -> None:
+def test_auto_tuned_cadence_widens_the_display_ttl_past_the_new_interval() -> None:
     """Regression guard: a TTL shorter than the auto-tuned interval expired
     the cache every single throttled frame, causing visible flicker
     (background replacement, landmark overlay) once cadence slowed to 333ms."""
@@ -1293,29 +1300,29 @@ def test_auto_tuned_cadence_widens_the_geometry_ttl_past_the_new_interval() -> N
         clock=StepClock(step=0.2),
         analysis_interval_ms=0,
         auto_tune_enabled=True,
-        geometry_ttl_ms=250,
+        display_ttl_ms=250,
     )
 
     for _ in range(10):
         pipeline.process(_rgb())
 
     assert pipeline.analysis_interval_ms == 333
-    assert pipeline.geometry_ttl_ms == 666  # max(250, 333 * 2)
-    assert pipeline.geometry_ttl_ms > pipeline.analysis_interval_ms
+    assert pipeline.display_ttl_ms == 666  # max(250, 333 * 2)
+    assert pipeline.display_ttl_ms > pipeline.analysis_interval_ms
 
 
-def test_auto_tune_disabled_never_widens_the_geometry_ttl() -> None:
+def test_auto_tune_disabled_never_widens_the_display_ttl() -> None:
     pipeline = RealtimeLandmarkPipeline(
         landmarker=FakeLandmarker(face_count=0),
         clock=StepClock(step=0.2),
         analysis_interval_ms=0,
-        geometry_ttl_ms=250,
+        display_ttl_ms=250,
     )
 
     for _ in range(10):
         pipeline.process(_rgb())
 
-    assert pipeline.geometry_ttl_ms == 250
+    assert pipeline.display_ttl_ms == 250
 
 
 def test_an_explicitly_configured_interval_and_ttl_are_not_widened_by_construction() -> None:
@@ -1326,10 +1333,10 @@ def test_an_explicitly_configured_interval_and_ttl_are_not_widened_by_constructi
         landmarker=FakeLandmarker(face_count=0),
         clock=StepClock(),
         analysis_interval_ms=1000,
-        geometry_ttl_ms=250,
+        display_ttl_ms=250,
     )
 
-    assert pipeline.geometry_ttl_ms == 250
+    assert pipeline.display_ttl_ms == 250
 
 
 def test_auto_tune_enabled_skips_the_history_resize_when_the_interval_is_unchanged() -> None:
@@ -1355,29 +1362,29 @@ def test_auto_tune_enabled_skips_the_history_resize_when_the_interval_is_unchang
 
 
 def test_auto_tune_enabled_speeds_the_analysis_interval_back_up_under_light_load() -> None:
-    landmarker = FakeLandmarker(face_count=0)
+    heavy_clock = ManualClock()
     pipeline = RealtimeLandmarkPipeline(
-        landmarker=landmarker,
-        clock=StepClock(step=0.2),
+        landmarker=WorkingLandmarker(heavy_clock, 0.2, face_count=0),
+        clock=heavy_clock,
         analysis_interval_ms=333,
         auto_tune_enabled=True,
     )
     for _ in range(10):  # let it settle at the slow interval first
         pipeline.process(_rgb())
+        heavy_clock.advance(CADENCE_RETUNE_INTERVAL_SECONDS)
     assert pipeline.analysis_interval_ms == 333
 
-    # A lighter but still admission-gate-realistic clock (10ms/tick; with the
-    # ~4 clock() calls _analyse now makes per frame for the §14.3f timing
-    # breakdown, that's ~40ms measured load, still under the 125-choice's
-    # ~87.5ms utilization threshold).
+    # 10ms per frame is comfortably under the 125-choice's utilization target.
+    light_clock = ManualClock()
     fast_pipeline = RealtimeLandmarkPipeline(
-        landmarker=FakeLandmarker(face_count=0),
-        clock=StepClock(step=0.01),
+        landmarker=WorkingLandmarker(light_clock, 0.01, face_count=0),
+        clock=light_clock,
         analysis_interval_ms=333,
         auto_tune_enabled=True,
     )
-    for _ in range(100):
+    for _ in range(10):
         fast_pipeline.process(_rgb())
+        light_clock.advance(CADENCE_RETUNE_INTERVAL_SECONDS)
 
     assert fast_pipeline.analysis_interval_ms == 125
 

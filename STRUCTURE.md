@@ -87,7 +87,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
 | Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, NFR-009 |
-| Camera numeric overlay | `ui/camera_overlay.py` | `tests/ui/test_camera_overlay.py` | FR-013, FR-014 |
+| 位置誘導メッセージ | `ui/guidance.py` | `tests/ui/test_guidance.py` | FR-031, AC-GUIDE-01 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Streamlit flow | `ui/app.py` | future UI / E2E tests | AC-FLOW-01, AC-AGE-02 |
 
@@ -100,7 +100,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `d85365e61023f0078b2a82d37c0e560f42ee50407d8f93d5d5567e304c0f631d`_
+_File-list SHA-256: `a2380af22b5fa0682a2aa007626228b8647c93a45e270360d857e66558055bdd`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -203,7 +203,7 @@ face-symmetry-lab/
   - `ui/`
     - `test_app.py`
     - `test_camera.py`
-    - `test_camera_overlay.py`
+    - `test_guidance.py`
     - `test_model_setup.py`
   - `__init__.py`
   - `test_cli.py`
