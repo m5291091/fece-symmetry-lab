@@ -3,10 +3,10 @@
 | 項目 | 内容 |
 |---|---|
 | name | `age-gender-recognition-retail-0013` |
-| version | source `open-model-zoo/2023.0/FP16` / runtime `FP16-onnx-v1` |
+| version | source `open-model-zoo/2023.0/FP16` / runtime `FP16-onnx-v2` |
 | upstream | Open Model Zoo / Intel |
 | asset release | Open Model Zoo 2023.0 / FP16 |
-| status | 公式IR・派生ONNXのmanifest登録、変換再現test、OpenCV smoke済み。公式IR固定入力parityは実測済みだが目標gate未達、slice評価、3 OS smokeは未完（OD-07 open） |
+| status | 公式IR・派生ONNXのmanifest登録、変換再現test、OpenCV smoke済み。公式IR固定入力parityは実測済みだが目標gate未達。onnxruntimeとの三者比較により、gapは変換recipeのbugではなくOpenVINO CPU実行の特性である可能性が高いという追加証拠を記録した（下記参照）。gate値の承認、slice評価、3 OS smokeは未完（OD-07 open） |
 | runtime | `opencv-contrib-python` DNN / CPU |
 | format | source: OpenVINO IR XML + BIN / runtime: ONNX opset 13 |
 | license | Apache-2.0。条件に従う商用利用・改変・再配布が可能 |
@@ -17,13 +17,14 @@
 |---|---:|---|
 | `age-gender-recognition-retail-0013.xml` | 62,543 bytes | `2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067` |
 | `age-gender-recognition-retail-0013.bin` | 4,276,038 bytes | `7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13` |
-| `age-gender-recognition-retail-0013.onnx` | 8,556,137 bytes | `e86b01b71cce307c1a58d9b3db3777be2d95993f702f5b6b29d02bf4efe296bc` |
+| `age-gender-recognition-retail-0013.onnx` | 8,556,149 bytes | `b50a5e261d7a30484aee08534f88e13b19ccc8a9ca712b24dd1fd49d6b5b5411` |
 
 - XML: `https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml`
 - BIN: `https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.bin`
 - source pair identity: `b2917f682865b378589103a46442b3ed6de97ff48e3425a192c96d690bfa5a5e`
-- ONNXは`scripts/convert_demographic_model.py`の`ir11-to-onnx-opset13-v1` recipeで、検証済みIRから決定的に生成する。変換toolは`onnx 1.22.0`、`numpy 2.5.1`、`ml-dtypes 0.5.4`、`protobuf 7.35.1`へ固定する。
+- ONNXは`scripts/convert_demographic_model.py`の`ir11-to-onnx-opset13-v2` recipeで、検証済みIRから決定的に生成する。変換toolは`onnx 1.22.0`、`numpy 2.5.1`、`ml-dtypes 0.5.4`、`protobuf 7.35.1`へ固定する。
 - 公式IRと派生ONNXはrepositoryへ同梱しない。IRを明示的なbootstrap操作で取得し、ONNXも明示操作でローカル生成する。
+- **v2での修正（2026-08-02）**: v1のRecipeは`Result`層（例: `prob/sink_port_0`）のONNX出力tensor名を生成する際、そのままnode名にも再利用しており、同名の計算node（例: `SoftMax`層`prob`）と衝突していた。`opencv-contrib-python`のONNX importerはnode名の重複を許容するため症状が出なかったが、`onnxruntime`はこの重複を`FAIL`として拒否し、load不能だった。v2はnode名にIR側の元々一意な層名（例: `prob/sink_port_0`）を使い、ONNX出力tensor名だけを契約どおり`prob`に保つことで解消した。計算内容・数値は変更していない（下記parity実測はv1と同一値）。
 
 ## 意図された用途
 
@@ -73,5 +74,24 @@ macOS Apple Silicon、`openvino==2026.2.1`での実測（2026-08-01、manifest�
 
 - 変換精度を追加調査・改善し、目標値0.1年 / `1e-4`を達成する。
 - 実測分布に基づく新しいgate値（例: 年齢0.25年以内、性別確率1×10⁻²以内）へ本カードとOD-07を更新し、根拠として本測定を記録する。
+
+### 変換recipeへの疑い切り分け（onnxruntimeとの三者比較）
+
+上記gap自体は変換recipe（v1→v2のnode名修正含む）の前後で数値が一致しており（0.205117年 / 5.877852×10⁻³のまま）、node名修正はこのgapの原因ではなかった。変換recipe自体に数値上のbugが残っている可能性を切り分けるため、`scripts/verify_onnx_runtime_agreement.py`で同じ固定入力14件を、派生ONNX（v2）に対する**第三の独立runtime**である`onnxruntime==1.20.1`（`CPUExecutionProvider`）でも実行し、`openvino`（参照）・`cv2.dnn`（アプリ実行runtime）・`onnxruntime`の三者を比較した。
+
+macOS Apple Silicon実測（2026-08-02、manifest固定済みasset v2、n=14）:
+
+| 比較 | 年齢差（最大） | 性別確率差（最大） |
+|---|---:|---:|
+| OpenVINO vs `cv2.dnn`（アプリ） | 0.205141年 | 5.878121×10⁻³ |
+| OpenVINO vs `onnxruntime` | 0.205141年 | 5.878121×10⁻³ |
+| `cv2.dnn` vs `onnxruntime` | 0.000024年 | 1.072884×10⁻⁶ |
+
+`cv2.dnn`と`onnxruntime`という完全に独立した2つのONNX実行系は、同一の派生ONNXに対してほぼ完全に一致する（年齢差0.000024年、確率差1.07×10⁻⁶）。一方、両者はOpenVINOに対してほぼ同じ量・同じ符号傾向でずれる。これは、
+
+1. `scripts/convert_demographic_model.py`が生成するONNX graphはIRの数値的内容を忠実に再現しており、変換recipe自体には数値上のbugがない可能性が高いこと、
+2. gapの実体はOpenVINOのCPU pluginが、元のFP16 IRをCPU上でどう実行するか（内部精度・演算順序・活用する演算実装）に起因する、runtime実装固有の特性である可能性が高いこと、
+
+を示す一定の証拠になる。ただし、これは推定であり、OpenVINO側の内部実行経路を直接検証したものではない。この結果は「変換精度を追加調査・改善」という選択肢の見込みが低いことを示す証拠として記録するに留め、gate値の最終決定は別途プロダクト判断を要する。
 
 3 OS runtime確認とslice評価が残る限り、いずれの場合もOD-07とM0は未完のままとする。

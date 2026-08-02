@@ -36,7 +36,7 @@ DEFAULT_BIN = APP_ROOT / "models" / "age-gender-recognition-retail-0013.bin"
 DEFAULT_OUTPUT = APP_ROOT / "models" / "age-gender-recognition-retail-0013.onnx"
 SOURCE_NAMES = ("demographic_age_gender_xml", "demographic_age_gender_bin")
 DERIVED_NAME = "demographic_age_gender_onnx"
-CONVERTER_VERSION = "ir11-to-onnx-opset13-v1"
+CONVERTER_VERSION = "ir11-to-onnx-opset13-v2"
 SUPPORTED_OPERATIONS = {"Add", "Convolution", "MaxPool", "ReLU", "SoftMax"}
 
 
@@ -186,10 +186,15 @@ def build_onnx(xml_path: Path, bin_path: Path) -> onnx.ModelProto:
             if len(source_ids) != 1:
                 raise ConversionError(f"Result入力が不正です: {name}")
             output_name = name.removesuffix("/sink_port_0")
+            # `name` (the IR's own unique layer name, e.g. "prob/sink_port_0")
+            # is used as the ONNX node name; `output_name` (the stripped
+            # form, e.g. "prob") is only the output *tensor* name. Reusing
+            # `output_name` as the node name too can collide with another
+            # node already named that (OpenVINO's own naming convention
+            # names a Result's sink "<producer_name>/sink_port_0"), which
+            # OpenCV's importer tolerates but strict ONNX runtimes reject.
             nodes.append(
-                helper.make_node(
-                    "Identity", [tensors[source_ids[0]]], [output_name], name=output_name
-                )
+                helper.make_node("Identity", [tensors[source_ids[0]]], [output_name], name=name)
             )
             tensors[layer_id] = output_name
             graph_outputs.append(

@@ -99,7 +99,7 @@ def test_repository_manifest_pins_the_locally_derived_demographic_onnx() -> None
     onnx = find_derived_asset(derived_assets, "demographic_age_gender_onnx")
 
     assert isinstance(onnx, DerivedModelAsset)
-    assert onnx.version == "open-model-zoo/2023.0/FP16-onnx-v1"
+    assert onnx.version == "open-model-zoo/2023.0/FP16-onnx-v2"
     assert onnx.filename == "age-gender-recognition-retail-0013.onnx"
     assert onnx.size_bytes > 4_000_000
     assert len(onnx.sha256) == 64
@@ -108,7 +108,7 @@ def test_repository_manifest_pins_the_locally_derived_demographic_onnx() -> None
         "demographic_age_gender_bin",
     )
     assert onnx.converter == "scripts/convert_demographic_model.py"
-    assert onnx.converter_version == "ir11-to-onnx-opset13-v1"
+    assert onnx.converter_version == "ir11-to-onnx-opset13-v2"
     assert onnx.tools == {
         "ml-dtypes": "0.5.4",
         "numpy": "2.5.1",

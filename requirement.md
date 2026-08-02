@@ -1226,7 +1226,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
 | OD-05 | bbox 面積、照度、ぼけ threshold | M1 / M5 | 誤拒否率と見逃し率を固定評価で確認。`face_area_min`はPC webcamでの過剰なTOO_FAR誤拒否を受け0.12→0.05→0.02へ段階的に暫定緩和済み（§8.2）だが、実機評価による最終確定は未完。小さい顔面積での landmark 精度低下（ノイズ増）とのtrade-offも未評価 |
 | OD-06 | 一般ユーザー向け配布の対象範囲 | M3 | 成人本人利用、研究者利用、社内利用のいずれかを明文化 |
-| OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済み公式XML/BINと派生ONNXについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み。固定入力parityは`scripts/verify_openvino_parity.py`で実測済み（年齢差最大0.205年、性別確率差最大5.88×10⁻³）だが目標gate（0.1年 / `1e-4`）未達のため、gate値の承認または変換改善が完了条件に残る（model card参照） |
+| OD-07 | 年齢・性別モデルのリリース検証 | M0 | manifest固定済み公式XML/BINと派生ONNXについてruntime parity、3 OS smoke、model card、年齢/性別slice評価が承認済み。固定入力parityは`scripts/verify_openvino_parity.py`で実測済み（年齢差最大0.205年、性別確率差最大5.88×10⁻³）だが目標gate（0.1年 / `1e-4`）未達のため、gate値の承認または変換改善が完了条件に残る（model card参照）。変換recipeは重複ONNX node名のbugを修正済み（v1→v2、onnxruntimeがload不能だった問題、数値には影響なし）。`scripts/verify_onnx_runtime_agreement.py`によるonnxruntimeとの三者比較で、gapが変換recipeのbugではなくOpenVINO CPU実行の特性である可能性が高いという証拠を得たが、gate値の最終決定は未承認 |
 | OD-08 | 肌表面参考指標のcalibration set | M1 / M5 | 照明、影、化粧、髭、眼鏡、camera、再撮影差と補正gainを評価し、係数と利用範囲を指標カードへ記録 |
 
 ## 26. トレーサビリティ

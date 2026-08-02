@@ -32,6 +32,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Model store (hash + atomic install) | `src/face_symmetry_lab/adapters/io/model_store.py` |
 | Model preparation CLI | `scripts/bootstrap_models.py` |
 | OpenVINO reference parity (OD-07, dev-only) | `scripts/verify_openvino_parity.py` |
+| Cross-ONNX-runtime agreement (OD-07 due diligence, dev-only) | `scripts/verify_onnx_runtime_agreement.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
 | Tracking-zoom landmark wrapper | `src/face_symmetry_lab/adapters/inference/tracking_zoom_landmarker.py` |
@@ -79,6 +80,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
+| Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
 | Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, NFR-009 |
 | Camera numeric overlay | `ui/camera_overlay.py` | `tests/ui/test_camera_overlay.py` | FR-013, FR-014 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
@@ -93,7 +95,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `56d1f03c50f7c4694fd285592c06e97c1df9f6791ec784e9b54dcdb925e938d3`_
+_File-list SHA-256: `d62126793aa21682a6956b2e9b1424d85c9fa114eb255c98a5d6c314fd7ec3a0`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -124,6 +126,7 @@ face-symmetry-lab/
   - `derive_landmark_map.py`
   - `generate_structure.py`
   - `verify.py`
+  - `verify_onnx_runtime_agreement.py`
   - `verify_openvino_parity.py`
 - `src/`
   - `face_symmetry_lab/`
@@ -180,6 +183,7 @@ face-symmetry-lab/
   - `model/`
     - `conftest.py`
     - `test_demographic_conversion.py`
+    - `test_onnx_runtime_agreement.py`
     - `test_openvino_parity.py`
     - `test_real_demographic.py`
     - `test_real_landmarker.py`
