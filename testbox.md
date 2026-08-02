@@ -40,8 +40,8 @@
 | `tests/model/test_onnx_runtime_agreement.py` | OpenVINO・cv2.dnn・onnxruntimeの三者比較で変換recipeのbugを切り分け（OD-07 due diligence、openvino／onnxruntime未導入時は skip） | FR-002, FR-022〜024, OD-07, §21.1 |
 | `tests/model/test_real_segmenter.py` | 実asset由来のImage Segmenter load・出力shape/有限値smoke、domain合成との結合（未配置時は skip） | FR-002, FR-027, §14.3b, §21.1 |
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
-| `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、sample 間の直近数値表示、frame callback | FR-005, FR-013, NFR-006, NFR-009, AC-PRIV-02 |
-| `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示 | FR-013, FR-014, AC-A11Y-01 |
+| `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、sample 間の直近数値表示、frame callback、表示位置プリセット・参考年齢性別のoverlayへの伝播 | FR-005, FR-013, FR-032, FR-033, NFR-006, NFR-009, AC-PRIV-02 |
+| `tests/ui/test_camera_overlay.py` | カメラ映像内の高コントラストなスコア・姿勢・sample 状態表示、位置誘導メッセージ（全ReasonCode網羅）、四隅の表示位置プリセット、参考年齢・参考性別の追記描画 | FR-013, FR-014, FR-031, FR-032, FR-033, AC-A11Y-01, AC-GUIDE-01, AC-LAYOUT-01 |
 | `tests/ui/test_model_setup.py` | manifest由来のlandmark・派生ONNX解決、元IR provenance・個別hash検証、状態表示 | FR-001, FR-002, FR-020, FR-024 |
 | `tests/test_cli.py` | localhost 限定の Streamlit 起動 command | NFR-009, AC-SEC-01 |
 | `tests/repository/test_generate_structure.py` | 安全で bounded な `STRUCTURE.md` 生成 | 開発効率・リポジトリ規約 |

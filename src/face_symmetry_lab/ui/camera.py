@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import av
 import numpy as np
 import streamlit as st
-from streamlit_webrtc import WebRtcMode, webrtc_streamer
+from streamlit.delta_generator import DeltaGenerator
+from streamlit_webrtc import WebRtcMode, WebRtcStreamerContext, webrtc_streamer
 
 from face_symmetry_lab import __version__
 from face_symmetry_lab.adapters.export.session_exporter import (
@@ -52,7 +53,11 @@ from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
-from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics
+from face_symmetry_lab.ui.camera_overlay import (
+    OverlayPosition,
+    draw_camera_metrics,
+    guidance_message,
+)
 from face_symmetry_lab.ui.model_setup import (
     configured_demographic_path,
     configured_segmenter_path,
@@ -70,6 +75,22 @@ _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.BLACK: "黒",
     BackgroundMode.WHITE: "白",
 }
+
+#: FR-032: display-only placement presets. Neither affects scoring.
+_SCORE_POSITION_LABELS: Final[dict[OverlayPosition, str]] = {
+    OverlayPosition.TOP_LEFT: "左上",
+    OverlayPosition.TOP_RIGHT: "右上",
+    OverlayPosition.BOTTOM_LEFT: "左下",
+    OverlayPosition.BOTTOM_RIGHT: "右下",
+}
+_PANEL_LAYOUT_RIGHT: Final[str] = "動画の右"
+_PANEL_LAYOUT_LEFT: Final[str] = "動画の左"
+_PANEL_LAYOUT_BELOW: Final[str] = "動画の下"
+_PANEL_LAYOUT_OPTIONS: Final[tuple[str, ...]] = (
+    _PANEL_LAYOUT_RIGHT,
+    _PANEL_LAYOUT_LEFT,
+    _PANEL_LAYOUT_BELOW,
+)
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
@@ -97,18 +118,31 @@ _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
 VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
 
-def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrameCallback:
-    """Adapt the realtime pipeline to the streamlit-webrtc frame callback."""
+def build_video_frame_callback(
+    pipeline: RealtimeLandmarkPipeline,
+    *,
+    position: OverlayPosition = OverlayPosition.TOP_LEFT,
+) -> VideoFrameCallback:
+    """Adapt the realtime pipeline to the streamlit-webrtc frame callback.
+
+    `position` is captured by value at call time (this function is called
+    fresh on every Streamlit rerun, §14.3e) rather than read from Streamlit's
+    session state inside `callback` — the callback runs on the WebRTC worker
+    thread, which must never touch Streamlit's own APIs (§14.3).
+    """
 
     def callback(frame: av.VideoFrame) -> av.VideoFrame:
         try:
             rgb = np.asarray(frame.to_ndarray(format="rgb24"), dtype=np.uint8)
             painted, analysis = pipeline.process_with_analysis(rgb)
-            latest = analysis if analysis is not None else pipeline.snapshot().analysis
+            snapshot = pipeline.snapshot()
+            latest = analysis if analysis is not None else snapshot.analysis
             painted = draw_camera_metrics(
                 painted,
                 latest,
                 current_sample=analysis is not None,
+                demographic=snapshot.demographic_estimate,
+                position=position,
             )
             annotated = av.VideoFrame.from_ndarray(painted, format="rgb24")
         except Exception:
@@ -225,6 +259,11 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
         else:
             st.info(message)
 
+        if snapshot.analysis is not None:
+            guidance = guidance_message(snapshot.analysis.state)
+            if guidance is not None:
+                st.warning(guidance)
+
         tracking, points = st.columns(2)
         tracking.metric("追跡状態", snapshot.status.value)
         points.metric("ランドマーク点数", snapshot.landmark_count)
@@ -250,6 +289,18 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
                 snapshot.demographic_estimate,
                 show_distribution=False,
             )
+
+
+def _render_live_analysis_block(
+    pipeline: RealtimeLandmarkPipeline,
+    context: WebRtcStreamerContext[Any, Any],
+) -> None:
+    """The "ライブ解析" heading + status panel, shared by every panel layout."""
+    st.markdown("#### ライブ解析")
+    if context.state.playing:
+        _render_status_panel(pipeline)
+    else:
+        st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -367,23 +418,50 @@ def render_camera_section() -> None:
     with status_column:
         _render_auto_tune_status(pipeline)
 
-    preview_column, result_column = st.columns([7, 5], gap="large")
+    # FR-032: display-only placement presets ("movable" via preset choice,
+    # not mouse drag — see §14.3e). Neither changes scoring.
+    score_position_column, panel_layout_column = st.columns(2)
+    with score_position_column:
+        score_position = st.radio(
+            "動画内スコアの表示位置",
+            options=list(_SCORE_POSITION_LABELS),
+            format_func=lambda position: _SCORE_POSITION_LABELS[position],
+            key="camera_score_position",
+            horizontal=True,
+            help="全画面表示でも見える、映像に焼き込むスコア表示の位置です。",
+        )
+    with panel_layout_column:
+        panel_layout = st.radio(
+            "「ライブ解析」パネルの配置",
+            options=_PANEL_LAYOUT_OPTIONS,
+            key="camera_panel_layout",
+            horizontal=True,
+        )
+
+    result_column: DeltaGenerator | None
+    if panel_layout == _PANEL_LAYOUT_BELOW:
+        preview_column = st.container()
+        result_column = None
+    elif panel_layout == _PANEL_LAYOUT_LEFT:
+        result_column, preview_column = st.columns([5, 7], gap="large")
+    else:
+        preview_column, result_column = st.columns([7, 5], gap="large")
+
     with preview_column:
         context = webrtc_streamer(
             key=WEBRTC_KEY,
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=LOOPBACK_RTC_CONFIGURATION,
             media_stream_constraints=MEDIA_STREAM_CONSTRAINTS,
-            video_frame_callback=build_video_frame_callback(pipeline),
+            video_frame_callback=build_video_frame_callback(pipeline, position=score_position),
             async_processing=True,
         )
 
-    with result_column:
-        st.markdown("#### ライブ解析")
-        if context.state.playing:
-            _render_status_panel(pipeline)
-        else:
-            st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
+    if result_column is None:
+        _render_live_analysis_block(pipeline, context)
+    else:
+        with result_column:
+            _render_live_analysis_block(pipeline, context)
 
     if not context.state.playing:
         return

@@ -307,6 +307,9 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-028 | P1 | 映像の明るさ調整（表示・検出共通） | 0.25〜3.0倍のgainを映像へ乗算し、landmark検出前とdisplay出力の双方に一貫して適用する。既定gain 1.0（無調整）とし、範囲外の値は拒否する |
 | FR-029 | P1 | 明るさ・追跡ズームの自動調整 | 手動スライダーは持たず、新規MLモデルを追加せず、既存のフレーム統計（フレーム平均輝度、追跡中の顔bbox面積比）から`brightness_gain`と追跡ズームpolicy（`zoom_margin_ratio`・`zoom_target_px`）をFR-028・FR-026それぞれの許容範囲内でheuristicに算出し、一定間隔で常時自動更新する。対称性・年齢性別・肌表面参考値の入力・スコア計算には一切使わない（FR-027・FR-028と同じ表示・検出補助専用の扱い） |
 | FR-030 | P1 | Advanced設定 cadence・感度の自動調整 | FR-029と同じく手動UIを持たず常時、次の2系統を自動更新する。(a) scoringに影響しないcadence設定 — 直近の`processing_ms`から`analysis_interval_ms`（既定候補125/200/333msの中から選択）、それに連動する`age_interval_ms`（500〜10,000ms）、一定時間分の履歴を保つ`history_capacity`（100〜20,000件）を、config_revision・segment・EMAを変えずに継続更新する。(b) scoringに影響する`sensitivity` — 直近フレームの部位別RMS距離のばらつき（検出ノイズの指標）からheuristicに算出し、既存値との差が一定割合を超えた場合のみ、既存のAdvanced設定適用と同じ手順（config_revision・segment更新、EMA・履歴reset）で反映する。`part_weights`は固定既定値のまま変更しない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）も固定既定値のまま、手動UI・AI調整のいずれの対象にもしない |
+| FR-031 | P1 | リアルタイム位置誘導 | 品質ゲートが算出済みの理由コード（`ReasonCode`: `NO_FACE`・`MULTIPLE_FACES`・`OFF_AXIS_YAW`・`OFF_AXIS_PITCH`・`OFF_AXIS_ROLL`・`TOO_CLOSE`・`TOO_FAR`・`LOW_CONFIDENCE`・`UNSTABLE`等）を、新たな判定ロジックを追加せずに日本語の短い指示文へ変換し、カメラ映像内と「ライブ解析」パネルの両方に表示する。理由が複数該当する場合は`AnalysisState.reason`（既存の優先順位で決まる先頭の理由）を1件だけ表示し、同時に矛盾する指示を出さない。品質ゲートを満たしている間は指示文を表示しない |
+| FR-032 | P1 | 表示位置のプリセット選択 | カメラ映像内のスコア表示は四隅（左上・右上・左下・右下）から、「ライブ解析」パネルは動画に対する配置（右・左・下）から、利用者がその場で選べる。選択はスコア計算・分析結果に影響しない表示専用設定であり、既定値はそれぞれ現行の左上・右を維持する |
+| FR-033 | P1 | 全画面表示でも参照値が分かる | ブラウザの動画全画面表示は`<video>`要素だけを拡大しStreamlit側のDOMを含めないため、全体・部位別左右差、姿勢角に加えて参考年齢・参考性別もカメラ映像のpixelへ直接描画し、全画面時にも同じ情報が読み取れるようにする。年齢・性別表示がOFF、または年齢・性別推定が未取得の場合はこの区画を描画しない |
 
 ---
 
@@ -654,6 +657,8 @@ flowchart LR
 - **AC-DISPLAY-01**: 背景の黒/白置換はON/OFF切替可能で既定OFF、失敗時は元映像へfallbackし左右差・年齢性別・肌表面参考値の分析を止めない。明るさgainは検出入力とdisplay出力の両方へ一貫して適用され、範囲外の値は保存前に拒否される。
 - **AC-AUTOTUNE-01**: `brightness_gain`はFR-028の0.25〜3.0倍、追跡ズームpolicyはFR-026の各範囲を超えて算出されない。算出に使う統計取得や計算が失敗しても既存gain/policyを維持し、フレーム処理・対称性分析を止めない（NFR-017と同じ1フレーム失敗許容）。手動での編集UIは持たない。
 - **AC-AUTOTUNE-02**: cadence設定（`analysis_interval_ms`・`age_interval_ms`・`history_capacity`）の自動更新はscoringに影響しないため、`config_revision`・`segment_id`・EMAを変更しない。`sensitivity`の自動更新は、直近算出値との差が一定割合を超えた場合だけ適用され、適用のたびに既存のAdvanced設定適用（§15.2末尾）と同じく`config_revision`・`segment_id`を更新しEMA・履歴をリセットする。`part_weights`と品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は固定既定値のまま、手動UI・AI調整のいずれの対象にもしない。
+- **AC-GUIDE-01**: `AnalysisState.reason`が非nullの間、対応する日本語指示文をカメラ映像内と「ライブ解析」パネルの双方に表示し、`reason`がnull（品質ゲートを満たす）の間は指示文を表示しない。`ReasonCode`の全メンバーに指示文が定義されている。
+- **AC-LAYOUT-01**: 動画内スコアパネルの四隅選択、および「ライブ解析」パネルの左・右・下選択は、選択を変えてもスコア値・`config_revision`・分析結果を変化させない。全画面表示中（`<video>`要素のみが拡大される状況）でも、全体・部位別左右差、姿勢角、参考年齢、参考性別が映像pixel内の表示から読み取れる。
 
 ### 12.2 プライバシー・セキュリティ
 
@@ -843,6 +848,14 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 - **感度（scoringに影響する）**: 直近フレームの部位別RMS距離（`SymmetryResult.distances`、sensitivity適用前の生値）の平均・標準偏差から`domain.auto_tuning.recommend_sensitivity`が部位ごとに新しい`sensitivity`を算出する。既存値との相対差が閾値を超える部位がある場合だけ、`domain.metrics.with_tunables`で`part_weights`は変えずに`sensitivity`だけを差し替えた`MetricConfig`を作り、既存の`RealtimeLandmarkPipeline.apply_advanced_settings`を（現在の`thresholds`・`tau_seconds`・zoom policyをそのまま渡して）呼ぶ。§15.2既存規約どおりconfig_revision・segmentが進み、EMA・履歴がresetされる。差が閾値以下ならresetは発生しない。
 - どちらの系統も、統計取得・算出・適用のいずれかに失敗した場合は例外を握りつぶし、既存値を維持してフレーム処理を継続する（NFR-017、AC-AUTOTUNE-02）。
 
+#### 14.3e 位置誘導・表示位置プリセット（FR-031, FR-032, FR-033, AC-GUIDE-01, AC-LAYOUT-01）
+
+いずれも表示専用で、対称性・年齢性別・肌表面参考値のスコア計算入力を変えない。
+
+- **位置誘導（FR-031）**: `ui.camera_overlay.guidance_message(state: AnalysisState) -> str | None`が、既存の品質ゲート（`application.quality.QualityGate`）が既に算出済みの`AnalysisState.reason`を、新しい判定ロジックを追加せずに1件の日本語指示文へ変換する。`reason`が`None`（品質ゲートを満たす）なら`None`を返し、呼び出し側は指示文を表示しない。カメラ映像内の描画（`draw_camera_metrics`）と「ライブ解析」パネル（`ui.camera._render_snapshot`）の両方が同じ関数を呼ぶため、文言は常に一致する。
+- **表示位置プリセット（FR-032）**: `ui.camera_overlay.OverlayPosition`（`TOP_LEFT`/`TOP_RIGHT`/`BOTTOM_LEFT`/`BOTTOM_RIGHT`）が動画内スコアパネルの描画原点を決める。「ライブ解析」パネルは`ui.camera`内の選択（右・左・下）に応じて`st.columns`の並び順・比率を切り替えるか、動画の下へ積む。マウスドラッグやカスタムJS componentは導入しない（プリセット選択のみ）。選択は`st.session_state`に保持し、WebRTCコールバック（別スレッド）はそれを直接読まず、コールバック生成時（メインスレッド、毎rerun）に渡された値を閉包として使う（§14.3の「callbackはst.\*に触れない」制約を維持するため）。
+- **全画面時の参照値（FR-033）**: `draw_camera_metrics`は`demographic: DemographicEstimate | None`引数を受け取り、年齢・性別表示がONかつ推定値がある場合だけ、参考年齢・参考性別を対称性スコアと同じ movable panel 内へ追記描画する。ブラウザの動画全画面はStreamlit側のDOMを含まないため、これがpixelへ焼き込まれる唯一の経路である。
+
 ### 14.4 エラーと回復
 
 - adapter 例外は `AnalysisFailure(code, recoverable, event_id)` へ変換し、domain へ例外型を漏らさない。
@@ -863,6 +876,8 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 | 年齢・性別表示 | ON | 18〜75歳本人の明示同意後のみ推論。結果は左右差・肌表面参考値と別区画 |
 | trend window | 60 秒 | 15 / 30 / 60 / 120 秒 |
 | 壁時計を export | OFF | ON 時だけ `captured_at` を出力 |
+| 動画内スコアの表示位置 | 左上 | 左上 / 右上 / 左下 / 右下（FR-032）。表示専用、スコア計算に影響しない |
+| 「ライブ解析」パネルの配置 | 動画の右 | 右 / 左 / 下（FR-032）。表示専用、スコア計算に影響しない |
 
 ### 15.2 Advanced 設定
 
@@ -1264,6 +1279,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | リアルタイムで安定 | FR-012〜016, FR-026, NFR-001〜006 | AC-PERF-01, AC-SOAK-01, AC-ZOOM-01 |
 | 表示調整はスコアへ混入しない | FR-027, FR-028, FR-029 | AC-DISPLAY-01, AC-AUTOTUNE-01 |
 | Advanced設定の自動調整はcadence/感度の境界を守る | FR-030 | AC-AUTOTUNE-02 |
+| ライブ中に位置を誘導し、表示位置と全画面表示に対応する | FR-031, FR-032, FR-033 | AC-GUIDE-01, AC-LAYOUT-01 |
 | 安全な入力 | FR-006, FR-007, NFR-011 | AC-INPUT-01 |
 | 中立でアクセス可能 | UX §5, §10.7, NFR-016 | AC-A11Y-01, copy review |
 | supply chain を固定 | FR-002, FR-020, §10.6 | AC-MODEL-01, AC-MODEL-02 |
