@@ -12,6 +12,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | AI and development policy | `AGENTS.md` |
 | Test traceability | `testbox.md` |
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
+| About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
@@ -90,6 +91,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 位置誘導メッセージ | `ui/guidance.py` | `tests/ui/test_guidance.py` | FR-031, AC-GUIDE-01 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Streamlit flow | `ui/app.py` | future UI / E2E tests | AC-FLOW-01, AC-AGE-02 |
+| About page | `ui/about_page.py` | `tests/ui/test_about_page.py` | §4.1, FR-014, §10.7 |
 
 ## Maintenance
 
@@ -100,7 +102,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `a2380af22b5fa0682a2aa007626228b8647c93a45e270360d857e66558055bdd`_
+_File-list SHA-256: `c2d6d4ae4c6ac2f385cbcbfbbf2c3d96f2d9266d13c55ba1a4ee082ddb7eb0a1`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -150,7 +152,7 @@ face-symmetry-lab/
     - `runtime/`
       - … (2 files)
     - `ui/`
-      - … (7 files)
+      - … (8 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -201,6 +203,7 @@ face-symmetry-lab/
   - `runtime/`
     - `test_frame_scheduler.py`
   - `ui/`
+    - `test_about_page.py`
     - `test_app.py`
     - `test_camera.py`
     - `test_guidance.py`

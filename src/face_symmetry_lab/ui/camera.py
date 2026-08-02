@@ -40,7 +40,6 @@ from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
-    PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
@@ -61,9 +60,9 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_status,
 )
 from face_symmetry_lab.ui.scores import (
-    GENDER_LABELS,
     render_demographic_estimate,
-    render_scores,
+    render_headline_metrics,
+    render_score_details,
 )
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
@@ -224,40 +223,27 @@ def release_session_pipeline() -> None:
 
 
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
-def _render_status_panel(pipeline: RealtimeLandmarkPipeline) -> None:
-    """Poll the immutable snapshot at 5 Hz without blocking the main script."""
-    _render_snapshot(pipeline.snapshot())
+def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
+    """Poll the immutable snapshot at 5 Hz for the headline block only.
 
-
-def _render_headline_metrics(snapshot: PipelineSnapshot) -> None:
-    """FR-013: total score, gender and age, right beside the video.
-
-    Kept at the very top of the panel and free of surrounding detail, since
-    these three are what the user is watching for; everything else in the
-    panel is supporting context below them. Missing values show `—` rather
-    than a stale or zeroed number (NFR-013).
+    FR-013/FR-032: total score, gender, age, tracking status and position
+    guidance stay beside the video (placement follows the panel_layout
+    preset) so the user can watch them without looking away from the
+    camera. Everything else is detail and lives in `_render_detail_fragment`
+    instead, always full width below (§5.1, AC-LAYOUT-01).
     """
-    symmetry = snapshot.analysis.symmetry if snapshot.analysis is not None else None
-    overall = snapshot.analysis.overall_smooth if snapshot.analysis is not None else None
-    if overall is None and symmetry is not None:
-        overall = symmetry.overall
-    estimate = snapshot.demographic_estimate
-
-    score_column, gender_column, age_column = st.columns(3)
-    score_column.metric("全体スコア", "—" if overall is None else f"{overall:.1f}")
-    gender_column.metric(
-        "参考性別",
-        "—" if estimate is None else GENDER_LABELS[estimate.gender],
-    )
-    age_column.metric(
-        "参考年齢",
-        "—" if estimate is None else f"{estimate.estimated_age_years:.0f}歳",
-    )
-
-
-def _render_snapshot(snapshot: PipelineSnapshot) -> None:
+    snapshot = pipeline.snapshot()
     with st.container(border=True):
-        _render_headline_metrics(snapshot)
+        symmetry = snapshot.analysis.symmetry if snapshot.analysis is not None else None
+        overall = snapshot.analysis.overall_smooth if snapshot.analysis is not None else None
+        if overall is None and symmetry is not None:
+            overall = symmetry.overall
+        estimate = snapshot.demographic_estimate
+        render_headline_metrics(
+            overall=overall,
+            gender=None if estimate is None else estimate.gender,
+            age_years=None if estimate is None else estimate.estimated_age_years,
+        )
         st.divider()
         message = _STATUS_MESSAGES[snapshot.status]
         if snapshot.status is TrackingStatus.ERROR:
@@ -273,7 +259,27 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
             guidance = guidance_message(snapshot.analysis.state)
             if guidance is not None:
                 st.warning(guidance)
+        if snapshot.needs_recovery:
+            st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
 
+
+def _render_headline_panel(
+    pipeline: RealtimeLandmarkPipeline,
+    context: WebRtcStreamerContext[Any, Any],
+) -> None:
+    """The "ライブ解析" heading + headline block, placed per panel_layout (FR-032)."""
+    st.markdown("#### ライブ解析")
+    if context.state.playing:
+        _render_headline_fragment(pipeline)
+    else:
+        st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
+
+
+@st.fragment(run_every=STATUS_REFRESH_INTERVAL)
+def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
+    """Poll the immutable snapshot at 5 Hz for the full-width detail block."""
+    snapshot = pipeline.snapshot()
+    with st.container(border=True):
         tracking, points = st.columns(2)
         tracking.metric("追跡状態", snapshot.status.value)
         points.metric("ランドマーク点数", snapshot.landmark_count)
@@ -293,13 +299,11 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
         if snapshot.scoring_ms > 0.0:
             breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
         st.caption("内訳: " + " · ".join(breakdown))
-        if snapshot.needs_recovery:
-            st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
 
         if snapshot.analysis is not None:
             st.divider()
             st.caption("カメラ映像の LAST SAMPLE と同じ直近の解析値です。")
-            render_scores(snapshot.analysis)
+            render_score_details(snapshot.analysis)
 
         if snapshot.demographic_estimate is not None:
             st.divider()
@@ -310,16 +314,18 @@ def _render_snapshot(snapshot: PipelineSnapshot) -> None:
             )
 
 
-def _render_live_analysis_block(
+def _render_detail_panel(
     pipeline: RealtimeLandmarkPipeline,
     context: WebRtcStreamerContext[Any, Any],
 ) -> None:
-    """The "ライブ解析" heading + status panel, shared by every panel layout."""
-    st.markdown("#### ライブ解析")
-    if context.state.playing:
-        _render_status_panel(pipeline)
-    else:
-        st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
+    """部位別・姿勢・肌表面参考値などの詳細結果。配置プリセットに関わらず常に
+
+    動画とヘッダー結果の下へ画面幅いっぱいで表示する（FR-032, AC-LAYOUT-01）。
+    """
+    if not context.state.playing:
+        return
+    st.markdown("#### 詳細結果")
+    _render_detail_fragment(pipeline)
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -362,6 +368,7 @@ def render_camera_section() -> None:
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
         "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
         "映像にはランドマークと中心線だけを重ね、全体スコア・参考性別・参考年齢は映像のすぐ隣に大きく表示します。"
+        "部位別・姿勢・肌表面参考値などの詳しい数値は、その下に画面幅いっぱいで表示します。"
     )
 
     model_path = resolve_ready_landmarker()
@@ -447,10 +454,14 @@ def render_camera_section() -> None:
         )
 
     if result_column is None:
-        _render_live_analysis_block(pipeline, context)
+        _render_headline_panel(pipeline, context)
     else:
         with result_column:
-            _render_live_analysis_block(pipeline, context)
+            _render_headline_panel(pipeline, context)
+
+    # §5.1, AC-LAYOUT-01: detail results always render full width below the
+    # video and headline, regardless of the panel_layout preset above.
+    _render_detail_panel(pipeline, context)
 
     if not context.state.playing:
         return

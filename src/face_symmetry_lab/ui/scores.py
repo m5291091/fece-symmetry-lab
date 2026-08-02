@@ -76,8 +76,30 @@ def render_pose(outcome: AnalysisOutcome) -> None:
     )
 
 
-def render_scores(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
-    """Render the overall and per-part values, or say why they are missing."""
+def render_headline_metrics(
+    *,
+    overall: float | None,
+    gender: GenderLabel | None,
+    age_years: float | None,
+) -> None:
+    """FR-013/FR-014: total score, gender and age, right beside the media.
+
+    Shared by Camera and Image so both use the same headline layout (§5.1).
+    Missing values show `—` rather than a stale or zeroed number (NFR-013).
+    """
+    score_column, gender_column, age_column = st.columns(3)
+    score_column.metric("全体スコア", "—" if overall is None else f"{overall:.1f}")
+    gender_column.metric("参考性別", "—" if gender is None else GENDER_LABELS[gender])
+    age_column.metric("参考年齢", "—" if age_years is None else f"{age_years:.0f}歳")
+
+
+def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
+    """Render everything about the 左右差スコア besides the headline total.
+
+    The headline total is `render_headline_metrics`, shown beside the media;
+    this renders the part breakdown, pose, and skin quality that belong in
+    the full-width detail section below it (§5.1, FR-013, AC-LAYOUT-01).
+    """
     st.subheader(SCORE_HEADING)
     if not outcome.sensitivity_frozen:
         st.info(
@@ -87,13 +109,10 @@ def render_scores(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> No
 
     symmetry = outcome.symmetry
     if symmetry is None or symmetry.overall is None:
-        st.metric("全体", "—")
         render_guidance(outcome)
         render_pose(outcome)
         return
 
-    displayed = outcome.overall_smooth if show_smoothed else symmetry.overall
-    st.metric("全体", f"{(displayed or symmetry.overall):.1f}")
     if show_smoothed:
         st.caption(f"平滑化前の生値 {symmetry.overall:.1f}")
 

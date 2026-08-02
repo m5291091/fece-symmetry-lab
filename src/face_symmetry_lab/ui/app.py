@@ -30,10 +30,11 @@ from face_symmetry_lab.application.still_image import (
     analyze_still_image,
 )
 from face_symmetry_lab.domain.export import InputMode
-from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
+from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfig, MetricConfigError
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
+from face_symmetry_lab.ui.about_page import render_about_page
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
     render_camera_section,
@@ -44,7 +45,11 @@ from face_symmetry_lab.ui.model_setup import (
     resolve_ready_demographic,
     resolve_ready_landmarker,
 )
-from face_symmetry_lab.ui.scores import render_demographic_estimate, render_scores
+from face_symmetry_lab.ui.scores import (
+    render_demographic_estimate,
+    render_headline_metrics,
+    render_score_details,
+)
 
 APP_ROOT = Path(__file__).resolve().parents[3]
 ESTIMATOR_STATE_KEY = "demographic_estimator"
@@ -193,27 +198,17 @@ def _analyze_uploaded_image(
     return recorder, analysis
 
 
-def _render_image_demographic_panel(
-    rgb: np.ndarray,
+def _render_image_demographic_controls(
+    age_input: np.ndarray | None,
     *,
-    landmark_frame: LandmarkFrame | None,
     recorder: SessionRecorder | None,
 ) -> None:
-    """Age/gender panel for the still-image flow (§10.8).
+    """On-demand age/gender trigger for the still-image flow (§10.8).
 
-    FR-024 keeps this independent of the symmetry side: it renders even when
-    landmark detection failed, explaining what is missing instead of silently
-    disappearing.
+    Kept beside the photo, next to the headline numbers it fills in
+    (§5.1). The runtime caption and full detail panel live in
+    `_render_image_demographic_detail`, always full width below.
     """
-    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
-
-    age_input: np.ndarray | None = None
-    if landmark_frame is not None:
-        try:
-            age_input = extract_face_crop(rgb, landmark_frame)
-        except ImageInputError:
-            age_input = None
-
     demographic_model = resolve_ready_demographic()
     analyze_column, reset_column = st.columns(2)
     analyze = analyze_column.button(
@@ -244,6 +239,15 @@ def _render_image_demographic_panel(
             )
             st.error(message)
 
+
+def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
+    """Full age/gender reference panel — always full width below (§5.1).
+
+    FR-024 keeps this independent of the symmetry side: it renders even when
+    landmark detection failed, explaining what is missing instead of silently
+    disappearing.
+    """
+    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     if isinstance(session_estimate, DemographicEstimate):
         render_demographic_estimate(session_estimate)
@@ -294,30 +298,63 @@ def _render_image_section() -> None:
         except (LandmarkDetectionError, MetricConfigError) as error:
             st.error(str(error))
 
-    # §5.1: photo on the left, every result beside it, so nothing the user
-    # needs to compare lives in a section further down the page.
+    landmark_frame = analysis.landmarks.frame if analysis is not None else None
+    age_input: np.ndarray | None = None
+    if landmark_frame is not None:
+        try:
+            age_input = extract_face_crop(rgb, landmark_frame)
+        except ImageInputError:
+            age_input = None
+
+    session_estimate = st.session_state.get(RESULT_STATE_KEY)
+    estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
+    overall = None
+    if analysis is not None and analysis.outcome.symmetry is not None:
+        overall = analysis.outcome.symmetry.overall
+
+    # §5.1: photo and headline (score/gender/age + status) side by side, so
+    # nothing the user needs at a glance lives further down the page. Camera
+    # and Image share this layout.
     preview_column, status_column = st.columns([7, 5], gap="large")
     with preview_column:
         if analysis is None:
             st.info("ランドマークを表示できません。")
         else:
-            landmarks = analysis.landmarks
-            st.image(landmarks.preview, caption="検出したランドマーク", width="stretch")
-            st.caption(
-                f"{_IMAGE_STATUS_MESSAGES[landmarks.frame.status]} "
-                f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
-                f"ランドマーク点数 {landmarks.landmark_count}"
-            )
+            st.image(analysis.landmarks.preview, caption="検出したランドマーク", width="stretch")
+
     with status_column:
-        if analysis is not None:
-            # Still images are stateless, so the raw value is shown directly (§8.7).
-            render_scores(analysis.outcome, show_smoothed=False)
-            st.divider()
-        _render_image_demographic_panel(
-            rgb,
-            landmark_frame=analysis.landmarks.frame if analysis is not None else None,
-            recorder=recorder,
+        render_headline_metrics(
+            overall=overall,
+            gender=None if estimate is None else estimate.gender,
+            age_years=None if estimate is None else estimate.estimated_age_years,
         )
+        st.divider()
+        if analysis is not None:
+            status = analysis.landmarks.frame.status
+            message = _IMAGE_STATUS_MESSAGES[status]
+            if status is TrackingStatus.ERROR:
+                st.error(message)
+            elif status is TrackingStatus.MULTI_FACE:
+                st.warning(message)
+            elif status is TrackingStatus.SINGLE_FACE:
+                st.success(message)
+            else:
+                st.info(message)
+        _render_image_demographic_controls(age_input, recorder=recorder)
+
+    # §5.1, AC-LAYOUT-01: detail results always render full width below the
+    # photo and headline, mirroring the Camera layout.
+    st.markdown("#### 詳細結果")
+    with st.container(border=True):
+        if analysis is not None:
+            st.caption(
+                f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
+                f"ランドマーク点数 {analysis.landmarks.landmark_count}"
+            )
+            # Still images are stateless, so the raw value is shown directly (§8.7).
+            render_score_details(analysis.outcome, show_smoothed=False)
+            st.divider()
+        _render_image_demographic_detail(age_input)
 
     if recorder is not None:
         _render_image_export(recorder)
@@ -330,42 +367,35 @@ def _switch_input_mode() -> None:
     _clear_session_result()
 
 
-def render_app() -> None:
-    st.set_page_config(
-        page_title="Face Symmetry Lab",
-        page_icon="🪞",
-        layout="wide",
-    )
-    with st.container(border=True):
-        st.title("Face Symmetry Lab")
-        st.caption("LOCAL PROCESSING · NO IMAGE STORAGE · RESEARCH USE")
-        st.write(
-            "顔のランドマーク、撮影補正後の肌表面参考値、モデル推定の参考年齢・参考性別を端末内で確認します。"
-            "リアルタイム映像にはランドマークと中心線を重ね、スコアは映像の隣に表示します。"
-            "数値履歴は再現性メタデータ付きの CSV / JSON として保存できます。"
-        )
-        boundary, metric, cadence = st.columns(3)
-        boundary.metric("処理境界", "端末内のみ")
-        metric.metric("左右差指標", "相対比較専用")
-        cadence.metric("カメラ解析", "最大 8 Hz")
+def _render_about_footer() -> None:
+    """Summary + link to the About page (§4.1, §5.1).
 
+    The full methodology, error sources, prohibited uses, and model
+    versions live on the About page instead of here, so this page stays
+    focused on consent → input selection → analysis.
+    """
+    st.divider()
+    st.subheader("Face Symmetry Lab について")
+    st.write(
+        "顔のランドマーク、撮影補正後の肌表面参考値、モデル推定の参考年齢・参考性別を端末内で確認します。"
+        "リアルタイム映像にはランドマークと中心線を重ね、スコアは映像の隣に表示します。"
+        "数値履歴は再現性メタデータ付きの CSV / JSON として保存できます。"
+    )
+    boundary, metric, cadence = st.columns(3)
+    boundary.metric("処理境界", "端末内のみ")
+    metric.metric("左右差指標", "相対比較専用")
+    cadence.metric("カメラ解析", "最大 8 Hz")
     st.info(
         "感度係数の固定評価セット校正は未完了です。"
         "左右差の数値は、同一人物・同一環境での相対変化だけを参照してください。"
     )
+    st.page_link(ABOUT_PAGE, label="スコアの算出方法・制約について詳しく見る", icon="📘")
 
-    with st.expander("スコアの算出技術と精度について"):
-        st.markdown(
-            "- **幾何左右差**: MediaPipe Face Landmarkerの478点を、両眼で回転・大きさ・"
-            "位置を正規化します。正中点へTLS直線を当て、右側を鏡映した後、輪郭・目・"
-            "鼻・口の対応点RMS距離を0〜100へ変換します。\n"
-            "- **肌表面参考値（実験値）**: 顔cropのwhite balanceと明度を補正し、頬patchの"
-            "色調・局所texture均一性を比較します。幾何の全体点には混ぜません。\n"
-            "- **主な誤差要因**: 顔の向き、照明、影、レンズ歪み、ランドマーク誤差、"
-            "化粧、髭、眼鏡、カメラ処理です。\n"
-            "- **精度向上**: 固定評価セットでの係数校正、実写pose符号確認、3D正規化比較、"
-            "照明・ぼけgate、同一端末での再撮影評価が必要です。"
-        )
+
+def render_app() -> None:
+    """The Analyze page: consent → input selection → analysis (§5.1)."""
+    st.title("Face Symmetry Lab")
+    st.caption("LOCAL PROCESSING · NO IMAGE STORAGE · RESEARCH USE")
 
     # Collapsed once already agreed to (from the prior run's widget state), so
     # returning users are not forced to scroll past it on every rerun.
@@ -408,6 +438,21 @@ def render_app() -> None:
         release_session_pipeline()
         _render_image_section()
 
+    _render_about_footer()
+
+
+#: Streamlit `st.navigation` multipage entry points (§4.1). Constructed at
+#: import time — `st.Page` does not require a running script context — so
+#: `render_app` can reference `ABOUT_PAGE` for its `st.page_link` regardless
+#: of how the module is entered.
+ANALYZE_PAGE = st.Page(render_app, title="Analyze", icon="🪞", default=True)
+ABOUT_PAGE = st.Page(render_about_page, title="使い方・算出方法", icon="📘")
+
 
 if __name__ == "__main__":
-    render_app()
+    st.set_page_config(
+        page_title="Face Symmetry Lab",
+        page_icon="🪞",
+        layout="wide",
+    )
+    st.navigation([ANALYZE_PAGE, ABOUT_PAGE]).run()

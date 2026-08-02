@@ -40,6 +40,7 @@
 | `tests/model/test_openvino_parity.py` | OpenVINO参照runtimeと派生ONNXの固定入力parity（OD-07数値ゲート、openvino未導入時は skip） | FR-002, FR-022〜024, AC-AGE-01〜02, OD-07, §21.1 |
 | `tests/model/test_onnx_runtime_agreement.py` | OpenVINO・cv2.dnn・onnxruntimeの三者比較で変換recipeのbugを切り分け（OD-07 due diligence、openvino／onnxruntime未導入時は skip） | FR-002, FR-022〜024, OD-07, §21.1 |
 | `tests/model/test_real_segmenter.py` | 実asset由来のImage Segmenter load・出力shape/有限値smoke、domain合成との結合（未配置時は skip） | FR-002, FR-027, §14.3b, §21.1 |
+| `tests/ui/test_about_page.py` | About ページが例外なく描画され、算出方法・禁止用途の見出しを含むこと（AppTest） | §4.1, FR-014, §10.7 |
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
 | `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、frame callbackの描画契約（幾何のみ描画／描くものが無ければ元frameをそのまま返し再encodeしない／解析はsnapshotへ届く／背景置換時のpts保持） | FR-005, FR-013, NFR-006, NFR-009, AC-PRIV-02, AC-LAYOUT-01 |
 | `tests/ui/test_guidance.py` | 位置誘導メッセージの全ReasonCode網羅と、品質ゲート充足時にNoneを返すこと | FR-031, AC-GUIDE-01 |
