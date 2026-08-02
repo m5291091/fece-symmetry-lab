@@ -8,7 +8,7 @@ from face_symmetry_lab.application.session import (
     config_fingerprint,
 )
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
+from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config, with_tunables
 from face_symmetry_lab.domain.models import (
     AnalysisState,
     DemographicEstimate,
@@ -123,6 +123,55 @@ def test_reset_with_new_thresholds_recomputes_the_config_fingerprint() -> None:
     assert after.fingerprint != before.fingerprint
     assert after.settings["valid_frames_to_ok"] == 1
     assert after.settings["ema_tau_seconds"] == 0.8
+
+
+def test_reset_with_a_new_metric_config_recomputes_the_config_fingerprint() -> None:
+    """§15.2: editing part_weights/sensitivity must also bump the fingerprint."""
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+    )
+    before = recorder.export_bundle().manifest.config_revisions[0]
+    tuned = with_tunables(
+        _metric_config(),
+        weights={"contour": 0.1, "eyes": 0.5, "nose": 0.3, "mouth": 0.1},
+        sensitivity=dict.fromkeys(PART_NAMES, 10.0),
+    )
+
+    recorder.reset(metric_config=tuned)
+
+    after = recorder.export_bundle().manifest.config_revisions[0]
+    assert after.revision == before.revision + 1
+    assert after.fingerprint != before.fingerprint
+    assert after.settings["weights"] == tuned.weights
+    assert after.settings["sensitivity"] == tuned.sensitivity
+
+
+def test_reset_with_a_new_history_capacity_rebounds_the_buffer() -> None:
+    """§15.2: history_capacity must take effect on the very next records."""
+    recorder = SessionRecorder(
+        metric_config=_metric_config(),
+        thresholds=QualityThresholds(),
+        tau_seconds=0.4,
+        landmark_model_version="landmark/1",
+        landmark_model_sha256="a" * 64,
+        app_version="0.1.0",
+        lock_digest="b" * 64,
+        history_capacity=100,
+    )
+    recorder.append_error(frame_id=1, elapsed_ms=1, processing_ms=1.0)
+
+    recorder.reset(history_capacity=2)
+    recorder.append_error(frame_id=10, elapsed_ms=1, processing_ms=1.0)
+    recorder.append_error(frame_id=11, elapsed_ms=2, processing_ms=1.0)
+    recorder.append_error(frame_id=12, elapsed_ms=3, processing_ms=1.0)
+
+    assert [record.frame_id for record in recorder.records()] == [11, 12]
 
 
 def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -> None:

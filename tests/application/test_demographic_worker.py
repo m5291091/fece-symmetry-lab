@@ -221,3 +221,25 @@ def test_is_due_is_false_after_close() -> None:
     worker.close()
 
     assert worker.is_due() is False
+
+
+def test_set_interval_ms_changes_the_cadence_for_the_next_submission() -> None:
+    """§15.2 `age_interval_ms`: editable independently of the analysis cadence."""
+    clock = ManualClock()
+    estimator = ScriptedEstimator([_estimate()])
+    worker = DemographicWorker(estimator=estimator, interval_ms=1000, clock=clock)
+    thread = worker.submit(_crop())
+    assert thread is not None
+    thread.join(timeout=2)
+    assert worker.is_due() is False  # next slot is 1000ms out
+
+    worker.set_interval_ms(0)
+
+    assert worker.is_due() is True
+
+
+def test_set_interval_ms_rejects_a_negative_value() -> None:
+    worker = DemographicWorker(estimator=ScriptedEstimator([]), clock=ManualClock())
+
+    with pytest.raises(ValueError):
+        worker.set_interval_ms(-1)

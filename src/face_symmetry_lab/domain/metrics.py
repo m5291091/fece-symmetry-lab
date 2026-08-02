@@ -127,3 +127,30 @@ def build_metric_config(
         weights={name: float(weights[name]) for name in PART_NAMES},
         sensitivity_frozen=sensitivity_frozen,
     )
+
+
+def with_tunables(
+    config: MetricConfig,
+    *,
+    weights: Mapping[str, float],
+    sensitivity: Mapping[str, float],
+) -> MetricConfig:
+    """Return a bundle with edited `part_weights`/`sensitivity`, else pinned (§15.2).
+
+    Reuses `build_metric_config`'s validation so an edited bundle can never
+    violate the same invariants as the frozen one. The result is always
+    unfrozen: it no longer carries the calibrated bundle's provenance, so a
+    caller must not report it as the original frozen calibration.
+    """
+    return build_metric_config(
+        metric_version=config.metric_version,
+        landmark_map_version=config.landmark_map_version,
+        landmark_count=config.landmark_count,
+        left_eye_corners=config.left_eye_corners,
+        right_eye_corners=config.right_eye_corners,
+        midline_indices=config.midline_indices,
+        parts=config.parts,
+        sensitivity=sensitivity,
+        weights=weights,
+        sensitivity_frozen=False,
+    )

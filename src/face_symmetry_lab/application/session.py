@@ -336,12 +336,17 @@ class SessionRecorder:
         thresholds: QualityThresholds | None = None,
         tau_seconds: float | None = None,
         analysis_interval_ms: int | None = None,
+        metric_config: MetricConfig | None = None,
+        history_capacity: int | None = None,
     ) -> None:
         """Clear history and begin a new comparison segment.
 
-        Passing a changed threshold/tau/interval recomputes the config
-        fingerprint too, so the new segment's exported records are
-        correctly distinguished from the one before it (§15.2).
+        Passing a changed threshold/tau/interval/metric_config recomputes
+        the config fingerprint too, so the new segment's exported records
+        are correctly distinguished from the one before it (§15.2).
+        ``history_capacity`` rebuilds the bounded buffer at the new size;
+        the segment is being cleared either way, so no record is dropped
+        to make room.
         """
         with self._lock:
             if thresholds is not None:
@@ -350,10 +355,13 @@ class SessionRecorder:
                 self._tau_seconds = tau_seconds
             if analysis_interval_ms is not None:
                 self._analysis_interval_ms = analysis_interval_ms
+            if metric_config is not None:
+                self._metric_config = metric_config
             if (
                 thresholds is not None
                 or tau_seconds is not None
                 or analysis_interval_ms is not None
+                or metric_config is not None
             ):
                 self._settings = build_config_settings(
                     self._metric_config,
@@ -362,6 +370,11 @@ class SessionRecorder:
                     analysis_interval_ms=self._analysis_interval_ms,
                 )
                 self._fingerprint = config_fingerprint(self._settings)
-            self._records.clear()
+            if history_capacity is not None:
+                if history_capacity < 1:
+                    raise ValueError("history_capacity は 1 以上である必要があります。")
+                self._records = deque(maxlen=history_capacity)
+            else:
+                self._records.clear()
             self._segment_id = str(uuid4())
             self._config_revision += 1

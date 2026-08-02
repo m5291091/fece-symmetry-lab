@@ -83,13 +83,24 @@ class FrameAnalyzer:
     def thresholds(self) -> QualityThresholds:
         return self._gate.thresholds
 
-    def update(self, *, thresholds: QualityThresholds, tau_seconds: float) -> None:
+    def update(
+        self,
+        *,
+        thresholds: QualityThresholds,
+        tau_seconds: float,
+        config: MetricConfig | None = None,
+    ) -> None:
         """Atomically replace thresholds/tau and reset gate + EMA history (§15.2).
 
         Build-new-then-swap, per the Advanced settings contract: a change
         that affects scoring must not let stale gate streak or smoothed
-        value leak across the change.
+        value leak across the change. ``config`` additionally swaps
+        `part_weights`/`sensitivity` when the caller supplies an edited
+        bundle (e.g. `domain.metrics.with_tunables`); omitting it keeps the
+        existing bundle unchanged.
         """
+        if config is not None:
+            self._config = config
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
         self._lost_since = None

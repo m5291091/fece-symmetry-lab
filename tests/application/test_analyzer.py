@@ -4,7 +4,7 @@ import pytest
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
+from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config, with_tunables
 from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
 
@@ -231,6 +231,32 @@ def test_update_swaps_thresholds_and_resets_the_gate_and_smoothing() -> None:
     assert analyzer.thresholds.valid_frames_to_ok == 1
     assert outcome.state.status is Status.OK  # new threshold applies immediately
     assert outcome.overall_smooth == outcome.overall_raw  # smoothing history was reset
+
+
+def test_update_can_swap_the_metric_config_too() -> None:
+    """§15.2: an edited part_weights/sensitivity bundle must reach scoring."""
+    analyzer = _analyzer()
+    _drive_to_ok(analyzer)
+    tuned = with_tunables(
+        analyzer.config,
+        weights={"contour": 0.1, "eyes": 0.5, "nose": 0.3, "mouth": 0.1},
+        sensitivity={"contour": 10.0, "eyes": 20.0, "nose": 30.0, "mouth": 40.0},
+    )
+
+    analyzer.update(thresholds=QualityThresholds(), tau_seconds=0.2, config=tuned)
+    outcome = analyzer.analyze(_frame(frame_id=99), at=100.0)
+
+    assert analyzer.config is tuned
+    assert outcome.sensitivity_frozen is False
+
+
+def test_update_without_a_config_keeps_the_existing_one() -> None:
+    analyzer = _analyzer()
+    original = analyzer.config
+
+    analyzer.update(thresholds=QualityThresholds(), tau_seconds=0.2)
+
+    assert analyzer.config is original
 
 
 def test_custom_thresholds_change_how_quickly_the_gate_opens() -> None:

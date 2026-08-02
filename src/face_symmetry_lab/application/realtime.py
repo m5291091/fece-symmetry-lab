@@ -35,6 +35,7 @@ from face_symmetry_lab.domain.frame_adjustments import (
     composite_background,
 )
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
+from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_MIDLINE_COLOR,
@@ -507,6 +508,10 @@ class RealtimeLandmarkPipeline:
         thresholds: QualityThresholds,
         tau_seconds: float,
         zoom_policy: TrackingZoomPolicy,
+        metric_config: MetricConfig | None = None,
+        history_capacity: int | None = None,
+        age_interval_ms: int | None = None,
+        analysis_interval_ms: int | None = None,
     ) -> None:
         """Atomically apply new Advanced settings (§15.2).
 
@@ -515,18 +520,50 @@ class RealtimeLandmarkPipeline:
         state), the tracking-zoom policy is swapped in place against the
         still-valid last known face, and the recorder starts a new segment
         with a recomputed config fingerprint so exported records before and
-        after this change are never conflated.
+        after this change are never conflated. ``metric_config`` additionally
+        swaps `part_weights`/`sensitivity` (e.g. via
+        `domain.metrics.with_tunables`); ``history_capacity`` resizes the
+        session buffer; ``age_interval_ms`` and ``analysis_interval_ms``
+        retune the two independent sampling cadences. Any left as ``None``
+        keeps its current value.
         """
         if self._analyzer is not None:
-            self._analyzer.update(thresholds=thresholds, tau_seconds=tau_seconds)
+            self._analyzer.update(
+                thresholds=thresholds,
+                tau_seconds=tau_seconds,
+                config=metric_config,
+            )
         update_zoom_policy = getattr(self._landmarker, "update_policy", None)
         if callable(update_zoom_policy):
             update_zoom_policy(zoom_policy)
         if self._recorder is not None:
-            self._recorder.reset(thresholds=thresholds, tau_seconds=tau_seconds)
+            self._recorder.reset(
+                thresholds=thresholds,
+                tau_seconds=tau_seconds,
+                metric_config=metric_config,
+                history_capacity=history_capacity,
+                analysis_interval_ms=analysis_interval_ms,
+            )
+        if analysis_interval_ms is not None:
+            self._set_analysis_interval_ms(analysis_interval_ms)
+        if age_interval_ms is not None and self._demographic_worker is not None:
+            self._demographic_worker.set_interval_ms(age_interval_ms)
         self._clear_cached_geometry()
         self._clear_cached_mask()
         self._reset_demographic_worker()
+
+    def _set_analysis_interval_ms(self, interval_ms: int) -> None:
+        """Retune the landmark-analysis cadence (§15.2 `analysis_interval_ms`).
+
+        Independent of the WebRTC frame rate and of `age_interval_ms`. Takes
+        effect immediately so a throttled frame right after this call is not
+        stuck waiting out the previous cadence.
+        """
+        if interval_ms < 0:
+            raise ValueError("analysis_interval_ms は 0 以上である必要があります。")
+        with self._sample_lock:
+            self._analysis_interval_seconds = interval_ms / 1000.0
+            self._next_analysis_at = self._clock()
 
     def set_midline_enabled(self, enabled: bool) -> None:
         """Update the display-only centre-line preference thread-safely."""
@@ -543,6 +580,17 @@ class RealtimeLandmarkPipeline:
         """Update the display-only background replacement thread-safely."""
         with self._overlay_lock:
             self._background_mode = mode
+
+    @property
+    def metric_config(self) -> MetricConfig | None:
+        """The analyzer's current bundle, or None when no analyzer is attached.
+
+        Lets a caller (e.g. the Advanced settings UI) derive an edited
+        `part_weights`/`sensitivity` bundle via `domain.metrics.with_tunables`
+        from whatever is live right now, including a bundle from a previous
+        `apply_advanced_settings` call.
+        """
+        return self._analyzer.config if self._analyzer is not None else None
 
     @property
     def has_demographic_worker(self) -> bool:

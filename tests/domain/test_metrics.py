@@ -5,6 +5,7 @@ from face_symmetry_lab.domain.metrics import (
     MetricConfigError,
     PartMap,
     build_metric_config,
+    with_tunables,
 )
 
 
@@ -116,3 +117,56 @@ def test_the_midline_needs_at_least_three_points_for_a_line_fit() -> None:
 def test_eye_corner_indices_must_differ() -> None:
     with pytest.raises(MetricConfigError, match="眼"):
         build_metric_config(**_config(left_eye_corners=(33, 33)))
+
+
+def test_with_tunables_overrides_weights_and_sensitivity_only() -> None:
+    """§15.2: editing weights/sensitivity must leave every other field pinned."""
+    config = build_metric_config(**_config())
+    new_weights = {"contour": 0.1, "eyes": 0.5, "nose": 0.3, "mouth": 0.1}
+    new_sensitivity = {"contour": 10.0, "eyes": 20.0, "nose": 30.0, "mouth": 40.0}
+
+    tuned = with_tunables(config, weights=new_weights, sensitivity=new_sensitivity)
+
+    assert tuned.weights == new_weights
+    assert tuned.sensitivity == new_sensitivity
+    assert tuned.metric_version == config.metric_version
+    assert tuned.landmark_map_version == config.landmark_map_version
+    assert tuned.parts == config.parts
+    assert tuned.midline_indices == config.midline_indices
+    assert tuned.left_eye_corners == config.left_eye_corners
+    assert tuned.right_eye_corners == config.right_eye_corners
+
+
+def test_with_tunables_marks_the_result_as_no_longer_frozen() -> None:
+    """An edited bundle can never claim the frozen calibration's provenance."""
+    config = build_metric_config(**_config(sensitivity_frozen=True))
+
+    tuned = with_tunables(
+        config,
+        weights={name: 0.25 for name in PART_NAMES},
+        sensitivity={name: 30.0 for name in PART_NAMES},
+    )
+
+    assert tuned.sensitivity_frozen is False
+
+
+def test_with_tunables_still_rejects_an_invalid_weight_sum() -> None:
+    config = build_metric_config(**_config())
+
+    with pytest.raises(MetricConfigError, match="重み"):
+        with_tunables(
+            config,
+            weights={"contour": 0.3, "eyes": 0.3, "nose": 0.3, "mouth": 0.3},
+            sensitivity={name: 30.0 for name in PART_NAMES},
+        )
+
+
+def test_with_tunables_still_rejects_non_positive_sensitivity() -> None:
+    config = build_metric_config(**_config())
+
+    with pytest.raises(MetricConfigError, match="感度"):
+        with_tunables(
+            config,
+            weights={name: 0.25 for name in PART_NAMES},
+            sensitivity={"contour": 0.0, "eyes": 30.0, "nose": 30.0, "mouth": 30.0},
+        )

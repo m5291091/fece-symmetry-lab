@@ -109,6 +109,19 @@ class DemographicWorker:
                 return None
             return self._latest, self._latest_version
 
+    def set_interval_ms(self, interval_ms: int) -> None:
+        """Change the sampling cadence (§15.2 `age_interval_ms`).
+
+        Takes effect immediately: the next submission is allowed right away,
+        and the new interval governs every submission after that. An
+        in-flight inference is unaffected.
+        """
+        if interval_ms < 0:
+            raise ValueError("interval_ms は 0 以上である必要があります。")
+        with self._state_lock:
+            self._interval_seconds = interval_ms / 1000.0
+            self._next_submit_at = self._clock()
+
     def reset(self) -> None:
         """Start a new segment: drop the cached result and any in-flight one."""
         with self._state_lock:

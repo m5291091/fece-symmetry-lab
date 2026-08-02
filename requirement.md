@@ -852,11 +852,11 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 | `valid_frames_to_ok` | 5 | 1〜30 | Advanced設定 |
 | `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` | Advanced設定 |
 | `ema_tau_seconds` | 0.4 | 0.05〜5.0 | Advanced設定 |
-| `history_capacity` | 3,000 | 100〜20,000 | 未公開 |
-| `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 | 未公開 |
-| `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない | 未公開 |
-| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 | 未公開（frozen bundle、要「比較不能」確認UI） |
-| `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 | 未公開（同上） |
+| `history_capacity` | 3,000 | 100〜20,000 | Advanced設定 |
+| `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 | Advanced設定 |
+| `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない | Advanced設定 |
+| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 | Advanced設定内の専用区画（既定非活性、frozen bundle、「比較不能」確認チェック必須） |
+| `sensitivity` | 指標 bundle 値 | 各正数。編集時は「比較不能になる」確認が必要 | Advanced設定内の専用区画（同上） |
 | `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026） | Advanced設定 |
 | `zoom_min_window` | 0.18 | 0 超〜1.0（同上） | Advanced設定 |
 | `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） | Advanced設定 |
@@ -865,10 +865,10 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 | `brightness_gain` | 1.0 | 0.25〜3.0（FR-028） | 基本UI（常時表示のスライダー） |
 | `background_mode` | OFF | OFF / BLACK / WHITE（FR-027） | 基本UI（常時表示のラジオボタン、モデル未配置時は無効） |
 
-- scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。`ui/camera.py`の`_render_advanced_settings`は「設定を適用」ボタン経由で`RealtimeLandmarkPipeline.apply_advanced_settings`を呼び、`FrameAnalyzer.update`・`TrackingZoomLandmarker.update_policy`・`SessionRecorder.reset(thresholds=..., tau_seconds=...)`をまとめて実行する。
+- scoring に影響する変更は `config_revision` と `segment_id` を更新し、EMA を reset する。`ui/camera.py`の`_render_advanced_settings`は「設定を適用」ボタン経由で`RealtimeLandmarkPipeline.apply_advanced_settings`を呼び、`FrameAnalyzer.update`（`metric_config`を含む）・`TrackingZoomLandmarker.update_policy`・`SessionRecorder.reset(thresholds=..., tau_seconds=..., metric_config=..., history_capacity=..., analysis_interval_ms=...)`・`DemographicWorker.set_interval_ms`・pipeline自身の`analysis_interval_ms`をまとめて実行する。
 - 基本ユーザーには検出信頼度、角度閾値、係数、model path を常時表示しない（`st.expander`で既定非表示）。`brightness_gain`/`background_mode`は幾何・スコア計算に影響しない表示専用設定のため、Advanced設定の外（常時表示）に置く。
-- 設定モデルは immutable。UI 入力から新しい instance を生成し、成功後に atomic swap する。
-- `part_weights`・`sensitivity`・`history_capacity`・`age_interval_ms`・`analysis_interval_ms`のUI編集は未実装（既定値固定）。frozen metric bundleとの整合、「比較不能になる」確認ダイアログ、workerの再構成が必要なため別途対応する。
+- 設定モデルは immutable。UI 入力から新しい instance を生成し、成功後に atomic swap する。`part_weights`/`sensitivity`の編集は`domain.metrics.with_tunables`で凍結bundleから新しい`MetricConfig`を導出し、結果は常に`sensitivity_frozen=False`として記録する。
+- `part_weights`・`sensitivity`の編集は既定で非活性（disabled）のスライダーとして表示し、「既定値からの変更を理解し、比較不能になることに同意します」チェックを付けた場合だけ、その適用操作で値が反映される。チェックなしで「設定を適用」を押した場合、これら2項目は変更前の値のまま維持される。
 
 ## 16. リポジトリ構成
 

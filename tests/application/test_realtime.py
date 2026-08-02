@@ -111,7 +111,8 @@ class ManualClock:
 class StubAnalyzer:
     def __init__(self) -> None:
         self.reset_calls = 0
-        self.update_calls: list[tuple[object, float]] = []
+        self.update_calls: list[tuple[object, float, object]] = []
+        self.config = object()
 
     def analyze(
         self,
@@ -135,8 +136,16 @@ class StubAnalyzer:
     def reset(self) -> None:
         self.reset_calls += 1
 
-    def update(self, *, thresholds: object, tau_seconds: float) -> None:
-        self.update_calls.append((thresholds, tau_seconds))
+    def update(
+        self,
+        *,
+        thresholds: object,
+        tau_seconds: float,
+        config: object = None,
+    ) -> None:
+        self.update_calls.append((thresholds, tau_seconds, config))
+        if config is not None:
+            self.config = config
 
 
 class RecorderSpy:
@@ -175,6 +184,7 @@ class FakeDemographicWorker:
         self.reset_calls = 0
         self.closed = False
         self.due = True
+        self.interval_updates: list[int] = []
         self._latest: tuple[DemographicEstimate, int] | None = None
 
     def is_due(self) -> bool:
@@ -182,6 +192,9 @@ class FakeDemographicWorker:
 
     def submit(self, rgb_crop: NDArray[np.uint8]) -> None:
         self.submitted.append(rgb_crop)
+
+    def set_interval_ms(self, interval_ms: int) -> None:
+        self.interval_updates.append(interval_ms)
 
     def set_latest(self, estimate: DemographicEstimate, version: int) -> None:
         self._latest = (estimate, version)
@@ -613,9 +626,114 @@ def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> N
         zoom_policy=zoom_policy,
     )
 
-    assert analyzer.update_calls == [(thresholds, 0.7)]
+    assert analyzer.update_calls == [(thresholds, 0.7, None)]
     assert landmarker.policy_updates == [zoom_policy]
-    assert recorder.reset_kwargs[-1] == {"thresholds": thresholds, "tau_seconds": 0.7}
+    assert recorder.reset_kwargs[-1] == {
+        "thresholds": thresholds,
+        "tau_seconds": 0.7,
+        "metric_config": None,
+        "history_capacity": None,
+        "analysis_interval_ms": None,
+    }
+
+
+def test_metric_config_is_none_without_an_analyzer() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    assert pipeline.metric_config is None
+
+
+def test_metric_config_reflects_the_attached_analyzers_bundle() -> None:
+    analyzer = StubAnalyzer()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer)
+
+    assert pipeline.metric_config is analyzer.config
+
+
+def test_apply_advanced_settings_can_swap_the_metric_config() -> None:
+    """§15.2: an edited part_weights/sensitivity bundle must reach analyzer + recorder."""
+    landmarker = FakeLandmarker()
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder)
+    metric_config = object()
+
+    pipeline.apply_advanced_settings(
+        thresholds=object(),
+        tau_seconds=0.4,
+        zoom_policy=object(),
+        metric_config=metric_config,
+    )
+
+    assert analyzer.update_calls[-1][2] is metric_config
+    assert recorder.reset_kwargs[-1]["metric_config"] is metric_config
+
+
+def test_apply_advanced_settings_can_resize_history_capacity() -> None:
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=StubAnalyzer(), recorder=recorder)
+
+    pipeline.apply_advanced_settings(
+        thresholds=object(),
+        tau_seconds=0.4,
+        zoom_policy=object(),
+        history_capacity=500,
+    )
+
+    assert recorder.reset_kwargs[-1]["history_capacity"] == 500
+
+
+def test_apply_advanced_settings_updates_the_demographic_worker_interval() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(
+        FakeLandmarker(),
+        analyzer=StubAnalyzer(),
+        recorder=RecorderSpy(),
+        demographic_worker=worker,
+    )
+
+    pipeline.apply_advanced_settings(
+        thresholds=object(),
+        tau_seconds=0.4,
+        zoom_policy=object(),
+        age_interval_ms=2000,
+    )
+
+    assert worker.interval_updates == [2000]
+
+
+def test_apply_advanced_settings_without_an_age_interval_leaves_the_worker_untouched() -> None:
+    worker = FakeDemographicWorker()
+    pipeline = _pipeline(
+        FakeLandmarker(),
+        analyzer=StubAnalyzer(),
+        recorder=RecorderSpy(),
+        demographic_worker=worker,
+    )
+
+    pipeline.apply_advanced_settings(thresholds=object(), tau_seconds=0.4, zoom_policy=object())
+
+    assert worker.interval_updates == []
+
+
+def test_apply_advanced_settings_can_change_the_analysis_cadence() -> None:
+    """§15.2 `analysis_interval_ms`: independent of the WebRTC frame rate."""
+    clock = ManualClock()
+    landmarker = FakeLandmarker()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker, clock=clock, analysis_interval_ms=1000
+    )
+    pipeline.process(_rgb())  # consumes the first admitted slot
+
+    pipeline.apply_advanced_settings(
+        thresholds=object(),
+        tau_seconds=0.4,
+        zoom_policy=object(),
+        analysis_interval_ms=0,
+    )
+    pipeline.process(_rgb())  # would be throttled under the old 1000ms cadence
+
+    assert len(landmarker.calls) == 2
 
 
 def test_apply_advanced_settings_clears_cached_geometry_and_background() -> None:

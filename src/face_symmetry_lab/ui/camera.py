@@ -41,21 +41,24 @@ from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
 from face_symmetry_lab.adapters.io.model_store import InstallStatus, file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
-from face_symmetry_lab.application.demographic_worker import DemographicWorker
+from face_symmetry_lab.application.demographic_worker import (
+    DEFAULT_DEMOGRAPHIC_INTERVAL_MS,
+    DemographicWorker,
+)
 from face_symmetry_lab.application.quality import QualityConfigError, QualityThresholds
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
     PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
-from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.application.session import DEFAULT_HISTORY_CAPACITY, SessionRecorder
 from face_symmetry_lab.domain.frame_adjustments import (
     MAX_BRIGHTNESS_GAIN,
     MIN_BRIGHTNESS_GAIN,
     BackgroundMode,
 )
 from face_symmetry_lab.domain.landmarks import TrackingStatus
-from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfigError, with_tunables
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomError, TrackingZoomPolicy
 from face_symmetry_lab.ui.camera_overlay import draw_camera_metrics
@@ -76,6 +79,16 @@ _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.BLACK: "黒",
     BackgroundMode.WHITE: "白",
 }
+
+#: §15.2 initial candidates, mirroring configs/metrics/symmetry-2d-v1.json.
+_DEFAULT_PART_WEIGHT: Final[float] = 0.25
+_DEFAULT_SENSITIVITY: Final[dict[str, float]] = {
+    "contour": 30.0,
+    "eyes": 40.0,
+    "nose": 40.0,
+    "mouth": 35.0,
+}
+_ANALYSIS_INTERVAL_CHOICES_MS: Final[tuple[int, ...]] = (125, 200, 333)
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
@@ -335,6 +348,75 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
             "max_scale", 1.0, 8.0, 4.0, step=0.5, key="adv_zoom_max_scale"
         )
 
+        st.markdown("##### 履歴・独立cadence")
+        cadence_columns = st.columns(3)
+        history_capacity = cadence_columns[0].slider(
+            "history_capacity",
+            100,
+            20_000,
+            DEFAULT_HISTORY_CAPACITY,
+            step=100,
+            key="adv_history_capacity",
+            help="セッション履歴の保持件数の上限です。左右差の計算には影響しません。",
+        )
+        age_interval_ms = cadence_columns[1].slider(
+            "age_interval_ms",
+            500,
+            10_000,
+            DEFAULT_DEMOGRAPHIC_INTERVAL_MS,
+            step=100,
+            key="adv_age_interval_ms",
+            help="年齢・性別推定の実行間隔です。左右差分析の頻度とは独立しています。",
+        )
+        analysis_interval_ms = cadence_columns[2].radio(
+            "analysis_interval_ms",
+            options=_ANALYSIS_INTERVAL_CHOICES_MS,
+            index=0,
+            key="adv_analysis_interval_ms",
+            horizontal=True,
+            help="映像フレームレートとは独立した、左右差分析の実行間隔です。",
+        )
+
+        st.divider()
+        st.markdown("##### 部位の重み・感度（試験中の指標）")
+        st.caption(
+            "凍結済みの既定係数からの変更です。変更すると、これまでの記録や"
+            "既定係数での結果と数値を比較できなくなります。"
+        )
+        confirm_tunables = st.checkbox(
+            "既定値からの変更を理解し、比較不能になることに同意します",
+            value=False,
+            key="adv_confirm_tunables",
+        )
+        weight_columns = st.columns(4)
+        weight_values = {
+            name: weight_columns[index].slider(
+                f"重み: {name}",
+                0.0,
+                1.0,
+                _DEFAULT_PART_WEIGHT,
+                step=0.01,
+                key=f"adv_weight_{name}",
+                disabled=not confirm_tunables,
+            )
+            for index, name in enumerate(PART_NAMES)
+        }
+        sensitivity_columns = st.columns(4)
+        sensitivity_values = {
+            name: sensitivity_columns[index].slider(
+                f"感度: {name}",
+                0.1,
+                100.0,
+                _DEFAULT_SENSITIVITY[name],
+                step=0.1,
+                key=f"adv_sensitivity_{name}",
+                disabled=not confirm_tunables,
+            )
+            for index, name in enumerate(PART_NAMES)
+        }
+        if not confirm_tunables:
+            st.caption("上の同意チェックが付くまで、重み・感度の変更は適用されません。")
+
         if st.button("設定を適用", key="apply_advanced_settings"):
             try:
                 thresholds = QualityThresholds(
@@ -355,13 +437,24 @@ def _render_advanced_settings(pipeline: RealtimeLandmarkPipeline) -> None:
                     target_px=target_px,
                     max_scale=max_scale,
                 )
-            except (QualityConfigError, TrackingZoomError) as error:
+                metric_config = None
+                if confirm_tunables and pipeline.metric_config is not None:
+                    metric_config = with_tunables(
+                        pipeline.metric_config,
+                        weights=weight_values,
+                        sensitivity=sensitivity_values,
+                    )
+            except (QualityConfigError, TrackingZoomError, MetricConfigError) as error:
                 st.error(str(error))
             else:
                 pipeline.apply_advanced_settings(
                     thresholds=thresholds,
                     tau_seconds=ema_tau_seconds,
                     zoom_policy=zoom_policy,
+                    metric_config=metric_config,
+                    history_capacity=history_capacity,
+                    age_interval_ms=age_interval_ms,
+                    analysis_interval_ms=analysis_interval_ms,
                 )
                 st.success("設定を適用し、新しい比較区間を開始しました。")
 
