@@ -16,6 +16,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
+| 自動調整の判断ロジック | `src/face_symmetry_lab/application/auto_tune_controller.py` |
 | Realtime age/gender worker | `src/face_symmetry_lab/application/demographic_worker.py` |
 | Session history / export records | `src/face_symmetry_lab/application/session.py` |
 | CSV / JSON export adapter | `src/face_symmetry_lab/adapters/export/session_exporter.py` |
@@ -63,6 +64,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
+| 自動調整の判断ロジック | `application/auto_tune_controller.py` | `tests/application/test_auto_tune_controller.py` | FR-029, FR-030, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | 年齢・性別の独立worker | `application/demographic_worker.py` | `tests/application/test_demographic_worker.py` | FR-022〜024, §14.3 |
 | Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
 | Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
@@ -78,6 +80,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
 | Score presentation | `ui/scores.py` | UI / E2E tests は未整備 | FR-014, §5.3 |
+| CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
@@ -97,7 +100,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `48e8a4a3396b80e4245b9e2837bca79749da1d5552ec34bfad215b3e8e56d6a9`_
+_File-list SHA-256: `d85365e61023f0078b2a82d37c0e560f42ee50407d8f93d5d5567e304c0f631d`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -141,13 +144,13 @@ face-symmetry-lab/
         - … (3 files)
       - … (1 files)
     - `application/`
-      - … (9 files)
+      - … (10 files)
     - `domain/`
       - … (15 files)
     - `runtime/`
       - … (2 files)
     - `ui/`
-      - … (6 files)
+      - … (7 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -161,6 +164,7 @@ face-symmetry-lab/
     - `test_tracking_zoom_landmarker.py`
   - `application/`
     - `test_analyzer.py`
+    - `test_auto_tune_controller.py`
     - `test_demographic_worker.py`
     - `test_image_input.py`
     - `test_quality.py`

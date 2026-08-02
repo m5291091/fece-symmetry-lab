@@ -704,15 +704,26 @@ def test_an_out_of_range_brightness_gain_is_refused_at_construction() -> None:
         _pipeline(FakeLandmarker(), brightness_gain=10.0)
 
 
-def test_set_brightness_gain_updates_the_detector_input_only() -> None:
+def test_an_auto_tuned_gain_reaches_the_detector_on_the_following_frame() -> None:
+    """Auto-tuning is the only thing that changes gain at runtime (§14.3c,
+    no manual setter exists), and its result must reach the detector while
+    still leaving the displayed frame raw."""
     landmarker = FakeLandmarker(face_count=0)
-    pipeline = _pipeline(landmarker)
+    clock = ManualClock()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        clock=clock,
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+    )
 
-    pipeline.set_brightness_gain(0.5)
-    painted = pipeline.process(_flat_rgb(100))
+    pipeline.process(_flat_rgb(64))  # 128 target / 64 measured -> gain 2.0
+    clock.advance(2.0)  # past the retune throttle
+    painted = pipeline.process(_flat_rgb(64))
 
-    assert np.all(landmarker.received_images[0] == 50)
-    assert np.all(painted == 100)
+    assert pipeline.brightness_gain == pytest.approx(2.0)
+    assert np.all(landmarker.received_images[1] == 128)  # 64 * 2.0
+    assert np.all(painted == 64)  # display stays raw
 
 
 def test_background_mode_off_never_calls_the_segmenter() -> None:
@@ -1147,17 +1158,6 @@ def test_auto_tuned_brightness_is_clamped_to_fr_028_bounds() -> None:
     pipeline.process(_flat_rgb(1))  # would recommend a gain far above 3.0
 
     assert pipeline.brightness_gain == pytest.approx(MAX_BRIGHTNESS_GAIN)
-
-
-def test_set_auto_tune_enabled_can_be_turned_off_again() -> None:
-    landmarker = FakeLandmarker(face_count=0)
-    pipeline = _pipeline(landmarker, auto_tune_enabled=True)
-
-    pipeline.process(_flat_rgb(64))
-    pipeline.set_auto_tune_enabled(False)
-    pipeline.process(_flat_rgb(1))  # would move gain again if auto-tune were still on
-
-    assert pipeline.brightness_gain == pytest.approx(2.0)
 
 
 def test_auto_tune_enabled_updates_the_landmarker_zoom_policy_from_face_area() -> None:

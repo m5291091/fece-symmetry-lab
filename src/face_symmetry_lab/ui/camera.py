@@ -19,11 +19,6 @@ from streamlit.delta_generator import DeltaGenerator
 from streamlit_webrtc import WebRtcMode, WebRtcStreamerContext, webrtc_streamer
 
 from face_symmetry_lab import __version__
-from face_symmetry_lab.adapters.export.session_exporter import (
-    csv_bytes,
-    export_filename,
-    json_bytes,
-)
 from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
@@ -58,6 +53,7 @@ from face_symmetry_lab.ui.camera_overlay import (
     draw_camera_metrics,
     guidance_message,
 )
+from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.model_setup import (
     configured_demographic_path,
     configured_segmenter_path,
@@ -313,35 +309,17 @@ def _render_live_analysis_block(
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
-    bundle = pipeline.export_bundle()
-    if bundle is None or not bundle.records:
-        return
-
-    st.divider()
-    st.subheader("セッションデータのエクスポート")
-    st.warning(
-        "姿勢・左右差などの顔由来の派生データを含みます。"
-        "共有先と利用目的を確認してから保存してください。"
-    )
-    revision = bundle.manifest.config_revisions[-1]
-    st.caption(
-        f"{len(bundle.records)} 件 · metric {bundle.manifest.metric_version} · "
-        f"config {revision.fingerprint[:12]}…"
-    )
-    csv_column, json_column = st.columns(2)
-    csv_column.download_button(
-        "CSV を保存",
-        data=csv_bytes(bundle),
-        file_name=export_filename(bundle, "csv"),
-        mime="text/csv",
-        key="download_session_csv",
-    )
-    json_column.download_button(
-        "JSON を保存",
-        data=json_bytes(bundle),
-        file_name=export_filename(bundle, "json"),
-        mime="application/json",
-        key="download_session_json",
+    render_export_panel(
+        pipeline.export_bundle(),
+        heading="セッションデータのエクスポート",
+        warning=(
+            "姿勢・左右差などの顔由来の派生データを含みます。"
+            "共有先と利用目的を確認してから保存してください。"
+        ),
+        key_prefix="download_session",
+        # A live session accumulates records, so the count tells the user
+        # how much this download actually covers.
+        show_record_count=True,
     )
 
 

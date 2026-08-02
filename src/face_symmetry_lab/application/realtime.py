@@ -8,10 +8,8 @@ stream (§14.3, §14.4, NFR-017).
 
 from __future__ import annotations
 
-import statistics
 import threading
 import time
-from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
@@ -20,6 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
+from face_symmetry_lab.application.auto_tune_controller import AutoTuneController, DisplayTuning
 from face_symmetry_lab.application.image_input import ImageInputError, extract_face_crop
 from face_symmetry_lab.application.ports import (
     DemographicSampler,
@@ -30,11 +29,7 @@ from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.domain.auto_tuning import (
     recommend_age_interval_ms,
-    recommend_analysis_interval_ms,
-    recommend_brightness_gain,
     recommend_history_capacity,
-    recommend_sensitivity,
-    recommend_zoom_policy,
 )
 from face_symmetry_lab.domain.export import SessionExport
 from face_symmetry_lab.domain.frame_adjustments import (
@@ -43,10 +38,9 @@ from face_symmetry_lab.domain.frame_adjustments import (
     FrameAdjustmentError,
     apply_brightness_gain,
     composite_background,
-    mean_luminance,
 )
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
-from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, with_tunables
+from face_symmetry_lab.domain.metrics import MetricConfig, with_tunables
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_MIDLINE_COLOR,
@@ -71,25 +65,6 @@ DEFAULT_GEOMETRY_TTL_MS = 250
 #: would expire the cache every single cycle, which is exactly what caused the
 #: reported background-replacement flicker at the 333ms candidate.
 _GEOMETRY_TTL_SAFETY_MULTIPLIER = 2.0
-
-#: §14.3c brightness/zoom auto-tuning (FR-029): recomputed on a slower cadence
-#: than analysis, since `apply_brightness_gain` caches its lookup table per
-#: exact gain value — holding gain stable for longer keeps that cache hot on
-#: the full-video-rate `_apply_brightness` path instead of rebuilding it on
-#: every analysed frame.
-_DISPLAY_RETUNE_INTERVAL_SECONDS = 1.0
-
-#: §14.3d cadence auto-tuning (FR-030): non-scoring, so no segment reset is needed.
-_CADENCE_PROCESSING_WINDOW = 20
-_MIN_CADENCE_SAMPLES = 5
-_CADENCE_RETUNE_INTERVAL_SECONDS = 2.0
-
-#: §14.3d sensitivity auto-tuning (FR-030): scoring-affecting, throttled and
-#: gated on a minimum relative change so it doesn't churn segments needlessly.
-_SENSITIVITY_DISTANCE_WINDOW = 24
-_MIN_SENSITIVITY_SAMPLES = 8
-_SENSITIVITY_RETUNE_INTERVAL_SECONDS = 10.0
-_SENSITIVITY_CHANGE_THRESHOLD = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +147,6 @@ class RealtimeLandmarkPipeline:
         self._midline_color = midline_color
         self._brightness_gain = brightness_gain
         self._background_mode = background_mode
-        self._auto_tune_enabled = bool(auto_tune_enabled)
         self._analysis_interval_seconds = analysis_interval_ms / 1000.0
         #: Floor for the effective TTL widened by `_recompute_geometry_ttl`,
         #: which only cadence auto-tuning calls (§14.3d) — an explicitly
@@ -182,13 +156,13 @@ class RealtimeLandmarkPipeline:
         self._geometry_ttl_seconds = self._base_geometry_ttl_seconds
         self._started_at = clock()
         self._next_analysis_at = self._started_at
-        self._next_display_retune_at = self._started_at
-        self._processing_ms_window: deque[float] = deque(maxlen=_CADENCE_PROCESSING_WINDOW)
-        self._next_cadence_retune_at = self._started_at
-        self._distance_windows: dict[str, deque[float]] = {
-            name: deque(maxlen=_SENSITIVITY_DISTANCE_WINDOW) for name in PART_NAMES
-        }
-        self._next_sensitivity_retune_at = self._started_at
+        #: §14.3c/d: owns every retune window and throttle. Only ever touched
+        #: from `_analyse`, which `FrameScheduler` serializes, so it needs no
+        #: lock of its own.
+        self._auto_tune = AutoTuneController(
+            enabled=auto_tune_enabled,
+            started_at=self._started_at,
+        )
         self._throttled_frames = 0
         self._frame_id = 0
         self._last_timestamp_ms = -1
@@ -290,26 +264,19 @@ class RealtimeLandmarkPipeline:
                 timestamp_ms=timestamp_ms,
             )
             landmark_ms = (self._clock() - started) * 1000.0
-            display_retune_due = self._display_retune_due(at=started)
             if frame.has_single_face:
                 with self._overlay_lock:
                     self._cached_geometry = frame
                     self._cached_geometry_at = started
-                self._maybe_auto_tune_zoom(frame, retune_due=display_retune_due)
             else:
                 self._clear_cached_geometry()
+            # §14.3c: measured on the raw frame, and only ever affecting the
+            # *next* one, so where this sits relative to painting is free.
+            self._apply_display_tuning(self._auto_tune.display_tuning(rgb_image, frame, at=started))
             painted = self._paint_geometry(rgb_image, frame)
-            self._maybe_auto_tune_brightness(rgb_image, retune_due=display_retune_due)
-            with self._overlay_lock:
-                background_active = (
-                    self._background_mode is not BackgroundMode.OFF and self._segmenter is not None
-                )
-            if background_active:
-                segmentation_started = self._clock()
-                painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
-                segmentation_ms = (self._clock() - segmentation_started) * 1000.0
-            else:
-                painted = self._apply_background(rgb_image, painted, timestamp_ms, at=started)
+            painted, segmentation_ms = self._apply_background(
+                rgb_image, painted, timestamp_ms, at=started
+            )
             self._submit_demographic_sample(rgb_image, frame)
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
@@ -365,8 +332,14 @@ class RealtimeLandmarkPipeline:
                 # Export bookkeeping is secondary to keeping the camera alive.
                 pass
 
-        self._maybe_auto_tune_cadence(processing_ms, at=finished)
-        self._maybe_auto_tune_sensitivity(analysis, at=finished)
+        self._apply_cadence_tuning(
+            self._auto_tune.cadence_tuning(
+                processing_ms,
+                at=finished,
+                current_interval_ms=self.analysis_interval_ms,
+            )
+        )
+        self._apply_sensitivity_tuning(analysis, at=finished)
 
         with self._sample_lock:
             throttled_frames = self._throttled_frames
@@ -434,8 +407,11 @@ class RealtimeLandmarkPipeline:
         timestamp_ms: int,
         *,
         at: float,
-    ) -> NDArray[np.uint8]:
+    ) -> tuple[NDArray[np.uint8], float]:
         """Composite a solid background onto the display frame only (§14.3b).
+
+        Returns the frame and how long segmentation took (§14.3f), which is
+        ``0.0`` whenever replacement is off or unavailable and nothing ran.
 
         Segmentation runs on the source frame, not ``painted``, so overlay
         graphics never leak into the mask. A failure here is display-only
@@ -446,16 +422,17 @@ class RealtimeLandmarkPipeline:
             mode = self._background_mode
             segmenter = self._segmenter
         if mode is BackgroundMode.OFF or segmenter is None:
-            return painted
+            return painted, 0.0
+        started = self._clock()
         try:
             mask = segmenter.segment(source_image, timestamp_ms=timestamp_ms)
             composited = composite_background(painted, mask, BACKGROUND_COLORS[mode])
         except Exception:
-            return painted
+            return painted, (self._clock() - started) * 1000.0
         with self._overlay_lock:
             self._cached_mask = mask
             self._cached_mask_at = at
-        return composited
+        return composited, (self._clock() - started) * 1000.0
 
     def _composite_cached_background(self, painted: NDArray[np.uint8]) -> NDArray[np.uint8]:
         with self._overlay_lock:
@@ -478,104 +455,34 @@ class RealtimeLandmarkPipeline:
             self._cached_mask = None
             self._cached_mask_at = None
 
-    def _display_retune_due(self, *, at: float) -> bool:
-        """Throttle brightness/zoom recomputation to `_DISPLAY_RETUNE_INTERVAL_SECONDS`.
+    def _apply_display_tuning(self, tuning: DisplayTuning) -> None:
+        """Adopt §14.3c's brightness/zoom recommendations, if it made any."""
+        if tuning.brightness_gain is not None:
+            with self._overlay_lock:
+                self._brightness_gain = tuning.brightness_gain
+        if tuning.zoom_policy is not None:
+            self._update_zoom_policy(tuning.zoom_policy)
 
-        `apply_brightness_gain` caches its lookup table per exact gain value
-        (§14.3b); `_apply_brightness` only runs at the analysis cadence now
-        (never on every video frame — §14.3b no longer touches display
-        output), but holding gain stable between retunes still keeps that
-        cache hot rather than rebuilding the LUT on every analysed frame.
+    def _update_zoom_policy(self, policy: TrackingZoomPolicy) -> None:
+        """Push a zoom policy to the landmarker, if it tracks one at all.
+
+        `LandmarkProvider` does not require zoom support (§14.3a wraps a
+        plain provider), so a landmarker without `update_policy` is a
+        no-op rather than an error.
         """
-        with self._sample_lock:
-            due = at >= self._next_display_retune_at
-            if due:
-                self._next_display_retune_at = at + _DISPLAY_RETUNE_INTERVAL_SECONDS
-        return due
-
-    def _maybe_auto_tune_brightness(
-        self,
-        rgb_image: NDArray[np.uint8],
-        *,
-        retune_due: bool,
-    ) -> None:
-        """§14.3c: nudge `brightness_gain` toward mid-gray on a slow cadence.
-
-        `rgb_image` is the raw (pre-correction) frame — §14.3b no longer
-        brightens display output, so the measurement is a direct reading of
-        ambient luminance rather than an already-corrected one, and the
-        recommendation is an absolute target gain (no `current_gain` input
-        needed). Any failure to measure or compute a recommendation is
-        swallowed and the current gain is kept (AC-AUTOTUNE-01) — this is a
-        detection convenience, not part of the analysis pipeline that
-        NFR-017's stream-continuity guarantee already covers.
-        """
-        with self._overlay_lock:
-            enabled = self._auto_tune_enabled
-        if not enabled or not retune_due:
-            return
-        try:
-            measured = mean_luminance(rgb_image)
-            new_gain = recommend_brightness_gain(measured)
-        except Exception:
-            return
-        with self._overlay_lock:
-            self._brightness_gain = new_gain
-
-    def _maybe_auto_tune_zoom(self, frame: LandmarkFrame, *, retune_due: bool) -> None:
-        """§14.3c: retune the tracking-zoom policy from the tracked face area.
-
-        No-ops when auto-tune is off, it isn't due yet, the frame lacks a
-        confirmed single-face area, or the landmarker does not support zoom
-        policies at all. Any failure is swallowed, keeping the previous
-        policy (AC-AUTOTUNE-01).
-        """
-        with self._overlay_lock:
-            enabled = self._auto_tune_enabled
-        if not enabled or not retune_due:
-            return
-        ratio = frame.face_area_ratio
-        if ratio is None:
-            return
         update_zoom_policy = getattr(self._landmarker, "update_policy", None)
-        if not callable(update_zoom_policy):
-            return
-        try:
-            policy = recommend_zoom_policy(ratio)
-        except Exception:
-            return
-        update_zoom_policy(policy)
+        if callable(update_zoom_policy):
+            update_zoom_policy(policy)
 
-    def _maybe_auto_tune_cadence(self, processing_ms: float, *, at: float) -> None:
-        """§14.3d: retune cadence settings from measured processing load.
+    def _apply_cadence_tuning(self, new_interval_ms: int | None) -> None:
+        """Adopt §14.3d's cadence recommendation, if it made one.
 
         `analysis_interval_ms`/`age_interval_ms`/`history_capacity` don't
         affect scoring (§15.2), so this never touches config_revision,
-        segment, or EMA — only `_set_analysis_interval_ms`, the demographic
+        segment, or EMA — only the sampling cadence, the demographic
         worker's own interval, and the recorder's non-disruptive resize.
         """
-        with self._overlay_lock:
-            enabled = self._auto_tune_enabled
-        if not enabled:
-            return
-        self._processing_ms_window.append(processing_ms)
-        with self._sample_lock:
-            due = at >= self._next_cadence_retune_at
-            if due:
-                self._next_cadence_retune_at = at + _CADENCE_RETUNE_INTERVAL_SECONDS
-        if not due or len(self._processing_ms_window) < _MIN_CADENCE_SAMPLES:
-            return
-        try:
-            mean_processing_ms = statistics.fmean(self._processing_ms_window)
-            new_interval_ms = recommend_analysis_interval_ms(mean_processing_ms)
-        except Exception:
-            return
-        if new_interval_ms == self.analysis_interval_ms:
-            # `age_interval_ms`/`history_capacity` are pure functions of
-            # `analysis_interval_ms` alone, so an unchanged recommendation
-            # means neither would change either. Skipping here avoids
-            # rebuilding the recorder's history buffer under lock every
-            # retune tick for the entire session (AC-AUTOTUNE-02).
+        if new_interval_ms is None:
             return
         self._set_analysis_interval_ms(new_interval_ms)
         self._recompute_geometry_ttl()
@@ -594,54 +501,21 @@ class RealtimeLandmarkPipeline:
             else:
                 self._recorder.resize_history_capacity(capacity)
 
-    def _maybe_auto_tune_sensitivity(
-        self,
-        analysis: AnalysisOutcome | None,
-        *,
-        at: float,
-    ) -> None:
-        """§14.3d: retune `sensitivity` from each part's raw-distance jitter.
+    def _apply_sensitivity_tuning(self, analysis: AnalysisOutcome | None, *, at: float) -> None:
+        """Adopt §14.3d's `sensitivity` recommendation, if it made one.
 
-        `part_weights` is never touched (§14.3d, "Explain, do not judge"). A
-        change is applied — via the same `apply_advanced_settings` path a
-        manual edit uses, so config_revision/segment/EMA reset exactly as
-        §15.2 already requires for a scoring-affecting change — only when at
-        least one part's recommendation differs from its current value by
-        more than `_SENSITIVITY_CHANGE_THRESHOLD`, so a stable signal never
-        churns the session.
+        Goes through `apply_advanced_settings` so config_revision, segment
+        and EMA reset exactly as §15.2 requires of any scoring-affecting
+        change. `part_weights` is passed through untouched (§14.3d,
+        "Explain, do not judge").
         """
-        with self._overlay_lock:
-            enabled = self._auto_tune_enabled
-        if not enabled or self._analyzer is None:
+        # Checked before touching the analyzer at all: with auto-tuning off
+        # nothing here may read its config, let alone swap it.
+        if not self._auto_tune.enabled or self._analyzer is None:
             return
-        if analysis is not None and analysis.symmetry is not None:
-            for name in PART_NAMES:
-                distance = analysis.symmetry.distance(name)
-                if distance is not None:
-                    self._distance_windows[name].append(distance)
-        if at < self._next_sensitivity_retune_at:
-            return
-        self._next_sensitivity_retune_at = at + _SENSITIVITY_RETUNE_INTERVAL_SECONDS
-
         config = self._analyzer.config
-        recommended: dict[str, float] = {}
-        changed = False
-        for name in PART_NAMES:
-            window = self._distance_windows[name]
-            base = config.sensitivity[name]
-            if len(window) < _MIN_SENSITIVITY_SAMPLES:
-                recommended[name] = base
-                continue
-            try:
-                mean = statistics.fmean(window)
-                stddev = statistics.pstdev(window, mu=mean)
-                value = recommend_sensitivity(base, distance_mean=mean, distance_stddev=stddev)
-            except Exception:
-                value = base
-            recommended[name] = value
-            if base > 0 and abs(value - base) / base > _SENSITIVITY_CHANGE_THRESHOLD:
-                changed = True
-        if not changed:
+        recommended = self._auto_tune.sensitivity_tuning(analysis, at=at, config=config)
+        if recommended is None:
             return
         try:
             new_config = with_tunables(config, weights=config.weights, sensitivity=recommended)
@@ -800,9 +674,7 @@ class RealtimeLandmarkPipeline:
                 tau_seconds=tau_seconds,
                 config=metric_config,
             )
-        update_zoom_policy = getattr(self._landmarker, "update_policy", None)
-        if callable(update_zoom_policy):
-            update_zoom_policy(zoom_policy)
+        self._update_zoom_policy(zoom_policy)
         if self._recorder is not None:
             self._recorder.reset(
                 thresholds=thresholds,
@@ -852,31 +724,18 @@ class RealtimeLandmarkPipeline:
         with self._overlay_lock:
             self._midline_enabled = bool(enabled)
 
-    def set_brightness_gain(self, gain: float) -> None:
-        """Update the brightness gain applied to detection input and display."""
-        apply_brightness_gain(np.zeros((1, 1, 3), dtype=np.uint8), gain)
-        with self._overlay_lock:
-            self._brightness_gain = gain
-
     def set_background_mode(self, mode: BackgroundMode) -> None:
         """Update the display-only background replacement thread-safely."""
         with self._overlay_lock:
             self._background_mode = mode
 
-    def set_auto_tune_enabled(self, enabled: bool) -> None:
-        """Toggle AI-assisted brightness/zoom auto-tuning (§14.3c, FR-029).
-
-        While on, `brightness_gain` and the landmarker's zoom policy are
-        recomputed from frame statistics each analysed frame instead of
-        following manual UI input; turning it off freezes whatever values
-        auto-tuning last picked for manual editing to resume from.
-        """
-        with self._overlay_lock:
-            self._auto_tune_enabled = bool(enabled)
-
     @property
     def brightness_gain(self) -> float:
-        """The gain currently applied to detection input and display (§15.2)."""
+        """The gain currently applied to the detector's input only (§14.3b).
+
+        Never applied to display output, so this is a readback of the AI's
+        invisible detection aid rather than of anything the user can see.
+        """
         with self._overlay_lock:
             return self._brightness_gain
 
@@ -903,12 +762,11 @@ class RealtimeLandmarkPipeline:
 
     @property
     def metric_config(self) -> MetricConfig | None:
-        """The analyzer's current bundle, or None when no analyzer is attached.
+        """The analyzer's live bundle, or None when no analyzer is attached.
 
-        Lets a caller (e.g. the Advanced settings UI) derive an edited
-        `part_weights`/`sensitivity` bundle via `domain.metrics.with_tunables`
-        from whatever is live right now, including a bundle from a previous
-        `apply_advanced_settings` call.
+        A readback of whichever bundle is in force right now, including one
+        that sensitivity auto-tuning (§14.3d) derived via
+        `domain.metrics.with_tunables` and swapped in.
         """
         return self._analyzer.config if self._analyzer is not None else None
 

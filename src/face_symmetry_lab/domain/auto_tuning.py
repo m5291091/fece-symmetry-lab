@@ -126,7 +126,8 @@ def recommend_history_capacity(analysis_interval_ms: int) -> int:
     return min(max(recommended, MIN_HISTORY_CAPACITY), MAX_HISTORY_CAPACITY)
 
 
-#: Matches the Advanced settings UI's existing sensitivity slider range (§15.2).
+#: The §15.2 sensitivity range. Auto-tuning is the only thing that sets it
+#: now, but the bound stays a domain rule rather than a caller's business.
 MIN_SENSITIVITY: Final[float] = 0.1
 MAX_SENSITIVITY: Final[float] = 100.0
 

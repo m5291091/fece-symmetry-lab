@@ -49,10 +49,12 @@ def _validate_rgb(rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
 def _brightness_lut(gain: float) -> NDArray[np.uint8]:
     """The 256-entry ``round(clip(value * gain, 0, 255))`` table for ``gain``.
 
-    Cached because realtime playback calls `apply_brightness_gain` on every
-    video frame (§14.3b) with a `gain` that only changes when Advanced
-    settings or auto-tuning (§14.3c) update it — building this from scratch
-    per frame was the dominant cost of a continuously nonzero gain.
+    Cached because realtime playback calls `apply_brightness_gain` once per
+    *analysed* frame (§14.3b — display output is never brightened) with a
+    `gain` that only changes when auto-tuning (§14.3c) updates it, which is
+    itself throttled well below the analysis cadence. Building this table
+    from scratch per call was the dominant cost of a continuously nonzero
+    gain back when every video frame paid for it.
     """
     return np.clip(np.rint(np.arange(256, dtype=np.float64) * gain), 0.0, 255.0).astype(np.uint8)
 

@@ -8,11 +8,6 @@ import numpy as np
 import streamlit as st
 
 from face_symmetry_lab import __version__
-from face_symmetry_lab.adapters.export.session_exporter import (
-    csv_bytes,
-    export_filename,
-    json_bytes,
-)
 from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeImageLandmarker,
@@ -43,6 +38,7 @@ from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
     render_camera_section,
 )
+from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.model_setup import (
     landmark_asset,
     resolve_ready_demographic,
@@ -151,31 +147,16 @@ def _session_image_recorder(
 
 
 def _render_image_export(recorder: SessionRecorder) -> None:
-    bundle = recorder.export_bundle()
-    if not bundle.records:
-        return
-    st.divider()
-    st.subheader("この画像の分析データをエクスポート")
-    st.warning(
-        "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
-        "共有先と利用目的を確認してから保存してください。"
-    )
-    revision = bundle.manifest.config_revisions[-1]
-    st.caption(f"metric {bundle.manifest.metric_version} · config {revision.fingerprint[:12]}…")
-    csv_column, json_column = st.columns(2)
-    csv_column.download_button(
-        "CSV を保存",
-        data=csv_bytes(bundle),
-        file_name=export_filename(bundle, "csv"),
-        mime="text/csv",
-        key="download_image_csv",
-    )
-    json_column.download_button(
-        "JSON を保存",
-        data=json_bytes(bundle),
-        file_name=export_filename(bundle, "json"),
-        mime="application/json",
-        key="download_image_json",
+    render_export_panel(
+        recorder.export_bundle(),
+        heading="この画像の分析データをエクスポート",
+        warning=(
+            "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
+            "共有先と利用目的を確認してから保存してください。"
+        ),
+        # A single photo is always exactly one record, so a count would add
+        # nothing here.
+        key_prefix="download_image",
     )
 
 
