@@ -36,7 +36,7 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 14. **顔の中心線を表示設定にする。** 採点に用いる正中点の TLS 直線を顔範囲へ描画し、Camera / Image の双方で既定 ON、利用者が ON / OFF を切り替えられるようにする。中心線はランドマークと異なる色かつ5px以上とし、表示設定は採点値と `config_fingerprint` を変えない。
 15. **画像由来の外観差と肌表面参考値は幾何スコアと分離する。** 顔cropへ端末内のホワイトバランス・明度正規化を適用し、頬領域の色調均一性と局所テクスチャを「撮影条件依存の肌表面参考値」として算出する。疾患、肌質、美しさ、健康を推定せず、補正量を記録し、校正完了までは4部位＋全体の幾何スコアへ混合しない。
 16. **年齢・性別入力は顔 crop に限定する。** MediaPipe の単一顔 landmark bbox から余白付き crop を作り、Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` へ入力する。公式XML/BINを出所の正本として固定し、再現可能な開発時変換で生成した固定ONNXを既存の `opencv-contrib-python` DNNから実行する。元assetと派生assetのsize、SHA-256、変換recipeをmanifestへ登録し、parityとslice評価はリリース条件として残す。
-17. **間引き中も幾何表示を短時間保持する。** ランドマーク推論は最大8Hzのまま、直近の単一顔ランドマークと中心線を250ms以内だけプレビューへ再描画する。検出失敗、複数顔、リセット、TTL超過では即時消去し、古い結果を別の顔へ長時間重ねない。
+17. **間引き中も幾何表示を短時間保持する。** ランドマーク推論は最大8Hzのまま、直近の単一顔ランドマークと中心線を既定250ms（`analysis_interval_ms`の自動調整でこれを上回る場合は`analysis_interval_ms`の2倍を上限として延長。TTLがサンプリング間隔より短いと毎サイクル必ず消去が発生し、背景置換のチラつきを招くため）だけプレビューへ再描画する。検出失敗、複数顔、リセット、TTL超過では即時消去し、古い結果を別の顔へ長時間重ねない。
 
 ### 0.1 現在の実装位置（2026-08-01）
 
@@ -289,7 +289,7 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 | FR-010 | P0 | 品質ゲート | 姿勢、顔サイズ、連続安定性を必須判定し、照度・ぼけは P0 では警告、P1 で評価後にゲート化できる |
 | FR-011 | P0 | 対称性指標 | §8 の手順で輪郭、目、鼻、口、全体を 0〜100 で算出し、範囲外値を拒否する |
 | FR-012 | P0 | 平滑化 | 表示用全体値に EMA を適用し、生値を別保持する。リセット条件は §8.8 に従う |
-| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態、全体・部位別左右差、姿勢角をカメラ映像内に高コントラストで表示する。中心線とランドマークは独立に ON / OFF 可能とし、中心線は Camera / Image とも既定 ON、ランドマークと異なる色、5px以上にする。間引きフレームでは直近の単一顔幾何を250ms以内だけ保持し、エラー・複数顔・リセット・TTL超過で消去する。状態と全体値を大きく、部位・姿勢をその次の階層で示す。欠測は `—` とし、同じ情報を画面テキストでも提供する |
+| FR-013 | P0 | オーバーレイ | 顔枠、中心線、ガイド、状態、全体・部位別左右差、姿勢角をカメラ映像内に高コントラストで表示する。中心線とランドマークは独立に ON / OFF 可能とし、中心線は Camera / Image とも既定 ON、ランドマークと異なる色、5px以上にする。間引きフレームでは直近の単一顔幾何を既定250ms（`analysis_interval_ms`自動調整時は`max(250ms, analysis_interval_ms×2)`）だけ保持し、エラー・複数顔・リセット・TTL超過で消去する。状態と全体値を大きく、部位・姿勢をその次の階層で示す。欠測は `—` とし、同じ情報を画面テキストでも提供する |
 | FR-014 | P0 | 結果表示 | 全体値、4 部位、姿勢、品質状態、比較上の注意を 1 画面に表示する |
 | FR-015 | P0 | トレンド | 直近 60 秒を既定表示し、欠測を 0 点として結ばず空白で表す |
 | FR-016 | P0 | セッション履歴 | 上限 3,000 件のリングバッファに数値結果のみ保持し、上限到達時は古い順に破棄する |
@@ -796,9 +796,9 @@ sequenceDiagram
 
 - WebRTC callback は別スレッドで動作し、`st.*` と `st.session_state` に触れない。
 - 同時 in-flight 分析はセッションあたり 1。待ち queue を作らず、処理中に来たフレームは分析を省略する。
-- callback は各映像フレームを返す一方、推論開始は `analysis_interval_ms` ごとに 1 回までとする。間のフレームは最新の数値サンプルを「直近サンプル」と明記し、直近の単一顔landmark幾何を最大250msだけ表示保持する。
+- callback は各映像フレームを返す一方、推論開始は `analysis_interval_ms` ごとに 1 回までとする。間のフレームは最新の数値サンプルを「直近サンプル」と明記し、直近の単一顔landmark幾何を既定最大250ms（`analysis_interval_ms`自動調整時は`max(250ms, analysis_interval_ms×2)`、§14.3d）だけ表示保持する。
 - 複数フレームを蓄積してからまとめて推論する batch は、ライブ表示の遅延とメモリを増やすため採用しない。
-- bbox、landmark、中心線は同じ分析結果から生成し、間引きフレームへの再描画は250ms以内に限定する。検出失敗、複数顔、reset、入力切替、TTL超過でcacheを消去する。
+- bbox、landmark、中心線は同じ分析結果から生成し、間引きフレームへの再描画をこのTTL以内に限定する。検出失敗、複数顔、reset、入力切替、TTL超過でcacheを消去する。TTLがサンプリング間隔以下だと毎サイクル必ずcacheが失効し、背景置換を含む表示がチラつくため、TTLは常にサンプリング間隔より十分大きく保つ。
 - `SessionRuntimeStore` は lock で最新結果と bounded history を保護する。UI は immutable snapshot だけを読む。
 - UI は `st.fragment(run_every="200ms")` 相当で更新し、`while ctx.state.playing` でメイン実行を占有しない。
 - MediaPipe は realtime で `RunningMode.VIDEO` + 単調増加 timestamp + `detect_for_video` を用いる。`LIVE_STREAM.detect_async` の二重非同期化は P0 で採用しない。
@@ -824,6 +824,7 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 - 明るさ調整は`domain.frame_adjustments.apply_brightness_gain`で実装する純粋関数で、landmark検出directlyへ渡す前のframeとdisplay出力の両方に同じgainを適用する。既定1.0（無調整）。暗い部屋での検出補助を目的とするため、検出入力にも適用する点が背景置換と異なる。
 - 背景置換は`selfie_segmenter`（`adapters.inference.mediapipe_segmenter.MediaPipeSegmenter`）による前景confidence maskを`domain.frame_adjustments.composite_background`で合成し、**display出力にだけ**適用する。landmark検出、品質ゲート、対称性指標、年齢・性別推定、肌表面参考値のいずれの入力にもならない。
 - 背景置換はON/OFF切替可能で既定OFF。モデル未配置・sha256不一致・推論失敗のいずれでも、その旨をUIへ表示しつつ元映像へfallbackし、左右差分析は継続する（NFR-017と同じ「1フレーム失敗でstreamを止めない」方針の適用）。
+- `composite_background`はONの間、`apply_brightness_gain`（§14.3c）と同じく毎映像フレーム（間引きフレームはcache済みmaskで）実行される。maskがpixelごとに異なる値を持つため`apply_brightness_gain`のようなlookup table化はできないが、`(H, W, 1)`のmaskを`(H, W, 3)`へbroadcastしてから1回で演算する実装は、channelごとに2次元演算へ分解した実装よりも有意に遅い（実測で約1.5〜2倍）。そのためchannelごとのfloat32演算に分解し、float64ではなくfloat32を用いる。結果は元のfloat64実装と最大1階調（0〜255段階中±1）の丸め差を許容する（表示専用のため）。
 
 #### 14.3c 明るさ・追跡ズームの自動調整（FR-029, AC-AUTOTUNE-01）
 
@@ -838,7 +839,7 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 
 14.3cに加えて次の2系統も常時自動更新する。品質ゲート閾値と`part_weights`はどちらの系統にも含めず、固定値のまま手動UIもAI調整も持たない（前者は測定条件そのものを緩めてしまうため、後者は最適化すべき正解が無く「AIが部位の重要度を判断した」という誤った印象を与えるため）。
 
-- **cadence（scoringに影響しない）**: 直近`processing_ms`の移動平均から`domain.auto_tuning.recommend_analysis_interval_ms`が既定候補（125/200/333ms）の中から選び、`RealtimeLandmarkPipeline._set_analysis_interval_ms`で即時反映する。同じ値から`recommend_age_interval_ms`・`recommend_history_capacity`を導出し、`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`（履歴を消さずに上限だけ変える、`reset`とは別の非破壊API）へ渡す。数秒間隔で再評価し、config_revision・segment・EMAには触れない。
+- **cadence（scoringに影響しない）**: 直近`processing_ms`の移動平均から`domain.auto_tuning.recommend_analysis_interval_ms`が既定候補（125/200/333ms）の中から選び、`RealtimeLandmarkPipeline._set_analysis_interval_ms`で即時反映する。同じ値から`recommend_age_interval_ms`・`recommend_history_capacity`を導出し、`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`（履歴を消さずに上限だけ変える、`reset`とは別の非破壊API）へ渡す。数秒間隔で再評価し、config_revision・segment・EMAには触れない。推奨値が現在値と同じ場合は各APIを呼ばない（history_capacityの再構築や`_next_analysis_at`のリセットを、長時間セッションで不要に繰り返さないため）。`_set_analysis_interval_ms`は同時に、幾何・背景置換maskのcache TTL（FR-013）を`max(既定250ms, analysis_interval_ms×2)`へ更新する。TTLが固定250msのままだと、cadenceが333msへ自動的に遅くなった際に毎サイクルcacheが必ず失効し、背景置換の表示が周期的にチラつく（実際に報告された不具合の原因）。
 - **感度（scoringに影響する）**: 直近フレームの部位別RMS距離（`SymmetryResult.distances`、sensitivity適用前の生値）の平均・標準偏差から`domain.auto_tuning.recommend_sensitivity`が部位ごとに新しい`sensitivity`を算出する。既存値との相対差が閾値を超える部位がある場合だけ、`domain.metrics.with_tunables`で`part_weights`は変えずに`sensitivity`だけを差し替えた`MetricConfig`を作り、既存の`RealtimeLandmarkPipeline.apply_advanced_settings`を（現在の`thresholds`・`tau_seconds`・zoom policyをそのまま渡して）呼ぶ。§15.2既存規約どおりconfig_revision・segmentが進み、EMA・履歴がresetされる。差が閾値以下ならresetは発生しない。
 - どちらの系統も、統計取得・算出・適用のいずれかに失敗した場合は例外を握りつぶし、既存値を維持してフレーム処理を継続する（NFR-017、AC-AUTOTUNE-02）。
 

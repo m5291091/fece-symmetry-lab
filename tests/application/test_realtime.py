@@ -1228,6 +1228,76 @@ def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_lo
     assert recorder.reset_calls == 0  # cadence retuning must not fragment history
 
 
+def test_auto_tuned_cadence_widens_the_geometry_ttl_past_the_new_interval() -> None:
+    """Regression guard: a TTL shorter than the auto-tuned interval expired
+    the cache every single throttled frame, causing visible flicker
+    (background replacement, landmark overlay) once cadence slowed to 333ms."""
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(face_count=0),
+        clock=StepClock(step=0.2),
+        analysis_interval_ms=0,
+        auto_tune_enabled=True,
+        geometry_ttl_ms=250,
+    )
+
+    for _ in range(10):
+        pipeline.process(_rgb())
+
+    assert pipeline.analysis_interval_ms == 333
+    assert pipeline.geometry_ttl_ms == 666  # max(250, 333 * 2)
+    assert pipeline.geometry_ttl_ms > pipeline.analysis_interval_ms
+
+
+def test_auto_tune_disabled_never_widens_the_geometry_ttl() -> None:
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(face_count=0),
+        clock=StepClock(step=0.2),
+        analysis_interval_ms=0,
+        geometry_ttl_ms=250,
+    )
+
+    for _ in range(10):
+        pipeline.process(_rgb())
+
+    assert pipeline.geometry_ttl_ms == 250
+
+
+def test_an_explicitly_configured_interval_and_ttl_are_not_widened_by_construction() -> None:
+    """A caller-provided (analysis_interval_ms, geometry_ttl_ms) pair — from a
+    test or `apply_advanced_settings` — is respected as-is; only cadence
+    auto-tuning (§14.3d) widens the TTL."""
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(face_count=0),
+        clock=StepClock(),
+        analysis_interval_ms=1000,
+        geometry_ttl_ms=250,
+    )
+
+    assert pipeline.geometry_ttl_ms == 250
+
+
+def test_auto_tune_enabled_skips_the_history_resize_when_the_interval_is_unchanged() -> None:
+    """Regression guard: resizing on every retune tick regardless of whether
+    the recommendation actually changed rebuilt the whole history buffer
+    under lock every ~2s for the entire session, compounding into escalating
+    lag on long-running sessions."""
+    landmarker = FakeLandmarker(face_count=0)
+    recorder = RecorderSpy()
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=landmarker,
+        recorder=recorder,
+        clock=StepClock(step=0.2),
+        analysis_interval_ms=333,  # already at the recommendation heavy load picks
+        auto_tune_enabled=True,
+    )
+
+    for _ in range(10):
+        pipeline.process(_rgb())
+
+    assert pipeline.analysis_interval_ms == 333
+    assert recorder.resize_calls == []  # never actually changed, so never called
+
+
 def test_auto_tune_enabled_speeds_the_analysis_interval_back_up_under_light_load() -> None:
     landmarker = FakeLandmarker(face_count=0)
     pipeline = RealtimeLandmarkPipeline(

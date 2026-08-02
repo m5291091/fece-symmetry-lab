@@ -134,6 +134,28 @@ def test_composite_rejects_a_non_rgb_image() -> None:
         )
 
 
+@pytest.mark.parametrize("background_color", [(0, 0, 0), (255, 255, 255), (60, 120, 200)])
+def test_composite_matches_the_reference_float64_blend_within_one_step(
+    background_color: tuple[int, int, int],
+) -> None:
+    """Whatever the internal implementation (e.g. a per-channel float32
+    loop, to avoid a slow (H, W, 1) -> (H, W, 3) broadcast), the output must
+    stay within rounding distance of the float64 reference blend for
+    realistic, non-round mask/pixel values — not just a few round numbers."""
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 256, size=(64, 96, 3), dtype=np.uint8)
+    mask = rng.random((64, 96)).astype(np.float32)
+
+    result = composite_background(image, mask, background_color)
+
+    clipped_mask = np.clip(mask.astype(np.float64), 0.0, 1.0)[..., np.newaxis]
+    color = np.asarray(background_color, dtype=np.float64)
+    reference = np.rint(
+        image.astype(np.float64) * clipped_mask + color * (1.0 - clipped_mask)
+    ).astype(np.uint8)
+    assert np.abs(result.astype(int) - reference.astype(int)).max() <= 1
+
+
 def test_mean_luminance_of_a_flat_image_is_its_pixel_value() -> None:
     assert mean_luminance(_image(value=64)) == pytest.approx(64.0)
 

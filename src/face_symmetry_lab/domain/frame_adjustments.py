@@ -102,7 +102,19 @@ def composite_background(
     if len(background_color) != 3 or any(not 0 <= c <= 255 for c in background_color):
         raise FrameAdjustmentError("background_color は 0〜255 の RGB 3 要素である必要があります。")
 
-    clipped_mask = np.clip(mask, 0.0, 1.0)[..., np.newaxis]
-    color = np.asarray(background_color, dtype=np.float64)
-    blended = image.astype(np.float64) * clipped_mask + color * (1.0 - clipped_mask)
-    return np.rint(blended).astype(np.uint8)
+    # §14.3b: this runs on every video frame while background replacement is
+    # on (analysed frames directly, throttled ones via the cached mask), so
+    # per-channel float32 avoids broadcasting the mask from (H, W) to
+    # (H, W, 3) — that broadcast alone made the naive float64 version ~1.5-2x
+    # slower — at the cost of an at-most-1-step rounding difference, which is
+    # invisible in a display-only composite.
+    clipped_mask = np.clip(mask, 0.0, 1.0).astype(np.float32)
+    inverse_mask = 1.0 - clipped_mask
+    image_f32 = image.astype(np.float32)
+    blended = np.empty_like(image)
+    for channel in range(image.shape[-1]):
+        color_channel = float(background_color[channel])
+        blended[..., channel] = np.rint(
+            image_f32[..., channel] * clipped_mask + color_channel * inverse_mask
+        ).astype(np.uint8)
+    return blended

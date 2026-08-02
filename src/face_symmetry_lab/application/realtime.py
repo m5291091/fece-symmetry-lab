@@ -65,6 +65,13 @@ ERROR_CIRCUIT_THRESHOLD = 3
 DEFAULT_ANALYSIS_INTERVAL_MS = 125
 DEFAULT_GEOMETRY_TTL_MS = 250
 
+#: FR-013: the effective geometry/mask cache TTL never drops below this floor,
+#: but is widened to `analysis_interval_ms * this` whenever cadence auto-tuning
+#: (§14.3d) picks a slower interval — a TTL shorter than the sampling interval
+#: would expire the cache every single cycle, which is exactly what caused the
+#: reported background-replacement flicker at the 333ms candidate.
+_GEOMETRY_TTL_SAFETY_MULTIPLIER = 2.0
+
 #: §14.3c brightness/zoom auto-tuning (FR-029): recomputed on a slower cadence
 #: than analysis, since `apply_brightness_gain` caches its lookup table per
 #: exact gain value — holding gain stable for longer keeps that cache hot on
@@ -160,7 +167,12 @@ class RealtimeLandmarkPipeline:
         self._background_mode = background_mode
         self._auto_tune_enabled = bool(auto_tune_enabled)
         self._analysis_interval_seconds = analysis_interval_ms / 1000.0
-        self._geometry_ttl_seconds = geometry_ttl_ms / 1000.0
+        #: Floor for the effective TTL widened by `_recompute_geometry_ttl`,
+        #: which only cadence auto-tuning calls (§14.3d) — an explicitly
+        #: configured `geometry_ttl_ms`/`analysis_interval_ms` pair (e.g. from
+        #: `apply_advanced_settings` or a test) is respected as-is otherwise.
+        self._base_geometry_ttl_seconds = geometry_ttl_ms / 1000.0
+        self._geometry_ttl_seconds = self._base_geometry_ttl_seconds
         self._started_at = clock()
         self._next_analysis_at = self._started_at
         self._next_display_retune_at = self._started_at
@@ -520,7 +532,15 @@ class RealtimeLandmarkPipeline:
             new_interval_ms = recommend_analysis_interval_ms(mean_processing_ms)
         except Exception:
             return
+        if new_interval_ms == self.analysis_interval_ms:
+            # `age_interval_ms`/`history_capacity` are pure functions of
+            # `analysis_interval_ms` alone, so an unchanged recommendation
+            # means neither would change either. Skipping here avoids
+            # rebuilding the recorder's history buffer under lock every
+            # retune tick for the entire session (AC-AUTOTUNE-02).
+            return
         self._set_analysis_interval_ms(new_interval_ms)
+        self._recompute_geometry_ttl()
         if self._demographic_worker is not None:
             try:
                 age_interval_ms = recommend_age_interval_ms(new_interval_ms)
@@ -774,6 +794,21 @@ class RealtimeLandmarkPipeline:
             self._analysis_interval_seconds = interval_ms / 1000.0
             self._next_analysis_at = self._clock()
 
+    def _recompute_geometry_ttl(self) -> None:
+        """FR-013: widen the geometry/mask cache TTL to track auto-tuned cadence.
+
+        Called only from `_maybe_auto_tune_cadence` — a TTL shorter than the
+        sampling interval would expire the cache every single cycle, which is
+        what caused the reported background-replacement flicker once cadence
+        auto-tuning picked the 333ms candidate. Never called for an explicitly
+        configured `analysis_interval_ms` (constructor or `apply_advanced_settings`),
+        whose caller-provided `geometry_ttl_ms` is respected as-is.
+        """
+        self._geometry_ttl_seconds = max(
+            self._base_geometry_ttl_seconds,
+            self._analysis_interval_seconds * _GEOMETRY_TTL_SAFETY_MULTIPLIER,
+        )
+
     def set_midline_enabled(self, enabled: bool) -> None:
         """Update the display-only centre-line preference thread-safely."""
         with self._overlay_lock:
@@ -817,6 +852,16 @@ class RealtimeLandmarkPipeline:
         """The currently active analysis cadence (§15.2, §14.3d auto-tuning readback)."""
         with self._sample_lock:
             return round(self._analysis_interval_seconds * 1000)
+
+    @property
+    def geometry_ttl_ms(self) -> int:
+        """The currently active geometry/mask cache TTL (FR-013 readback).
+
+        Widened by cadence auto-tuning (§14.3d) to always exceed
+        `analysis_interval_ms`, so a throttled frame between two analysed
+        ones never finds the cache already expired.
+        """
+        return round(self._geometry_ttl_seconds * 1000)
 
     @property
     def metric_config(self) -> MetricConfig | None:
