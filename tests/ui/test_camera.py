@@ -13,6 +13,7 @@ from face_symmetry_lab.domain.models import AnalysisState, Status
 from face_symmetry_lab.ui.camera import (
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
+    PANEL_LAYOUT_STATE_KEY,
     SYMMETRIZATION_STATE_KEY,
     build_video_frame_callback,
 )
@@ -327,3 +328,92 @@ def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
 
     for forbidden in ("理想", "正解", "補正後", "あるべき", "完璧", "欠点"):
         assert forbidden not in source
+
+
+# --- §5.1 layout: the video stays at the top ---------------------------------
+
+
+def test_the_layout_split_reads_the_stored_preset_without_rendering_a_widget() -> None:
+    """§5.1: the video is placed before the control that moves its panel.
+
+    The split has to be decided at the top of the section, while the radio
+    that changes it lives in the settings tab below — so this reads the
+    preference rather than drawing the widget.
+    """
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.camera import _split_for_panel_layout\n"
+        "preview, headline = _split_for_panel_layout()\n"
+        "st.session_state['stacked'] = headline is None\n"
+    )
+    at.session_state[PANEL_LAYOUT_STATE_KEY] = "動画の下"
+    at.run()
+
+    assert not at.exception
+    assert at.session_state["stacked"] is True
+    assert not at.radio  # the preset widget belongs to the settings tab
+
+
+def test_the_default_layout_places_the_headline_beside_the_video() -> None:
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.camera import _split_for_panel_layout\n"
+        "preview, headline = _split_for_panel_layout()\n"
+        "st.session_state['stacked'] = headline is None\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert at.session_state["stacked"] is False
+
+
+def test_the_panel_layout_control_writes_the_key_the_split_reads() -> None:
+    """A change in the settings tab has to reach the split on the next run."""
+    at = AppTest.from_string(
+        "from face_symmetry_lab.ui.camera import _render_panel_layout_control\n"
+        "_render_panel_layout_control()\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert at.radio[0].key == PANEL_LAYOUT_STATE_KEY
+
+    at.radio[0].set_value("動画の左").run()
+
+    assert at.session_state[PANEL_LAYOUT_STATE_KEY] == "動画の左"
+
+
+def test_the_camera_section_puts_the_video_above_every_tab() -> None:
+    """§5.1/AC-LAYOUT-01: settings must not push the preview off screen.
+
+    Asserted on the composition itself, since `webrtc_streamer` needs a live
+    browser: the streamer call has to precede `st.tabs`, and the display
+    controls must not be rendered before it.
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+
+    assert source.index("webrtc_streamer(") < source.index("st.tabs(")
+    assert source.index("_split_for_panel_layout()") < source.index("webrtc_streamer(")
+    assert source.index("webrtc_streamer(") < source.index("_render_display_controls(")
+
+
+def test_every_below_video_panel_lives_in_a_tab() -> None:
+    """One panel at a time keeps the page short enough to keep the video visible."""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+    tabs_at = source.index("st.tabs(")
+
+    for panel in (
+        "_render_detail_panel(",
+        "_render_symmetrization_panel(",
+        "_render_export_panel(",
+        "_render_session_controls(",
+    ):
+        assert source.index(panel) > tabs_at, panel
