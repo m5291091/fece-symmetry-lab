@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -18,7 +18,11 @@ from pydantic import (
 
 from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 
-SCHEMA_VERSION = "2.0.0"
+#: §9.2's record schema version, carried by both the records and the
+#: manifest. `Final` narrows it to its literal type, so it can serve as
+#: the default for the `Literal` fields below and the version has one
+#: definition instead of one per model that must agree on it.
+SCHEMA_VERSION: Final = "2.0.0"
 
 
 class InputMode(StrEnum):
@@ -31,7 +35,7 @@ class ExportRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal["2.0.0"] = "2.0.0"
+    schema_version: Literal["2.0.0"] = SCHEMA_VERSION
     session_id: str
     segment_id: str
     frame_id: int = Field(ge=0)
@@ -163,7 +167,7 @@ class ConfigRevision(BaseModel):
 class ExportManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["2.0.0"] = "2.0.0"
+    schema_version: Literal["2.0.0"] = SCHEMA_VERSION
     app_version: str = Field(min_length=1)
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     session_id: str

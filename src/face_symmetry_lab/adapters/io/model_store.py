@@ -27,6 +27,11 @@ APP_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_MANIFEST_PATH = APP_ROOT / "configs" / "model-manifest.json"
 DEFAULT_MODELS_DIR = APP_ROOT / "models"
 
+#: FR-020: the resolved dependency set every exported record is attributed
+#: to, hashed with `file_sha256`. Defined next to `APP_ROOT` so no caller has
+#: to rederive the repository root from its own file's depth.
+LOCK_PATH = APP_ROOT / "uv.lock"
+
 #: §10.6 requires a fixed allow list rather than arbitrary download targets.
 ALLOWED_MODEL_HOSTS: Final[frozenset[str]] = frozenset(
     {"storage.googleapis.com", "storage.openvinotoolkit.org"}

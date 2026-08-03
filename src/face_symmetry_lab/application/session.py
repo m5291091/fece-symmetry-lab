@@ -141,6 +141,10 @@ class SessionRecorder:
     ) -> ExportRecord:
         symmetry = outcome.symmetry
         pose = outcome.pose
+        skin = outcome.skin_quality
+        # §8.6.1: a skin result may exist without a usable white-balance
+        # correction, so the two are absent independently.
+        correction = skin.correction if skin is not None else None
         with self._lock:
             record = ExportRecord(
                 session_id=self._session_id,
@@ -157,57 +161,24 @@ class SessionRecorder:
                 pitch_deg=pose.pitch_deg if pose is not None else None,
                 roll_deg=pose.roll_deg if pose is not None else None,
                 face_area_ratio=outcome.face_area_ratio,
-                score_contour_raw=(symmetry.part("contour") if symmetry is not None else None),
+                score_contour_raw=symmetry.part("contour") if symmetry is not None else None,
                 score_eyes_raw=symmetry.part("eyes") if symmetry is not None else None,
                 score_nose_raw=symmetry.part("nose") if symmetry is not None else None,
                 score_mouth_raw=symmetry.part("mouth") if symmetry is not None else None,
                 score_overall_raw=symmetry.overall if symmetry is not None else None,
                 score_overall_smooth=outcome.overall_smooth,
-                distance_contour_raw=(
-                    symmetry.distance("contour") if symmetry is not None else None
-                ),
-                distance_eyes_raw=(symmetry.distance("eyes") if symmetry is not None else None),
-                distance_nose_raw=(symmetry.distance("nose") if symmetry is not None else None),
-                distance_mouth_raw=(symmetry.distance("mouth") if symmetry is not None else None),
-                skin_quality_score_raw=(
-                    outcome.skin_quality.score if outcome.skin_quality is not None else None
-                ),
-                skin_tone_uniformity_raw=(
-                    outcome.skin_quality.tone_uniformity
-                    if outcome.skin_quality is not None
-                    else None
-                ),
-                skin_texture_uniformity_raw=(
-                    outcome.skin_quality.texture_uniformity
-                    if outcome.skin_quality is not None
-                    else None
-                ),
-                skin_correction_gain_r=(
-                    outcome.skin_quality.correction.gain_r
-                    if outcome.skin_quality is not None
-                    and outcome.skin_quality.correction is not None
-                    else None
-                ),
-                skin_correction_gain_g=(
-                    outcome.skin_quality.correction.gain_g
-                    if outcome.skin_quality is not None
-                    and outcome.skin_quality.correction is not None
-                    else None
-                ),
-                skin_correction_gain_b=(
-                    outcome.skin_quality.correction.gain_b
-                    if outcome.skin_quality is not None
-                    and outcome.skin_quality.correction is not None
-                    else None
-                ),
-                skin_metric_version=(
-                    outcome.skin_quality.metric_version
-                    if outcome.skin_quality is not None
-                    else None
-                ),
-                skin_quality_frozen=(
-                    outcome.skin_quality.frozen if outcome.skin_quality is not None else None
-                ),
+                distance_contour_raw=symmetry.distance("contour") if symmetry is not None else None,
+                distance_eyes_raw=symmetry.distance("eyes") if symmetry is not None else None,
+                distance_nose_raw=symmetry.distance("nose") if symmetry is not None else None,
+                distance_mouth_raw=symmetry.distance("mouth") if symmetry is not None else None,
+                skin_quality_score_raw=skin.score if skin is not None else None,
+                skin_tone_uniformity_raw=skin.tone_uniformity if skin is not None else None,
+                skin_texture_uniformity_raw=skin.texture_uniformity if skin is not None else None,
+                skin_correction_gain_r=correction.gain_r if correction is not None else None,
+                skin_correction_gain_g=correction.gain_g if correction is not None else None,
+                skin_correction_gain_b=correction.gain_b if correction is not None else None,
+                skin_metric_version=skin.metric_version if skin is not None else None,
+                skin_quality_frozen=skin.frozen if skin is not None else None,
                 landmark_model_version=self._landmark_model_version,
                 landmark_model_sha256=self._landmark_model_sha256,
                 metric_version=outcome.metric_version,

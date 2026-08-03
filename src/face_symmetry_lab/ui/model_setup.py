@@ -146,45 +146,6 @@ def resolve_ready_landmarker() -> Path | None:
     return path
 
 
-def resolve_ready_segmenter() -> Path | None:
-    """Render the model status and return the path only when it is verified.
-
-    Unlike the landmark/demographic models, this asset is optional: the
-    background feature stays OFF and unusable until it is verified, but
-    nothing else in the app depends on it (§14.3b).
-    """
-    try:
-        asset = segmenter_asset()
-    except ModelStoreError as error:
-        st.error(str(error))
-        return None
-
-    path = configured_segmenter_path()
-    status = segmenter_status(path)
-
-    if status is InstallStatus.MISSING:
-        st.warning("背景合成モデルが未配置です。アプリは自動取得しません。")
-        st.caption(
-            f"取得元 {asset.url} / {asset.size_bytes:,} bytes / "
-            f"ライセンス {asset.license} / sha256 {asset.sha256}"
-        )
-        st.code(BOOTSTRAP_COMMAND, language="bash")
-        st.caption(
-            f"別の場所に置く場合は環境変数 `{SEGMENTER_PATH_ENV_VAR}` で `{path}` を指定します。"
-        )
-        return None
-    if status is InstallStatus.MISMATCH:
-        st.error(
-            "配置済みの背景合成モデルの sha256 が manifest と一致しません。"
-            "改変または破損の可能性があるため読み込みません。"
-        )
-        st.code(BOOTSTRAP_COMMAND, language="bash")
-        return None
-
-    st.caption(f"model: {asset.version} · sha256 {asset.sha256[:12]}… · 検証済み")
-    return path
-
-
 def resolve_ready_demographic() -> tuple[Path, str] | None:
     """Render status and return only a verified derived ONNX path."""
     try:
