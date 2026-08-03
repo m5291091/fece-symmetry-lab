@@ -66,12 +66,11 @@ def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None
         "            reason_codes=(ReasonCode.TOO_FAR, ReasonCode.OFF_AXIS_YAW),\n"
         "        ),\n"
         "        symmetry=None,\n"
-        "        overall_smooth=None,\n"
+        "        overall_distance_smooth=None,\n"
         "        pose=None,\n"
         "        face_area_ratio=None,\n"
         "        metric_version='metric/test',\n"
         "        landmark_map_version='map/test',\n"
-        "        sensitivity_frozen=False,\n"
         "    )\n"
         ")\n"
     )

@@ -29,11 +29,13 @@ from face_symmetry_lab.application.still_image import (
     StillImageAnalysis,
     analyze_still_image,
 )
+from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.export import InputMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfig, MetricConfigError
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
+from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.about_page import render_about_page
 from face_symmetry_lab.ui.camera import (
     release_session_pipeline,
@@ -46,6 +48,8 @@ from face_symmetry_lab.ui.model_setup import (
     resolve_ready_landmarker,
 )
 from face_symmetry_lab.ui.scores import (
+    DISTANCE_UNIT_CAPTION,
+    format_distance,
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
@@ -240,6 +244,42 @@ def _render_image_demographic_controls(
             st.error(message)
 
 
+def _render_image_symmetrization(
+    rgb: np.ndarray,
+    analysis: StillImageAnalysis,
+) -> None:
+    """FR-034: the same one-shot fold as Camera, on the uploaded photo.
+
+    An upload is already a still frame, so there is nothing to capture — the
+    view is computed straight from the photo on screen (§14.3g).
+    """
+    st.markdown("#### 左右対称にそろえた位置との比較")
+    try:
+        view = symmetrize_frame(rgb, analysis.landmarks.frame, config=load_metric_config())
+    except SymmetrizationError as error:
+        st.info(str(error))
+        return
+
+    st.caption(
+        "写真の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
+        "実測点と重ねています。ズレの大きさを形で見るための表示で、"
+        "どちらが正しい・望ましいという意味はありません。"
+    )
+    st.image(
+        view.overlay,
+        caption="実測点と、左右対称にそろえた位置（色違い）を線で結んだ表示",
+        width="stretch",
+    )
+    mean_column, max_column = st.columns(2)
+    mean_column.metric("平均のズレ", format_distance(view.mean_deviation))
+    max_column.metric("最大のズレ", format_distance(view.max_deviation))
+    st.caption(
+        f"対称化した点 {view.symmetrized_point_count} 点。"
+        "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
+    )
+    st.caption(DISTANCE_UNIT_CAPTION)
+
+
 def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
     """Full age/gender reference panel — always full width below (§5.1).
 
@@ -341,6 +381,8 @@ def _render_image_section() -> None:
             # Still images are stateless, so the raw value is shown directly (§8.7).
             render_score_details(analysis.outcome, show_smoothed=False)
             st.divider()
+            _render_image_symmetrization(rgb, analysis)
+            st.divider()
         _render_image_demographic_detail(age_input)
 
     if recorder is not None:
@@ -373,8 +415,8 @@ def _render_about_footer() -> None:
     metric.metric("左右差指標", "相対比較専用")
     cadence.metric("カメラ解析", "最大 8 Hz")
     st.info(
-        "感度係数の固定評価セット校正は未完了です。"
-        "左右差の数値は、同一人物・同一環境での相対変化だけを参照してください。"
+        "左右差は両眼の間隔に対する対応点のずれとして表示します（0〜100 のスコアではありません）。"
+        "数値は、同一人物・同一環境での相対変化だけを参照してください。"
     )
     st.page_link(ABOUT_PAGE, label="スコアの算出方法・制約について詳しく見る", icon="📘")
 

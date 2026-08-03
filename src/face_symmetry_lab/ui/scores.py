@@ -1,8 +1,11 @@
-"""Score presentation shared by the camera and still-image sections.
+"""Result presentation shared by the camera and still-image sections.
 
 Wording follows §5.3: the metric is introduced as an experimental left/right
-difference score, `HOLD` becomes an actionable instruction, and no value
-judgement is attached to a high or low number.
+difference *distance*, `HOLD` becomes an actionable instruction, and no value
+judgement is attached to a large or small number. §8.6 removed the 0-100
+transform, so every value here is a normalized distance shown as a percentage
+of the interocular distance — smaller simply means the paired points sit
+closer together, never "better".
 """
 
 from __future__ import annotations
@@ -18,7 +21,20 @@ from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, Status
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
-SCORE_HEADING = "左右差スコア（実験値）"
+SCORE_HEADING = "左右差（実験値・両眼距離比）"
+
+#: §5.2: distances are ratios of the interocular distance, so a percentage
+#: with two decimals is the readable form without inventing precision.
+DISTANCE_UNIT_CAPTION = (
+    "数値は両眼の間隔を 100% としたときの、左右対応点のずれの大きさです。"
+    "小さいほど対応点が近いことだけを意味し、良し悪しを表しません。"
+)
+
+
+def format_distance(value: float | None) -> str:
+    """Render a normalized distance as a percentage, or `—` when missing."""
+    return "—" if value is None else f"{value * 100.0:.2f}%"
+
 
 _PART_LABELS: Final[dict[str, str]] = {
     "contour": "輪郭",
@@ -98,7 +114,7 @@ def render_headline_metrics(
     overall: float | None,
     estimate: DemographicEstimate | None,
 ) -> None:
-    """FR-013/FR-014: total score, gender and age, right beside the media.
+    """FR-013/FR-014: overall distance, gender and age, right beside the media.
 
     Shared by Camera and Image so both use the same headline layout (§5.1).
     ``estimate`` is taken whole rather than as pre-split gender/age fields:
@@ -107,7 +123,7 @@ def render_headline_metrics(
     `—` rather than a stale or zeroed number (NFR-013).
     """
     score_column, gender_column, age_column = st.columns(3)
-    score_column.metric("全体スコア", "—" if overall is None else f"{overall:.1f}")
+    score_column.metric("全体の左右差", format_distance(overall))
     gender_column.metric(
         "参考性別",
         "—" if estimate is None else GENDER_LABELS[estimate.gender],
@@ -119,18 +135,17 @@ def render_headline_metrics(
 
 
 def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
-    """Render everything about the 左右差スコア besides the headline total.
+    """Render everything about the 左右差 besides the headline total.
 
     The headline total is `render_headline_metrics`, shown beside the media;
     this renders the part breakdown, pose, and skin quality that belong in
     the full-width detail section below it (§5.1, FR-013, AC-LAYOUT-01).
     """
     st.subheader(SCORE_HEADING)
-    if not outcome.sensitivity_frozen:
-        st.info(
-            "試験中の指標です。感度係数は固定評価セットで未凍結のため、"
-            "数値の絶対値ではなく同一条件での相対変化だけを参照してください。"
-        )
+    st.info(
+        "試験中の指標です。撮影条件で値が動くため、数値の絶対値ではなく"
+        "同一人物・同一環境での相対変化だけを参照してください。"
+    )
 
     symmetry = outcome.symmetry
     if symmetry is None or symmetry.overall is None:
@@ -139,12 +154,14 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         return
 
     if show_smoothed:
-        st.caption(f"平滑化前の生値 {symmetry.overall:.1f}")
+        st.caption(f"平滑化前の生値 {format_distance(symmetry.overall)}")
 
+    # §8.6: a diagnostic breakdown of where the deviation sits. These do not
+    # add up to the headline value, which is folded once over the pooled pairs.
+    st.caption("部位別（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
     columns = st.columns(len(PART_NAMES))
     for column, name in zip(columns, PART_NAMES, strict=True):
-        value = symmetry.part(name)
-        column.metric(_PART_LABELS[name], "—" if value is None else f"{value:.1f}")
+        column.metric(_PART_LABELS[name], format_distance(symmetry.distance(name)))
 
     render_pose(outcome)
     if outcome.skin_quality is not None:
@@ -172,9 +189,10 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
             gains = skin.correction.gains
             st.caption(f"補正gain RGB {gains[0]:.2f} / {gains[1]:.2f} / {gains[2]:.2f}")
         st.caption(f"skin metric {skin.metric_version} · 未校正")
+    st.caption(DISTANCE_UNIT_CAPTION)
     st.caption(
-        "100 は、正規化後の対応点距離がすべて 0 になった場合の数学上の上限です。"
-        "人物の状態や価値を示す尺度ではなく、実写で 100 になることも保証しません。"
+        "0% は、正規化後の対応点距離がすべて 0 になった場合の数学上の下限です。"
+        "人物の状態や価値を示す尺度ではなく、実写で 0% になることも保証しません。"
     )
     st.caption(
         "同一人物・同一環境内の相対的な傾向を見るための値です。"

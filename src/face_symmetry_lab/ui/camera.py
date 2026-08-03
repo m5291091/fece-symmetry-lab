@@ -43,10 +43,12 @@ from face_symmetry_lab.application.realtime import (
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
+from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.guidance import guidance_message
 from face_symmetry_lab.ui.model_setup import (
@@ -60,6 +62,8 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_status,
 )
 from face_symmetry_lab.ui.scores import (
+    DISTANCE_UNIT_CAPTION,
+    format_distance,
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
@@ -93,6 +97,10 @@ MEDIA_STREAM_CONSTRAINTS: Final[dict[str, object]] = {
 
 WEBRTC_KEY = "face-landmark-preview"
 PIPELINE_STATE_KEY = "landmark_pipeline"
+
+#: FR-034: the symmetrization view for the frame the user captured. Session
+#: state only — never written to disk, and cleared with the analysis (§10.4).
+SYMMETRIZATION_STATE_KEY = "symmetrization_view"
 
 #: §11 NFR-003: the result panel refreshes at 4-5 Hz, independent of video fps.
 STATUS_REFRESH_INTERVAL = "200ms"
@@ -200,8 +208,8 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         midline_indices=config.midline_indices,
         # §15.2: Advanced settings have no manual UI. brightness/zoom/cadence
         # are AI auto-tuned unconditionally (FR-029, FR-030); quality-gate
-        # thresholds and part_weights stay fixed at their constructor
-        # defaults above and are never exposed for editing.
+        # thresholds stay fixed at their constructor defaults above and are
+        # never exposed for editing. Nothing auto-tuned touches scoring.
         auto_tune_enabled=True,
     )
 
@@ -218,6 +226,7 @@ def _session_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
 def release_session_pipeline() -> None:
     """Close the landmark runtime and drop the session reference (FR-004, §10.4)."""
     pipeline = st.session_state.pop(PIPELINE_STATE_KEY, None)
+    st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
     if isinstance(pipeline, RealtimeLandmarkPipeline):
         pipeline.close()
 
@@ -235,7 +244,9 @@ def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     snapshot = pipeline.snapshot()
     with st.container(border=True):
         symmetry = snapshot.analysis.symmetry if snapshot.analysis is not None else None
-        overall = snapshot.analysis.overall_smooth if snapshot.analysis is not None else None
+        overall = (
+            snapshot.analysis.overall_distance_smooth if snapshot.analysis is not None else None
+        )
         if overall is None and symmetry is not None:
             overall = symmetry.overall
         render_headline_metrics(overall=overall, estimate=snapshot.demographic_estimate)
@@ -315,6 +326,84 @@ def _render_detail_panel(
     _render_detail_fragment(pipeline)
 
 
+def _clear_symmetrization(pipeline: RealtimeLandmarkPipeline) -> None:
+    """Drop the captured frame and its view together (§10.4, FR-034)."""
+    pipeline.clear_capture()
+    st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
+
+
+def _consume_pending_capture(pipeline: RealtimeLandmarkPipeline) -> None:
+    """Turn a fulfilled capture into a view, once, off the realtime path.
+
+    The pipeline hands the frame over exactly once, so this runs the one-shot
+    symmetrization and keeps only the result. A capture that cannot be
+    symmetrized is reported rather than retried silently.
+    """
+    captured = pipeline.take_capture()
+    if captured is None:
+        return
+    config = pipeline.metric_config
+    if config is None:
+        st.session_state[SYMMETRIZATION_STATE_KEY] = "指標設定が読み込まれていません。"
+        return
+    try:
+        st.session_state[SYMMETRIZATION_STATE_KEY] = symmetrize_frame(
+            captured.rgb_image,
+            captured.frame,
+            config=config,
+        )
+    except SymmetrizationError as error:
+        st.session_state[SYMMETRIZATION_STATE_KEY] = str(error)
+
+
+def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    """FR-034: capture one moment and show it folded about its own midline.
+
+    Deliberately outside the 5 Hz fragments: this is a still result computed
+    once from one frame, and the live preview keeps running untouched while
+    it is displayed (§14.3g).
+    """
+    st.markdown("#### 左右対称にそろえた位置との比較")
+    st.caption(
+        "この瞬間の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
+        "実測点と重ねて表示します。ズレの大きさを形で見るための表示で、"
+        "どちらが正しい・望ましいという意味はありません。"
+    )
+
+    _consume_pending_capture(pipeline)
+    controls = st.columns(2)
+    if controls[0].button("この瞬間を対称化して見る", key="capture_symmetrization"):
+        pipeline.request_capture()
+        st.rerun()
+    if controls[1].button("表示を消す", key="clear_symmetrization"):
+        _clear_symmetrization(pipeline)
+        st.rerun()
+
+    view = st.session_state.get(SYMMETRIZATION_STATE_KEY)
+    if view is None:
+        if pipeline.capture_pending:
+            st.info("次に顔を検出したフレームを取り込みます。そのままお待ちください。")
+        return
+    if isinstance(view, str):
+        st.warning(view)
+        return
+
+    st.image(
+        view.overlay,
+        caption="実測点と、左右対称にそろえた位置（色違い）を線で結んだ表示",
+        width="stretch",
+    )
+    mean_column, max_column = st.columns(2)
+    mean_column.metric("平均のズレ", format_distance(view.mean_deviation))
+    max_column.metric("最大のズレ", format_distance(view.max_deviation))
+    st.caption(
+        f"対称化した点 {view.symmetrized_point_count} 点。"
+        "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
+    )
+    st.caption(DISTANCE_UNIT_CAPTION)
+    st.caption("取り込んだ映像はこのブラウザセッションのメモリだけに残り、保存も送信もしません。")
+
+
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     render_export_panel(
         pipeline.export_bundle(),
@@ -333,18 +422,20 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
 def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
     """§15.2: Advanced settings have no manual UI; show what the AI picked.
 
-    Quality-gate thresholds and `part_weights` are fixed constants and are
-    intentionally not shown here as if they were tunable (§14.3d).
+    Quality-gate thresholds are fixed constants and are intentionally not
+    shown here as if they were tunable (§14.3d). Nothing listed affects a
+    measured value: §8.6 left the metric with no coefficient to tune.
     """
     zoom_policy = pipeline.zoom_policy
     zoom_caption = f" · ズーム目標 {zoom_policy.target_px}px" if zoom_policy is not None else ""
     st.caption(
         "Advanced設定はAIが自動調整します（明るさ・追跡ズーム・"
-        "history_capacity・age_interval_ms・analysis_interval_ms・sensitivity）。"
+        "history_capacity・age_interval_ms・analysis_interval_ms）。"
         f"現在値: 検出用の明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
         f"analysis_interval_ms={pipeline.analysis_interval_ms}。"
         "明るさ補正はlandmark検出にだけ使い、表示される映像の明るさは変えません。"
-        "品質ゲート閾値と部位の重み(part_weights)は固定既定値です。"
+        "品質ゲート閾値は固定既定値です。左右差の計算には調整可能な係数が無いため、"
+        "自動調整が数値を動かすことはありません。"
     )
 
 
@@ -470,12 +561,19 @@ def render_camera_section() -> None:
     if not context.state.playing:
         return
 
+    # FR-034/§14.3g: a still, one-shot view. The live preview above keeps
+    # running at its own cadence while this is on screen.
+    _render_symmetrization_panel(pipeline)
+
     _render_export_panel(pipeline)
 
     st.caption("カメラ映像は `STOP` で停止します。")
     controls = st.columns(2)
-    if controls[0].button("スコア・履歴・平滑化をリセット", key="reset_analysis"):
+    if controls[0].button("結果・履歴・平滑化をリセット", key="reset_analysis"):
         pipeline.reset_analysis()
+        # `reset_analysis` drops the captured frame; the view derived from it
+        # has to go with it, or the panel would outlive its own segment.
+        st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
         st.rerun()
     if controls[1].button("推論を停止してモデルを解放", key="release_landmarker"):
         release_session_pipeline()

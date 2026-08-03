@@ -2,15 +2,18 @@ from fractions import Fraction
 
 import av
 import numpy as np
+from streamlit.testing.v1 import AppTest
 
-from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_frame
+from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
 from face_symmetry_lab.domain.models import AnalysisState, Status
 from face_symmetry_lab.ui.camera import (
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
+    SYMMETRIZATION_STATE_KEY,
     build_video_frame_callback,
 )
 
@@ -49,12 +52,11 @@ class StubAnalyzer:
             frame_id=frame.frame_id,
             state=AnalysisState(status=Status.HOLD),
             symmetry=None,
-            overall_smooth=None,
+            overall_distance_smooth=None,
             pose=None,
             face_area_ratio=None,
             metric_version="metric/test",
             landmark_map_version="map/test",
-            sensitivity_frozen=False,
         )
 
     def reset(self) -> None:
@@ -178,3 +180,150 @@ def test_worker_thread_callback_never_touches_streamlit_state() -> None:
 
     assert "session_state" not in source
     assert "st." not in source
+
+
+# --- FR-034 capture wiring ---------------------------------------------------
+
+
+#: A symmetric face, spread out enough to fold about a real midline.
+_SYMMETRIZABLE_POINTS = (
+    (0.35, 0.40),
+    (0.45, 0.40),
+    (0.55, 0.40),
+    (0.65, 0.40),
+    (0.50, 0.30),
+    (0.50, 0.50),
+    (0.50, 0.62),
+    (0.30, 0.55),
+    (0.70, 0.55),
+    (0.32, 0.46),
+    (0.68, 0.46),
+    (0.46, 0.52),
+    (0.54, 0.52),
+    (0.44, 0.58),
+    (0.56, 0.58),
+)
+
+
+class SymmetrizableLandmarker(StubLandmarker):
+    """Reports a face whose landmarks the versioned map can actually fold."""
+
+    def detect_video(
+        self,
+        rgb_image: np.ndarray,
+        *,
+        frame_id: int,
+        timestamp_ms: int,
+    ) -> LandmarkFrame:
+        self.sizes.append((rgb_image.shape[1], rgb_image.shape[0]))
+        return build_landmark_frame(
+            frame_id=frame_id,
+            face_count=1,
+            points=_SYMMETRIZABLE_POINTS,
+            width=rgb_image.shape[1],
+            height=rgb_image.shape[0],
+        )
+
+
+def _symmetrizable_config():
+    return build_metric_config(
+        metric_version="symmetry-2d/test",
+        landmark_map_version="test/1.0.0",
+        landmark_count=len(_SYMMETRIZABLE_POINTS),
+        left_eye_corners=(0, 1),
+        right_eye_corners=(2, 3),
+        midline_indices=(4, 5, 6),
+        parts={
+            "contour": PartMap(pairs=((7, 8), (9, 10)), min_pairs=1),
+            "eyes": PartMap(pairs=((0, 3), (1, 2)), min_pairs=1),
+            "nose": PartMap(pairs=((11, 12),), min_pairs=1),
+            "mouth": PartMap(pairs=((13, 14),), min_pairs=1),
+        },
+    )
+
+
+def _panel_script() -> str:
+    return (
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.camera import _render_symmetrization_panel\n"
+        "_render_symmetrization_panel(st.session_state['pipeline'])\n"
+    )
+
+
+def test_the_capture_button_arms_the_pipeline_without_stopping_it() -> None:
+    """FR-034: requesting a capture must not disturb the running analysis."""
+    pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analysis_interval_ms=0)
+    at = AppTest.from_string(_panel_script())
+    at.session_state["pipeline"] = pipeline
+    at.run()
+    assert not at.exception
+
+    at.button(key="capture_symmetrization").click().run()
+
+    assert pipeline.capture_pending is True
+
+
+def test_a_captured_frame_becomes_a_symmetrization_view() -> None:
+    """§14.3g: the held frame is consumed once and rendered as a still result."""
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=SymmetrizableLandmarker(),
+        analyzer=FrameAnalyzer(config=_symmetrizable_config()),
+        analysis_interval_ms=0,
+    )
+    pipeline.request_capture()
+    pipeline.process(np.full((80, 80, 3), 30, dtype=np.uint8))
+
+    at = AppTest.from_string(_panel_script())
+    at.session_state["pipeline"] = pipeline
+    at.run()
+
+    assert not at.exception
+    view = at.session_state[SYMMETRIZATION_STATE_KEY]
+    assert not isinstance(view, str)
+    assert view.symmetrized_point_count > 0
+    assert pipeline.take_capture() is None  # consumed exactly once
+
+
+def test_a_capture_that_cannot_be_symmetrized_is_reported_not_retried() -> None:
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=StubLandmarker(),  # a single degenerate point cannot fold
+        analyzer=FrameAnalyzer(config=_symmetrizable_config()),
+        analysis_interval_ms=0,
+    )
+    pipeline.request_capture()
+    pipeline.process(np.full((40, 40, 3), 30, dtype=np.uint8))
+
+    at = AppTest.from_string(_panel_script())
+    at.session_state["pipeline"] = pipeline
+    at.run()
+
+    assert not at.exception
+    assert isinstance(at.session_state[SYMMETRIZATION_STATE_KEY], str)
+    assert at.warning  # surfaced to the user rather than silently dropped
+
+
+def test_clearing_the_view_also_drops_the_held_frame() -> None:
+    """§10.4: no face-derived image is kept after the user clears the panel."""
+    pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analysis_interval_ms=0)
+    pipeline.request_capture()
+
+    at = AppTest.from_string(_panel_script())
+    at.session_state["pipeline"] = pipeline
+    at.run()
+    at.button(key="clear_symmetrization").click().run()
+
+    assert pipeline.capture_pending is False
+    assert pipeline.take_capture() is None
+    assert SYMMETRIZATION_STATE_KEY not in at.session_state
+
+
+def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
+    """§5.3/§10.7: a symmetrized face is a construction, not an ideal."""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_symmetrization_panel)
+
+    for forbidden in ("理想", "正解", "補正後", "あるべき", "完璧", "欠点"):
+        assert forbidden not in source

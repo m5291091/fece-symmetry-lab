@@ -22,7 +22,7 @@ def test_about_page_explains_score_methodology() -> None:
     headers = [element.value for element in at.header]
     subheaders = [element.value for element in at.subheader]
 
-    assert "スコアの算出方法" in headers
+    assert "左右差の算出方法" in headers
     assert any("幾何左右差" in text for text in subheaders)
     assert any("肌表面参考値" in text for text in subheaders)
     assert any("参考年齢" in text for text in subheaders)
