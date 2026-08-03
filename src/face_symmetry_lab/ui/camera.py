@@ -19,6 +19,7 @@ from streamlit.delta_generator import DeltaGenerator
 from streamlit_webrtc import WebRtcMode, WebRtcStreamerContext, webrtc_streamer
 
 from face_symmetry_lab import __version__
+from face_symmetry_lab.adapters.imaging.piecewise_warp import OpenCvPiecewiseWarper
 from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeFaceLandmarker,
@@ -67,6 +68,7 @@ from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
+    render_symmetrized_image,
     render_tracking_status,
 )
 
@@ -333,12 +335,16 @@ def _clear_symmetrization(pipeline: RealtimeLandmarkPipeline) -> None:
     st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
 
 
-def _consume_pending_capture(pipeline: RealtimeLandmarkPipeline) -> None:
+def _consume_pending_capture(pipeline: RealtimeLandmarkPipeline, *, warp: bool) -> None:
     """Turn a fulfilled capture into a view, once, off the realtime path.
 
     The pipeline hands the frame over exactly once, so this runs the one-shot
     symmetrization and keeps only the result. A capture that cannot be
     symmetrized is reported rather than retried silently.
+
+    ``warp`` requests §8.6.4's image, which rebuilds every pixel and is
+    therefore opt-in; it is read at capture time, since the raw frame is
+    consumed here and not retained afterwards (§10.4).
     """
     captured = pipeline.take_capture()
     if captured is None:
@@ -352,6 +358,7 @@ def _consume_pending_capture(pipeline: RealtimeLandmarkPipeline) -> None:
             captured.rgb_image,
             captured.frame,
             config=config,
+            warper=OpenCvPiecewiseWarper() if warp else None,
         )
     except SymmetrizationError as error:
         st.session_state[SYMMETRIZATION_STATE_KEY] = str(error)
@@ -371,7 +378,18 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         "どちらが正しい・望ましいという意味はありません。"
     )
 
-    _consume_pending_capture(pipeline)
+    # Read before the button so the toggle's current state is the one that
+    # applies to the capture it triggers.
+    warp = st.checkbox(
+        "左右対称にそろえた画像も生成する（幾何変形・処理が重くなります）",
+        key="camera_symmetrization_warp",
+        help=(
+            "ランドマークを結んだ三角形ごとに画素を変形し、左右対称にそろえた顔画像を作ります。"
+            "加工画像であり、無加工の写真ではありません。"
+        ),
+    )
+
+    _consume_pending_capture(pipeline, warp=warp)
     controls = st.columns(2)
     if controls[0].button("この瞬間を対称化して見る", key="capture_symmetrization"):
         pipeline.request_capture()
@@ -402,6 +420,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
     )
     st.caption(DEVIATION_UNIT_CAPTION)
+    render_symmetrized_image(view, requested=warp)
     st.caption("取り込んだ映像はこのブラウザセッションのメモリだけに残り、保存も送信もしません。")
 
 

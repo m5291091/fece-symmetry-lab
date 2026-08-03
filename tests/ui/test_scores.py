@@ -7,6 +7,9 @@ from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.scores import (
     DISTANCE_UNIT_CAPTION,
     SCORE_HEADING,
+    SYMMETRIZED_IMAGE_CAPTION,
+    SYMMETRIZED_IMAGE_LIMITS,
+    SYMMETRIZED_IMAGE_NOTICE,
     format_distance,
     format_symmetry,
 )
@@ -154,3 +157,86 @@ def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
     # silently becomes a target the user tries to reach.
     assert "上限" in DISTANCE_UNIT_CAPTION
     assert "目標値ではありません" in DISTANCE_UNIT_CAPTION
+
+
+# --- FR-035 symmetrized image framing ----------------------------------------
+
+
+def _warp_view(*, warped, reason=None):
+    """A `SymmetrizationView` stub carrying only what the renderer reads."""
+    from dataclasses import dataclass
+    from typing import Any
+
+    @dataclass
+    class _View:
+        warped: Any
+        warp_unavailable_reason: Any
+
+    return _View(warped=warped, warp_unavailable_reason=reason)
+
+
+def test_the_warped_image_is_not_rendered_unless_it_was_requested() -> None:
+    """§8.6.4 is opt-in; an unrequested warp says nothing at all."""
+    at = AppTest.from_string(
+        "import numpy as np, streamlit as st\n"
+        "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
+        "from tests.ui.test_scores import _warp_view\n"
+        "render_symmetrized_image(_warp_view(warped=None), requested=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert not at.info
+    assert not at.image
+
+
+def test_a_refused_warp_explains_itself_instead_of_rendering_nothing() -> None:
+    """AC-SYMM-02: fail-soft, with the reason on screen."""
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
+        "from tests.ui.test_scores import _warp_view\n"
+        "render_symmetrized_image(\n"
+        "    _warp_view(warped=None, reason='変形量が大きすぎるため画像を生成しません。'),\n"
+        "    requested=True,\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert any("変形量" in element.value for element in at.info)
+
+
+def test_the_warped_image_is_labelled_as_a_manipulated_image() -> None:
+    """§5.3/§10.7: a symmetrized photo must never pass as an untouched one."""
+    at = AppTest.from_string(
+        "import numpy as np\n"
+        "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
+        "from tests.ui.test_scores import _warp_view\n"
+        "render_symmetrized_image(\n"
+        "    _warp_view(warped=np.zeros((8, 8, 3), dtype=np.uint8)),\n"
+        "    requested=True,\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert at.image
+    rendered = " ".join(element.value for element in at.caption)
+    assert "加工画像" in rendered
+    assert "実際の顔写真ではなく" in rendered
+
+
+def test_the_warped_image_wording_avoids_a_value_judgement() -> None:
+    """§10.7: not an ideal, not a correction, not a before/after.
+
+    Asserted on the user-visible strings rather than the function source, so
+    a docstring naming the banned framing in order to forbid it cannot fail
+    this check.
+    """
+    shown = SYMMETRIZED_IMAGE_CAPTION + SYMMETRIZED_IMAGE_NOTICE + SYMMETRIZED_IMAGE_LIMITS
+
+    for forbidden in ("理想", "正解", "補正後", "美化", "before", "after"):
+        assert forbidden not in shown
+    # And it has to keep saying what the image actually is.
+    assert "加工画像" in shown

@@ -29,6 +29,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
 | 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
 | 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
+| 対称化画像のピクセルワーピング | `src/face_symmetry_lab/adapters/imaging/piecewise_warp.py` |
 | Camera correction / skin-surface metric | `src/face_symmetry_lab/domain/skin_quality.py` |
 | Quality gate / hysteresis | `src/face_symmetry_lab/application/quality.py` |
 | Frame analysis orchestration | `src/face_symmetry_lab/application/analyzer.py` |
@@ -63,6 +64,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Normalization / TLS midline | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, AC-SCORE-02 |
 | Symmetry distances | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01, AC-SCORE-04 |
 | 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
+| 変形メッシュ・安全ガード | `domain/warp_mesh.py` | `tests/domain/test_warp_mesh.py` | FR-035, AC-SYMM-02, §8.6.4 |
+| Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
 | Display smoothing | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, §8.7 |
@@ -88,7 +91,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 左右差の表示（距離の百分率整形を含む） | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3 |
 | CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
-| 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, AC-SYMM-01, §14.3g |
+| 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
@@ -108,7 +111,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `8f77813a0af92fcb00eb92f01dd4c6b54fd396297ec0ed7c0573a53dcb15e17f`_
+_File-list SHA-256: `8eef8381883da37336a9f7f95d6f4c14b7d32460e0bdf8d8129035aeaf0e078f`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -146,6 +149,8 @@ face-symmetry-lab/
     - `adapters/`
       - `export/`
         - … (2 files)
+      - `imaging/`
+        - … (2 files)
       - `inference/`
         - … (5 files)
       - `io/`
@@ -154,7 +159,7 @@ face-symmetry-lab/
     - `application/`
       - … (11 files)
     - `domain/`
-      - … (16 files)
+      - … (17 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
@@ -168,6 +173,7 @@ face-symmetry-lab/
     - `test_metric_config.py`
     - `test_model_store.py`
     - `test_opencv_demographic_estimator.py`
+    - `test_piecewise_warp.py`
     - `test_session_exporter.py`
     - `test_tracking_zoom_landmarker.py`
   - `application/`
@@ -197,6 +203,7 @@ face-symmetry-lab/
     - `test_symmetrization.py`
     - `test_symmetry.py`
     - `test_tracking_zoom.py`
+    - `test_warp_mesh.py`
   - `model/`
     - `conftest.py`
     - `test_demographic_conversion.py`

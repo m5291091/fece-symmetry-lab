@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
 from face_symmetry_lab.domain.models import DemographicEstimate
+from face_symmetry_lab.domain.warp_mesh import WarpMesh
 
 
 class DemographicEstimator(Protocol):
@@ -57,6 +58,17 @@ class ImageLandmarkProvider(Protocol):
     def detect(self, rgb_image: NDArray[np.uint8], *, frame_id: int = 0) -> LandmarkFrame: ...
 
     def close(self) -> None: ...
+
+
+class PiecewiseWarper(Protocol):
+    """Boundary for §8.6.4's pixel warp, implemented with a local imaging library.
+
+    The mesh already carries every geometric decision (which points move,
+    which are pinned, whether the displacement is safe), so an implementation
+    only has to triangulate and transfer pixels.
+    """
+
+    def warp(self, rgb_image: NDArray[np.uint8], mesh: WarpMesh) -> NDArray[np.uint8]: ...
 
 
 class SegmentationProvider(Protocol):

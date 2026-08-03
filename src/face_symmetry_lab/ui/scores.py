@@ -16,6 +16,7 @@ from typing import Final
 import streamlit as st
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.application.symmetrization import SymmetrizationView
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, Status
@@ -38,6 +39,21 @@ DISTANCE_UNIT_CAPTION = (
 DEVIATION_UNIT_CAPTION = (
     "ズレは、両眼の間隔を 100% としたときの、実測点と左右対称にそろえた位置との距離です。"
     "小さいほど両者が近いことだけを意味し、良し悪しを表しません。"
+)
+
+
+#: §5.3/§10.7: the user-visible framing of FR-035's warped image. Kept as
+#: constants so the wording can be asserted on directly — this is the output
+#: most easily mistaken for a "corrected" photograph.
+SYMMETRIZED_IMAGE_CAPTION = "左右対称にそろえた画像（ランドマークを基準に画素を変形した加工画像）"
+SYMMETRIZED_IMAGE_NOTICE = (
+    "対応点を左右対称の位置へ移動させ、その間の画素を三角形ごとに変形した合成画像です。"
+    "実際の顔写真ではなく、より正しい・望ましい顔でもありません。"
+    "加工画像であることを明示せずに提示・共有しないでください。"
+)
+SYMMETRIZED_IMAGE_LIMITS = (
+    "ランドマークが覆わない髪・耳・首・背景は、画像の外周を固定したまま"
+    "顔の変形に緩やかに追従するため、境界付近に不自然さが残ることがあります。"
 )
 
 
@@ -245,6 +261,28 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         "他人との比較、医学的評価、魅力度の判断には使用できません。"
     )
     st.caption(f"metric {outcome.metric_version} · landmark map {outcome.landmark_map_version}")
+
+
+def render_symmetrized_image(view: SymmetrizationView, *, requested: bool) -> None:
+    """FR-035: the warped image, framed as the manipulation it is.
+
+    Shared by Camera and Image so the one place this wording matters cannot
+    drift between them. §5.3/§10.7: a symmetrized photo is the output most
+    likely to be mistaken for a "corrected" or "better" face, so it is
+    labelled as a geometric deformation and never shown as a before/after.
+
+    Fails soft: when the warp was requested but the displacement guard or the
+    imaging step refused, the reason is shown and the point overlay above
+    stands on its own (AC-SYMM-02).
+    """
+    if not requested:
+        return
+    if view.warped is None:
+        st.info(view.warp_unavailable_reason or "対称化した画像は生成されていません。")
+        return
+    st.image(view.warped, caption=SYMMETRIZED_IMAGE_CAPTION, width="stretch")
+    st.caption(SYMMETRIZED_IMAGE_NOTICE)
+    st.caption(SYMMETRIZED_IMAGE_LIMITS)
 
 
 def render_demographic_estimate(

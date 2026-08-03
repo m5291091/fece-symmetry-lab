@@ -55,6 +55,9 @@ class SymmetrizationResult:
     deviations: dict[int, float]
     #: The fitted midline, in the normalized frame it was fitted in.
     midline: Midline
+    #: Interocular distance in source pixels — §8.3's normalization scale.
+    #: §8.6.4's displacement guard needs the deviations back in pixels.
+    interocular_px: float
     metric_version: str
     landmark_map_version: str
 
@@ -128,6 +131,7 @@ def symmetrize_landmarks(
         symmetrized_indices=tuple(changed),
         deviations=deviations,
         midline=midline,
+        interocular_px=transform.scale,
         metric_version=config.metric_version,
         landmark_map_version=config.landmark_map_version,
     )

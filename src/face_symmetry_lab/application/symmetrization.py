@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.application.ports import PiecewiseWarper
 from face_symmetry_lab.domain.landmarks import LandmarkError, LandmarkFrame, to_pixel_array
 from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.overlay import (
@@ -31,14 +32,21 @@ from face_symmetry_lab.domain.symmetrization import (
     SymmetrizationResult,
     symmetrize_landmarks,
 )
+from face_symmetry_lab.domain.warp_mesh import WarpMeshError, build_warp_mesh
 
 
 @dataclass(frozen=True, slots=True)
 class SymmetrizationView:
-    """One symmetrization and the image to render for it."""
+    """One symmetrization and the image(s) to render for it."""
 
     result: SymmetrizationResult
     overlay: NDArray[np.uint8]
+    #: §8.6.4's warped image, or None when it was not requested or could not
+    #: be produced. Its absence never invalidates `overlay` (fail-soft).
+    warped: NDArray[np.uint8] | None = None
+    #: Why `warped` is missing despite having been requested, for the UI to
+    #: explain rather than silently showing one image instead of two.
+    warp_unavailable_reason: str | None = None
 
     @property
     def symmetrized_point_count(self) -> int:
@@ -58,6 +66,7 @@ def symmetrize_frame(
     frame: LandmarkFrame,
     *,
     config: MetricConfig,
+    warper: PiecewiseWarper | None = None,
     measured_color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
     symmetrized_color: tuple[int, int, int] = DEFAULT_SYMMETRIZED_COLOR,
     deviation_color: tuple[int, int, int] = DEFAULT_DEVIATION_COLOR,
@@ -69,6 +78,11 @@ def symmetrize_frame(
     frame cannot carry the construction at all — a multi-face or size-less
     frame has no single midline to fold about, and drawing one face's fold on
     an image holding two would attribute it to the wrong person (FR-008).
+
+    ``warper`` additionally produces §8.6.4's warped image. It is optional
+    and fails soft: the point overlay is the primary result, and a mesh the
+    displacement guard rejects (or an imaging failure) leaves the view with
+    its reason recorded instead of taking the whole panel down.
     """
     if not frame.has_single_face:
         raise SymmetrizationError("単一顔のフレームだけを対称化できます。")
@@ -91,4 +105,41 @@ def symmetrize_frame(
         )
     except LandmarkError as error:
         raise SymmetrizationError(str(error)) from error
-    return SymmetrizationView(result=result, overlay=overlay)
+
+    warped, reason = _warp(rgb_image, result, warper)
+    return SymmetrizationView(
+        result=result,
+        overlay=overlay,
+        warped=warped,
+        warp_unavailable_reason=reason,
+    )
+
+
+def _warp(
+    rgb_image: NDArray[np.uint8],
+    result: SymmetrizationResult,
+    warper: PiecewiseWarper | None,
+) -> tuple[NDArray[np.uint8] | None, str | None]:
+    """§8.6.4's warped image, or (None, why-not). Never raises.
+
+    The mesh is built from the symmetrized points this same call produced, so
+    the warp adds no geometry of its own — only the pixel transfer.
+    """
+    if warper is None:
+        return None, None
+    height, width = rgb_image.shape[:2]
+    try:
+        mesh = build_warp_mesh(
+            result.measured,
+            result.symmetrized,
+            width=width,
+            height=height,
+            interocular_px=result.interocular_px,
+        )
+    except WarpMeshError as error:
+        return None, str(error)
+    try:
+        return warper.warp(rgb_image, mesh), None
+    except Exception as error:
+        # An imaging failure is this image's failure, not the analysis's.
+        return None, f"画像を生成できませんでした: {error}"

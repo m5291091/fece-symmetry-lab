@@ -9,6 +9,7 @@ import numpy as np
 import streamlit as st
 
 from face_symmetry_lab import __version__
+from face_symmetry_lab.adapters.imaging.piecewise_warp import OpenCvPiecewiseWarper
 from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     LandmarkDetectionError,
     MediaPipeImageLandmarker,
@@ -54,6 +55,7 @@ from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
+    render_symmetrized_image,
     render_tracking_status,
 )
 
@@ -277,8 +279,23 @@ def _render_image_symmetrization(
     view is computed straight from the photo on screen (§14.3g).
     """
     st.markdown("#### 左右対称にそろえた位置との比較")
+    # §8.6.4 rebuilds every pixel, and this panel re-renders on each rerun, so
+    # the warp stays opt-in rather than being paid for on every interaction.
+    warp = st.checkbox(
+        "左右対称にそろえた画像も生成する（幾何変形・処理が重くなります）",
+        key="image_symmetrization_warp",
+        help=(
+            "ランドマークを結んだ三角形ごとに画素を変形し、左右対称にそろえた顔画像を作ります。"
+            "加工画像であり、無加工の写真ではありません。"
+        ),
+    )
     try:
-        view = symmetrize_frame(rgb, analysis.landmarks.frame, config=load_metric_config())
+        view = symmetrize_frame(
+            rgb,
+            analysis.landmarks.frame,
+            config=load_metric_config(),
+            warper=OpenCvPiecewiseWarper() if warp else None,
+        )
     except SymmetrizationError as error:
         st.info(str(error))
         return
@@ -301,6 +318,7 @@ def _render_image_symmetrization(
         "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
     )
     st.caption(DEVIATION_UNIT_CAPTION)
+    render_symmetrized_image(view, requested=warp)
 
 
 def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:

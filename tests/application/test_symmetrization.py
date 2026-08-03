@@ -138,3 +138,82 @@ def test_a_degenerate_face_is_refused_rather_than_drawn() -> None:
 
     with pytest.raises(SymmetrizationError):
         symmetrize_frame(_image(), _frame(tuple(collapsed)), config=_config())
+
+
+# --- §8.6.4 pixel warping (FR-035) -------------------------------------------
+
+
+class RecordingWarper:
+    """A `PiecewiseWarper` that reports what it was handed."""
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.meshes: list[object] = []
+        self.error = error
+
+    def warp(self, rgb_image, mesh):
+        self.meshes.append(mesh)
+        if self.error is not None:
+            raise self.error
+        marked = rgb_image.copy()
+        marked[0, 0] = (1, 2, 3)
+        return marked
+
+
+def test_no_warper_means_no_warped_image_and_no_complaint() -> None:
+    """§8.6.4 is opt-in: phase 1 must not pay for it or mention it."""
+    view = symmetrize_frame(_image(), _frame(_skewed()), config=_config())
+
+    assert view.warped is None
+    assert view.warp_unavailable_reason is None
+
+
+def test_a_warper_receives_the_symmetrized_points_as_its_target() -> None:
+    """The warp adds no geometry: it reuses what §8.6.2 already computed."""
+    warper = RecordingWarper()
+
+    view = symmetrize_frame(_image(), _frame(_skewed()), config=_config(), warper=warper)
+
+    assert view.warped is not None
+    assert len(warper.meshes) == 1
+    mesh = warper.meshes[0]
+    assert np.allclose(mesh.source[: mesh.landmark_count], view.result.measured)
+    assert np.allclose(mesh.target[: mesh.landmark_count], view.result.symmetrized)
+
+
+def test_the_overlay_survives_a_warp_failure() -> None:
+    """AC-SYMM-02: an imaging failure must not take the point view down."""
+    warper = RecordingWarper(error=RuntimeError("boom"))
+
+    view = symmetrize_frame(_image(), _frame(_skewed()), config=_config(), warper=warper)
+
+    assert view.warped is None
+    assert view.warp_unavailable_reason is not None
+    assert "boom" in view.warp_unavailable_reason
+    assert view.overlay is not None
+    assert view.max_deviation is not None
+
+
+def test_an_over_displaced_face_refuses_the_image_but_keeps_the_points() -> None:
+    """AC-SYMM-02: the displacement guard fails soft, with a reason."""
+    wrecked = list(_POINTS)
+    wrecked[15] = (0.02, 0.95)  # a mouth point thrown across the frame
+    warper = RecordingWarper()
+
+    view = symmetrize_frame(_image(), _frame(tuple(wrecked)), config=_config(), warper=warper)
+
+    assert view.warped is None
+    assert view.warp_unavailable_reason is not None
+    assert "変形量" in view.warp_unavailable_reason
+    assert warper.meshes == []  # refused before any pixel work
+    assert view.max_deviation is not None
+
+
+def test_the_warp_is_stateless_and_repeatable() -> None:
+    frame = _frame(_skewed())
+    config = _config()
+
+    first = symmetrize_frame(_image(), frame, config=config, warper=RecordingWarper())
+    second = symmetrize_frame(_image(), frame, config=config, warper=RecordingWarper())
+
+    assert first.warped is not None and second.warped is not None
+    assert np.array_equal(first.warped, second.warped)
