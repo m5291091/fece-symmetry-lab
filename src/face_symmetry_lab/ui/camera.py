@@ -150,7 +150,20 @@ _HUD_STYLESHEET: Final[str] = """
     border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px;
 }
 .st-key-camera_preview_frame { position: relative; border-width: 3px !important; }
-.st-key-fsl_exit_fullscreen { position: fixed; top: 24px; right: 24px; z-index: 1000060; }
+/* `width: auto` is load-bearing: Streamlit's vertical block is width:100%,
+   so a fixed container anchored by `right` would stretch across the viewport
+   and drop its button off the left edge. */
+.st-key-fsl_exit_fullscreen {
+    position: fixed; top: 24px; right: 24px; left: auto; z-index: 1000060;
+    width: auto !important; min-width: 0 !important;
+}
+.st-key-fsl_exit_fullscreen button {
+    background: rgba(0,0,0,.72) !important;
+    color: #fff !important;
+    border: 2px solid rgba(255,255,255,.65) !important;
+    padding: 10px 22px !important;
+    font-size: 1rem !important;
+}
 body.fsl-fullscreen .st-key-camera_preview_frame iframe {
     position: fixed; inset: 0;
     width: 100vw !important; height: 100vh !important;
@@ -436,6 +449,38 @@ def _render_hud_payload(snapshot: PipelineSnapshot) -> None:
     )
 
 
+#: Injected into the WebRTC component's own iframe (same-origin), because a
+#: stylesheet in the page does not reach inside it.
+#:
+#: Chrome's native video controls carry a fullscreen button and an overflow
+#: menu. Native fullscreen promotes the `<video>` into the browser's top
+#: layer, which is above *every* page element — the HUD included — so it
+#: silently defeats the overlay. The app's own fullscreen is the supported
+#: path, and the native affordance is removed rather than left as a trap.
+#:
+#: `.fsl-controls` is a class this app puts on the START/STOP row itself: the
+#: component only ships emotion/MUI hashes, so tagging the node from JS is the
+#: stable hook (§5.2). In fullscreen that row would otherwise sit against the
+#: far-left screen edge, which is where it became hard to hit.
+_VIDEO_CHROME_CSS: Final[str] = """
+video::-webkit-media-controls-fullscreen-button,
+video::-webkit-media-controls-overflow-button,
+video::-webkit-media-controls-overflow-menu-button,
+video::-webkit-media-controls-picture-in-picture-button { display: none !important; }
+html.fsl-fs body { background: #000; }
+html.fsl-fs .fsl-controls {
+    position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);
+    z-index: 20; gap: 16px;
+    background: rgba(0,0,0,.6); padding: 12px 20px; border-radius: 999px;
+}
+html.fsl-fs .fsl-controls button {
+    font-size: 1.05rem !important;
+    padding: 10px 26px !important;
+    min-height: 48px;
+}
+"""
+
+
 #: The HUD runtime, injected into the *page's* JS realm (not the component
 #: iframe's). Streamlit tears the component iframe down on every rerun, and a
 #: timer callback defined inside it dies with its realm while the timer id
@@ -520,11 +565,45 @@ _HUD_RUNTIME_JS: Final[str] = """
 
   // One timer, replaced rather than stacked when the bridge re-runs.
   if (window.__fslHudTimer) clearInterval(window.__fslHudTimer);
+  // The component iframe is same-origin, so its <video> and its START/STOP
+  // row can be reached. Idempotent: safe to re-run on every tick.
+  var tameVideoFrame = function () {
+    var host = document.querySelector('.st-key-camera_preview_frame iframe');
+    var vdoc = null;
+    try { vdoc = host && host.contentDocument; } catch (err) { return; }
+    if (!vdoc || !vdoc.head) return;
+    var vstyle = vdoc.getElementById('fsl-video-style');
+    if (!vstyle) {
+      vstyle = vdoc.createElement('style');
+      vstyle.id = 'fsl-video-style';
+      vdoc.head.appendChild(vstyle);
+    }
+    if (vstyle.textContent !== CFG.videoCss) vstyle.textContent = CFG.videoCss;
+    vdoc.documentElement.classList.toggle('fsl-fs', !!CFG.fullscreen);
+    var buttons = vdoc.querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) {
+      var row = buttons[i].parentElement && buttons[i].parentElement.parentElement;
+      if (row && !row.classList.contains('fsl-controls')) row.classList.add('fsl-controls');
+    }
+    var video = vdoc.querySelector('video');
+    if (video) {
+      // Belt and braces: the pseudo-element rules hide the buttons, these
+      // attributes stop the behaviour being reachable another way.
+      video.setAttribute('controlsList', 'nofullscreen noremoteplayback nodownload');
+      video.disablePictureInPicture = true;
+    }
+  };
+
   var lastGate = '';
   var sync = function () {
+    tameVideoFrame();
     var holder = document.getElementById(CFG.dataId);
     var hudEl = document.getElementById('fsl-hud');
-    if (!holder || !hudEl) return;
+    if (!hudEl) return;
+    // No payload means the camera is not running: the panel that publishes it
+    // only renders while playing, so the HUD must go with it rather than
+    // linger showing the last frame's numbers.
+    if (!holder) { hudEl.hidden = true; return; }
     var data;
     try { data = JSON.parse(holder.textContent); } catch (err) { return; }
     hudEl.hidden = !data.visible;
@@ -568,6 +647,7 @@ def _hud_bridge_script(*, fullscreen: bool, position: str) -> str:
             "anchor": _HUD_PLACEMENTS.get(position, ""),
             "dataId": _HUD_DATA_ELEMENT_ID,
             "css": _HUD_STYLESHEET,
+            "videoCss": _VIDEO_CHROME_CSS,
             "intervalMs": _HUD_REFRESH_MS,
         },
         ensure_ascii=False,

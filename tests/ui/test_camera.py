@@ -759,3 +759,82 @@ def test_fullscreen_stacks_above_streamlit_chrome() -> None:
     # video < HUD < exit control, all above Streamlit's own chrome.
     for value in (1000000, 1000050, 1000060):
         assert f"z-index: {value}" in css
+
+
+# --- fullscreen chrome: controls, native buttons, HUD lifetime ---------------
+
+
+def test_the_exit_control_shrinks_to_its_button() -> None:
+    """Streamlit's vertical block is width:100%, so a `right`-anchored fixed
+    container stretched across the viewport and dropped the button off the
+    left edge (measured at x=-24)."""
+    from face_symmetry_lab.ui import camera
+
+    css = camera._HUD_STYLESHEET
+
+    assert "width: auto !important;" in css
+    assert "left: auto;" in css
+
+
+def test_the_native_video_fullscreen_control_is_removed() -> None:
+    """Native fullscreen promotes the <video> into the browser's top layer,
+    above every page element — the HUD included — so it defeats the overlay."""
+    from face_symmetry_lab.ui import camera
+
+    css = camera._VIDEO_CHROME_CSS
+
+    for control in (
+        "media-controls-fullscreen-button",
+        "media-controls-overflow-button",
+        "media-controls-overflow-menu-button",
+        "media-controls-picture-in-picture-button",
+    ):
+        assert control in css
+    assert "display: none !important;" in css
+
+
+def test_the_runtime_also_disables_the_controls_by_attribute() -> None:
+    """CSS hides the buttons; the attributes stop the behaviour being reached
+    another way (keyboard shortcut, context menu)."""
+    from face_symmetry_lab.ui import camera
+
+    runtime = camera._HUD_RUNTIME_JS
+
+    assert "nofullscreen" in runtime
+    assert "disablePictureInPicture" in runtime
+
+
+def test_fullscreen_centres_and_enlarges_the_start_stop_row() -> None:
+    """At the far-left edge of a fullscreen viewport the row was hard to hit."""
+    from face_symmetry_lab.ui import camera
+
+    css = camera._VIDEO_CHROME_CSS
+
+    assert "html.fsl-fs .fsl-controls" in css
+    assert "left: 50%" in css
+    assert "translateX(-50%)" in css
+    assert "min-height: 48px" in css
+
+
+def test_the_control_row_is_tagged_from_js_rather_than_by_a_vendor_class() -> None:
+    """The component ships only emotion/MUI hashes, so the app adds its own."""
+    from face_symmetry_lab.ui import camera
+
+    assert "classList.add('fsl-controls')" in camera._HUD_RUNTIME_JS
+
+
+def test_the_hud_disappears_when_the_camera_is_not_running() -> None:
+    """The panel that publishes the payload only renders while playing, so a
+    missing payload must hide the HUD instead of freezing its last values."""
+    from face_symmetry_lab.ui import camera
+
+    assert "if (!holder) { hudEl.hidden = true; return; }" in camera._HUD_RUNTIME_JS
+
+
+def test_the_component_iframe_access_is_guarded() -> None:
+    """A cross-origin or not-yet-ready iframe must not throw on every tick."""
+    from face_symmetry_lab.ui import camera
+
+    runtime = camera._HUD_RUNTIME_JS
+
+    assert "try { vdoc = host && host.contentDocument; } catch (err) { return; }" in runtime
