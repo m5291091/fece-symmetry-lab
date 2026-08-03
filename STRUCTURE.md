@@ -36,6 +36,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenVINO reference parity (OD-07, dev-only) | `scripts/verify_openvino_parity.py` |
 | Cross-ONNX-runtime agreement (OD-07 due diligence, dev-only) | `scripts/verify_onnx_runtime_agreement.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
+| 間引きフレーム用のTTL cache | `src/face_symmetry_lab/runtime/display_cache.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
 | Tracking-zoom landmark wrapper | `src/face_symmetry_lab/adapters/inference/tracking_zoom_landmarker.py` |
 | Tracking-zoom geometry | `src/face_symmetry_lab/domain/tracking_zoom.py` |
@@ -71,6 +72,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
 | Latest-frame-wins gate | `runtime/frame_scheduler.py` | `tests/runtime/test_frame_scheduler.py` | NFR-006, NFR-007 |
+| 幾何・mask共用の表示TTL cache | `runtime/display_cache.py` | `tests/runtime/test_display_cache.py` | FR-013, §1.2(17), AC-DISPLAY-01 |
 | Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
 | Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, AC-ZOOM-01 |
 | Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, AC-ZOOM-01 |
@@ -80,7 +82,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
-| Score presentation | `ui/scores.py` | UI / E2E tests は未整備 | FR-014, §5.3 |
+| Score presentation | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3 |
 | CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
@@ -102,7 +104,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `c2d6d4ae4c6ac2f385cbcbfbbf2c3d96f2d9266d13c55ba1a4ee082ddb7eb0a1`_
+_File-list SHA-256: `5c050492c365d7e604304256da4b3a11fe61c788cbfb42b5e7322de776a4a27c`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -150,7 +152,7 @@ face-symmetry-lab/
     - `domain/`
       - … (15 files)
     - `runtime/`
-      - … (2 files)
+      - … (3 files)
     - `ui/`
       - … (8 files)
     - `__init__.py`
@@ -201,6 +203,7 @@ face-symmetry-lab/
     - `test_generate_structure.py`
     - `test_testbox_documentation.py`
   - `runtime/`
+    - `test_display_cache.py`
     - `test_frame_scheduler.py`
   - `ui/`
     - `test_about_page.py`
@@ -208,6 +211,7 @@ face-symmetry-lab/
     - `test_camera.py`
     - `test_guidance.py`
     - `test_model_setup.py`
+    - `test_scores.py`
   - `__init__.py`
   - `test_cli.py`
 - `.gitignore`

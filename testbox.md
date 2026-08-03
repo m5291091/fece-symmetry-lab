@@ -27,6 +27,7 @@
 | `tests/application/test_analyzer.py` | ゲート→幾何／補正後の肌表面参考値→平滑化の統合と失敗分離、`update`によるmetric config差し替え、`tau_seconds`読み出し | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01, §15.2 |
 | `tests/application/test_session.py` | session履歴上限、segment、設定fingerprint、肌表面・年齢・性別の合流、`reset`によるmetric_config差し替え・history_capacity resize、`resize_history_capacity`による非破壊resize（segment/revision不変） | FR-016, FR-017, FR-020, FR-023, FR-025, NFR-012, §15.2, §14.3d |
 | `tests/runtime/test_frame_scheduler.py` | capacity 1 の latest-frame-wins gate | NFR-006, NFR-007 |
+| `tests/runtime/test_display_cache.py` | 間引きフレームが再利用する幾何・mask共用のTTL slot（期限内の再読み出し、期限切れでの破棄、明示clear、並行store/readの一貫性） | FR-013, §1.2(17), AC-DISPLAY-01 |
 | `tests/adapters/test_opencv_demographic_estimator.py` | 派生ONNX用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
 | `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
 | `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播、`policy`読み出し（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
@@ -44,6 +45,7 @@
 | `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
 | `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、frame callbackの描画契約（幾何のみ描画／描くものが無ければ元frameをそのまま返し再encodeしない／解析はsnapshotへ届く／背景置換時のpts保持） | FR-005, FR-013, NFR-006, NFR-009, AC-PRIV-02, AC-LAYOUT-01 |
 | `tests/ui/test_guidance.py` | 位置誘導メッセージの全ReasonCode網羅と、品質ゲート充足時にNoneを返すこと | FR-031, AC-GUIDE-01 |
+| `tests/ui/test_scores.py` | Camera・Image共用の結果表示（追跡状態ごとの severity 割当、欠測時の `—` 表示、詳細パネルが共通guidance表から理由を文言化すること） | FR-013, FR-014, NFR-013, §5.2, §5.3, §6.3, AC-LAYOUT-01 |
 | `tests/ui/test_model_setup.py` | manifest由来のlandmark・派生ONNX解決、元IR provenance・個別hash検証、状態表示 | FR-001, FR-002, FR-020, FR-024 |
 | `tests/test_cli.py` | localhost 限定の Streamlit 起動 command | NFR-009, AC-SEC-01 |
 | `tests/repository/test_generate_structure.py` | 安全で bounded な `STRUCTURE.md` 生成 | 開発効率・リポジトリ規約 |

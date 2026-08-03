@@ -50,6 +50,7 @@ from face_symmetry_lab.domain.overlay import (
     draw_landmark_points,
 )
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
+from face_symmetry_lab.runtime.display_cache import TtlCache
 from face_symmetry_lab.runtime.frame_scheduler import FrameScheduler
 
 #: Consecutive failures before the UI should offer a recovery action (§14.4).
@@ -174,14 +175,15 @@ class RealtimeLandmarkPipeline:
         self._closed = False
         self._state_lock = threading.Lock()
         self._sample_lock = threading.Lock()
+        #: Display *settings* only (brightness, midline, background mode).
+        #: The two caches below carry their own locks, so this one never has
+        #: to stand for both a preference and the pixels derived from it.
         self._overlay_lock = threading.Lock()
-        # Kept apart from `_overlay_lock` so that lock keeps meaning "display
-        # settings and cached overlay pixels" only.
         self._demographic_lock = threading.Lock()
-        self._cached_geometry: LandmarkFrame | None = None
-        self._cached_geometry_at: float | None = None
-        self._cached_mask: NDArray[np.float32] | None = None
-        self._cached_mask_at: float | None = None
+        #: §1.2(17): what a throttled frame may still show, both expiring on
+        #: the same `_display_ttl_seconds`.
+        self._geometry_cache: TtlCache[LandmarkFrame] = TtlCache()
+        self._mask_cache: TtlCache[NDArray[np.float32]] = TtlCache()
 
     def process(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Analyse one frame and return the image to send back to the browser."""
@@ -209,8 +211,8 @@ class RealtimeLandmarkPipeline:
         if self._closed:
             return rgb_image, None
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
-            self._clear_cached_geometry()
-            self._clear_cached_mask()
+            self._geometry_cache.clear()
+            self._mask_cache.clear()
             self._record_error()
             return rgb_image, None
 
@@ -276,11 +278,9 @@ class RealtimeLandmarkPipeline:
             )
             landmark_ms = (self._clock() - started) * 1000.0
             if frame.has_single_face:
-                with self._overlay_lock:
-                    self._cached_geometry = frame
-                    self._cached_geometry_at = started
+                self._geometry_cache.store(frame, at=started)
             else:
-                self._clear_cached_geometry()
+                self._geometry_cache.clear()
             # §14.3c: measured on the raw frame, and only ever affecting the
             # *next* one, so its position relative to painting is free.
             self._apply_display_tuning(self._auto_tune.display_tuning(rgb_image, frame, at=started))
@@ -291,7 +291,7 @@ class RealtimeLandmarkPipeline:
             self._submit_demographic_sample(rgb_image, frame)
         except Exception:
             # A single frame failure must not stop the stream (NFR-017).
-            self._clear_cached_geometry()
+            self._geometry_cache.clear()
             self._record_error(
                 frame_id=self._frame_id,
                 elapsed_ms=timestamp_ms,
@@ -404,19 +404,13 @@ class RealtimeLandmarkPipeline:
         return painted
 
     def _draw_cached_geometry(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
-        now = self._clock()
-        with self._overlay_lock:
-            frame = self._cached_geometry
-            cached_at = self._cached_geometry_at
-        if frame is None or cached_at is None or now - cached_at > self._display_ttl_seconds:
-            self._clear_cached_geometry()
+        frame = self._geometry_cache.read(
+            now=self._clock(),
+            ttl_seconds=self._display_ttl_seconds,
+        )
+        if frame is None:
             return rgb_image
         return self._paint_geometry(rgb_image, frame)
-
-    def _clear_cached_geometry(self) -> None:
-        with self._overlay_lock:
-            self._cached_geometry = None
-            self._cached_geometry_at = None
 
     def _apply_background(
         self,
@@ -448,9 +442,7 @@ class RealtimeLandmarkPipeline:
             composited = composite_background(painted, mask, BACKGROUND_COLORS[mode])
         except Exception:
             return painted, (self._clock() - started) * 1000.0
-        with self._overlay_lock:
-            self._cached_mask = mask
-            self._cached_mask_at = at
+        self._mask_cache.store(mask, at=at)
         return composited, (self._clock() - started) * 1000.0
 
     def _composite_cached_background(self, painted: NDArray[np.uint8]) -> NDArray[np.uint8]:
@@ -461,23 +453,18 @@ class RealtimeLandmarkPipeline:
         """
         with self._overlay_lock:
             mode = self._background_mode
-            mask = self._cached_mask
-            cached_at = self._cached_mask_at
-        if mode is BackgroundMode.OFF or mask is None or cached_at is None:
+        if mode is BackgroundMode.OFF:
             return painted
-        now = self._clock()
-        if now - cached_at > self._display_ttl_seconds:
-            self._clear_cached_mask()
+        mask = self._mask_cache.read(
+            now=self._clock(),
+            ttl_seconds=self._display_ttl_seconds,
+        )
+        if mask is None:
             return painted
         try:
             return composite_background(painted, mask, BACKGROUND_COLORS[mode])
         except Exception:
             return painted
-
-    def _clear_cached_mask(self) -> None:
-        with self._overlay_lock:
-            self._cached_mask = None
-            self._cached_mask_at = None
 
     def _apply_display_tuning(self, tuning: DisplayTuning) -> None:
         """Adopt §14.3c's brightness/zoom recommendations, if it made any."""
@@ -651,9 +638,8 @@ class RealtimeLandmarkPipeline:
         if self._recorder is not None:
             self._recorder.reset()
         self.scheduler.reset()
-        self._clear_cached_geometry()
-        self._clear_cached_geometry()
-        self._clear_cached_mask()
+        self._geometry_cache.clear()
+        self._mask_cache.clear()
         self._reset_demographic_worker()
         with self._sample_lock:
             self._next_analysis_at = self._clock()
@@ -712,8 +698,8 @@ class RealtimeLandmarkPipeline:
             self._set_analysis_interval_ms(analysis_interval_ms)
         if age_interval_ms is not None and self._demographic_worker is not None:
             self._demographic_worker.set_interval_ms(age_interval_ms)
-        self._clear_cached_geometry()
-        self._clear_cached_mask()
+        self._geometry_cache.clear()
+        self._mask_cache.clear()
         self._reset_demographic_worker()
 
     def _set_analysis_interval_ms(self, interval_ms: int) -> None:
@@ -821,8 +807,8 @@ class RealtimeLandmarkPipeline:
         if self._closed:
             return
         self._closed = True
-        self._clear_cached_geometry()
-        self._clear_cached_mask()
+        self._geometry_cache.clear()
+        self._mask_cache.clear()
         self._landmarker.close()
         if self._segmenter is not None:
             self._segmenter.close()
