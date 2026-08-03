@@ -32,6 +32,7 @@
 | `tests/runtime/test_frame_scheduler.py` | capacity 1 の latest-frame-wins gate | NFR-006, NFR-007 |
 | `tests/runtime/test_display_cache.py` | 間引きフレームが再利用する幾何・mask共用のTTL slot（期限内の再読み出し、期限切れでの破棄、明示clear、並行store/readの一貫性） | FR-013, §1.2(17), AC-DISPLAY-01 |
 | `tests/adapters/test_opencv_demographic_estimator.py` | 派生ONNX用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
+| `tests/adapters/test_runtime_errors.py` | ローカル推論runtimeの起動失敗メッセージ（共有ライブラリ欠落時に導入すべきpackage名を示す・その他は原文・空例外は型名・1行に収める・両MediaPipe adapterが同じ説明を返すこと） | §14.4, §5.3, §21.5 |
 | `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
 | `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播、`policy`読み出し（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
 | `tests/adapters/test_mediapipe_segmenter.py` | Image Segmenter contract（VIDEO）、frame order、shape/finite検証、close | FR-027, §14.3b, AC-DISPLAY-01 |

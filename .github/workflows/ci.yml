@@ -36,6 +36,16 @@ jobs:
         with:
           python-version-file: .python-version
       - run: uv sync --frozen
+      # MediaPipe's native `libmediapipe.so` links against EGL/GLES even for
+      # CPU-only inference, and the GitHub runner image ships neither. Read
+      # straight off the wheel's DT_NEEDED entries for mediapipe 0.10.35;
+      # every other entry (libc/libm/libdl/libpthread/librt/libstdc++/
+      # libgcc_s) is already present. Package names confirmed against
+      # Ubuntu noble's Contents index.
+      - name: Install the native libraries MediaPipe links against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgles2
       - name: Prepare the pinned model assets
         run: uv run python scripts/bootstrap_models.py --accept-manifest
       - name: Verify the installed assets against the manifest

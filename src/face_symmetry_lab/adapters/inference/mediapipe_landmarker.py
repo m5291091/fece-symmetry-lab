@@ -16,6 +16,7 @@ from typing import Any, Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.adapters.inference.runtime_errors import init_failure_detail
 from face_symmetry_lab.domain.landmarks import (
     LandmarkError,
     LandmarkFrame,
@@ -71,7 +72,9 @@ def _create_detector(model_path: Path, running_mode_name: str) -> Any:
         )
         return FaceLandmarker.create_from_options(options)
     except Exception as error:
-        raise LandmarkDetectionError("ランドマークモデルを初期化できません。") from error
+        raise LandmarkDetectionError(
+            f"ランドマークモデルを初期化できません。{init_failure_detail(error)}"
+        ) from error
 
 
 def _default_detector_factory(model_path: Path) -> Any:

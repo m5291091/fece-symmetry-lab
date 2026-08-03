@@ -18,6 +18,8 @@ from typing import Any, Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.adapters.inference.runtime_errors import init_failure_detail
+
 
 class SegmentationError(RuntimeError):
     """Recoverable failure at the segmentation model boundary."""
@@ -57,7 +59,9 @@ def _create_detector(model_path: Path) -> Any:
         )
         return ImageSegmenter.create_from_options(options)
     except Exception as error:
-        raise SegmentationError("セグメンテーションモデルを初期化できません。") from error
+        raise SegmentationError(
+            f"セグメンテーションモデルを初期化できません。{init_failure_detail(error)}"
+        ) from error
 
 
 def _default_detector_factory(model_path: Path) -> Any:
