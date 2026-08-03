@@ -73,9 +73,9 @@ def test_repository_manifest_pins_the_official_openvino_demographic_pair() -> No
     assert xml.version == weights.version == "open-model-zoo/2023.0/FP16"
     assert xml.filename == "age-gender-recognition-retail-0013.xml"
     assert weights.filename == "age-gender-recognition-retail-0013.bin"
-    assert xml.size_bytes == 62_543
+    assert xml.size_bytes == 43_414
     assert weights.size_bytes == 4_276_038
-    assert xml.sha256 == "2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067"
+    assert xml.sha256 == "a625adb569fb40f6b4e392059409088ec4443b465c8ed571e9e8fb71b5192d64"
     assert weights.sha256 == "7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13"
     assert xml.url.endswith("/FP16/age-gender-recognition-retail-0013.xml")
     assert weights.url.endswith("/FP16/age-gender-recognition-retail-0013.bin")

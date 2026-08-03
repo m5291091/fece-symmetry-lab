@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.4.0",
+  "manifest_version": "1.5.0",
   "models": [
     {
       "name": "face_landmarker",
@@ -17,8 +17,8 @@
       "version": "open-model-zoo/2023.0/FP16",
       "filename": "age-gender-recognition-retail-0013.xml",
       "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml",
-      "size_bytes": 62543,
-      "sha256": "2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067",
+      "size_bytes": 43414,
+      "sha256": "a625adb569fb40f6b4e392059409088ec4443b465c8ed571e9e8fb71b5192d64",
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "input_contract": "OpenVINO IR v11 graph; pair with age-gender-recognition-retail-0013.bin; BGR float32 NCHW 1x3x62x62; outputs fc3_a and prob"
@@ -52,7 +52,7 @@
       "version": "open-model-zoo/2023.0/FP16-onnx-v2",
       "filename": "age-gender-recognition-retail-0013.onnx",
       "size_bytes": 8556149,
-      "sha256": "b50a5e261d7a30484aee08534f88e13b19ccc8a9ca712b24dd1fd49d6b5b5411",
+      "sha256": "a221460e4bc822f3b48138a5e39c384cd14180d1248308277503c3cf99085712",
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "input_contract": "Derived ONNX opset 13; BGR float32 NCHW 1x3x62x62; outputs fc3_a and prob; generated only from the pinned OpenVINO IR pair",

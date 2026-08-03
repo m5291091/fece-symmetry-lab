@@ -15,16 +15,19 @@
 
 | file | size | SHA-256 |
 |---|---:|---|
-| `age-gender-recognition-retail-0013.xml` | 62,543 bytes | `2de3182a773f31d2c2ed91197ee069feae340a505add157a4a92067d333cf067` |
+| `age-gender-recognition-retail-0013.xml` | 43,414 bytes | `a625adb569fb40f6b4e392059409088ec4443b465c8ed571e9e8fb71b5192d64` |
 | `age-gender-recognition-retail-0013.bin` | 4,276,038 bytes | `7c6e3da30e369fd870f6d208fc6b08f7cc15a137c1c9c1030b911a5fad31da13` |
-| `age-gender-recognition-retail-0013.onnx` | 8,556,149 bytes | `b50a5e261d7a30484aee08534f88e13b19ccc8a9ca712b24dd1fd49d6b5b5411` |
+| `age-gender-recognition-retail-0013.onnx` | 8,556,149 bytes | `a221460e4bc822f3b48138a5e39c384cd14180d1248308277503c3cf99085712` |
 
 - XML: `https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml`
 - BIN: `https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.bin`
-- source pair identity: `b2917f682865b378589103a46442b3ed6de97ff48e3425a192c96d690bfa5a5e`
+- source pair identity（XMLのbytesにBINのbytesを連結したもののSHA-256）: `24a93799f39ea23a0f7a02b5ba9b2256f00675893634fdb26d75fcb6ab8867cb`
 - ONNXは`scripts/convert_demographic_model.py`の`ir11-to-onnx-opset13-v2` recipeで、検証済みIRから決定的に生成する。変換toolは`onnx 1.22.0`、`numpy 2.5.1`、`ml-dtypes 0.5.4`、`protobuf 7.35.1`へ固定する。
 - 公式IRと派生ONNXはrepositoryへ同梱しない。IRを明示的なbootstrap操作で取得し、ONNXも明示操作でローカル生成する。
 - **v2での修正（2026-08-02）**: v1のRecipeは`Result`層（例: `prob/sink_port_0`）のONNX出力tensor名を生成する際、そのままnode名にも再利用しており、同名の計算node（例: `SoftMax`層`prob`）と衝突していた。`opencv-contrib-python`のONNX importerはnode名の重複を許容するため症状が出なかったが、`onnxruntime`はこの重複を`FAIL`として拒否し、load不能だった。v2はnode名にIR側の元々一意な層名（例: `prob/sink_port_0`）を使い、ONNX出力tensor名だけを契約どおり`prob`に保つことで解消した。計算内容・数値は変更していない（下記parity実測はv1と同一値）。
+
+- **XML pinの訂正（2026-08-03）**: 固定していたXMLのsize/SHA-256（62,543 bytes / `2de3182a…`）が、URLが実際に配信する内容と一致していなかった。配信元は2023-10-17以降ずっと43,414 bytes / `a625adb5…`であり、clean checkoutでは`bootstrap_models.py`が必ずsize不一致で失敗していた（CIで顕在化）。原因は、pin値をURLの応答ではなく**ローカルで再シリアライズされたXML**（XML宣言なし・タブでなくスペース字下げ）から採取していたこと。両者はElementTree上で属性まで完全に一致する同一グラフであり（82 layers / IR v11 / 1,3,62,62）、モデルが差し替わったわけではない。同一ディレクトリのBINはsize・SHA-256とも一致しており、配信元と版の正当性は裏付けられている。
+- 上記に伴い派生ONNXのSHA-256も更新した（`b50a5e26…` → `a221460e…`）。**グラフと重みはbyte単位で不変**で、差分は末尾55バイト、すなわちONNXの`metadata_props`に記録される`source_xml_sha256`だけである（`metadata_props`を除いた直列化のSHA-256は両者とも`d6927278b175f9dc8597bacf3be854ca5a4108c039d267038760b658f515e486`）。recipeとtool版は変更していない。
 
 ## 意図された用途
 
