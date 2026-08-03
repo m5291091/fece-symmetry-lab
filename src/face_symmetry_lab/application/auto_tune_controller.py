@@ -1,9 +1,13 @@
 """When and what to auto-tune (§14.3c, §14.3d, FR-029/030).
 
 Split out of `RealtimeLandmarkPipeline` so the "should anything change?"
-policy — rolling windows, retune throttles, and the guards that keep a
-stable signal from churning the session — is separable from the frame
+policy — rolling windows and retune throttles — is separable from the frame
 pipeline that applies the answers. This module decides; the pipeline acts.
+
+Every recommendation here is display-only or cadence-only. §8.6 removed the
+metric's sensitivity coefficients and part weights, so there is no longer any
+scoring-affecting setting for auto-tuning to reach, and therefore no path from
+here to a `config_revision`/segment/EMA reset (AC-AUTOTUNE-02).
 
 Nothing here touches the landmarker, recorder, worker, or analyzer: every
 method reports a recommendation, or ``None`` for "leave it alone". That
@@ -19,23 +23,19 @@ from __future__ import annotations
 
 import statistics
 from collections import deque
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
 import numpy as np
 from numpy.typing import NDArray
 
-from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.domain.auto_tuning import (
     recommend_analysis_interval_ms,
     recommend_brightness_gain,
-    recommend_sensitivity,
     recommend_zoom_policy,
 )
 from face_symmetry_lab.domain.frame_adjustments import mean_luminance
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
-from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 #: §14.3c brightness/zoom auto-tuning (FR-029): recomputed on a slower cadence
@@ -45,16 +45,11 @@ from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 DISPLAY_RETUNE_INTERVAL_SECONDS: Final[float] = 1.0
 
 #: §14.3d cadence auto-tuning (FR-030): non-scoring, so no segment reset is needed.
+#: Since §8.6 removed the metric's coefficients, cadence and display are the
+#: only things left to tune — nothing here can move a measured value.
 CADENCE_PROCESSING_WINDOW: Final[int] = 20
 MIN_CADENCE_SAMPLES: Final[int] = 5
 CADENCE_RETUNE_INTERVAL_SECONDS: Final[float] = 2.0
-
-#: §14.3d sensitivity auto-tuning (FR-030): scoring-affecting, throttled and
-#: gated on a minimum relative change so it doesn't churn segments needlessly.
-SENSITIVITY_DISTANCE_WINDOW: Final[int] = 24
-MIN_SENSITIVITY_SAMPLES: Final[int] = 8
-SENSITIVITY_RETUNE_INTERVAL_SECONDS: Final[float] = 10.0
-SENSITIVITY_CHANGE_THRESHOLD: Final[float] = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,13 +92,7 @@ class AutoTuneController:
         self._cadence_schedule = _RetuneSchedule(
             CADENCE_RETUNE_INTERVAL_SECONDS, start_at=started_at
         )
-        self._sensitivity_schedule = _RetuneSchedule(
-            SENSITIVITY_RETUNE_INTERVAL_SECONDS, start_at=started_at
-        )
         self._processing_ms_window: deque[float] = deque(maxlen=CADENCE_PROCESSING_WINDOW)
-        self._distance_windows: dict[str, deque[float]] = {
-            name: deque(maxlen=SENSITIVITY_DISTANCE_WINDOW) for name in PART_NAMES
-        }
 
     @property
     def enabled(self) -> bool:
@@ -174,52 +163,3 @@ class AutoTuneController:
         except Exception:
             return None
         return None if recommended == current_interval_ms else recommended
-
-    def sensitivity_tuning(
-        self,
-        analysis: AnalysisOutcome | None,
-        *,
-        at: float,
-        config: MetricConfig,
-    ) -> Mapping[str, float] | None:
-        """§14.3d: a new per-part `sensitivity` map, or None to keep the current one.
-
-        Returns a value only when at least one part moved by more than
-        `SENSITIVITY_CHANGE_THRESHOLD` — this change resets config_revision,
-        segment and EMA (§15.2), so a stable signal must not trigger it.
-        Parts without enough samples yet keep their current coefficient.
-        `part_weights` is never recommended on (§14.3d, "Explain, do not judge").
-        """
-        if not self._enabled:
-            return None
-        self._observe_distances(analysis)
-        if not self._sensitivity_schedule.due(at):
-            return None
-
-        recommended: dict[str, float] = {}
-        changed = False
-        for name in PART_NAMES:
-            window = self._distance_windows[name]
-            base = config.sensitivity[name]
-            recommended[name] = base
-            if len(window) < MIN_SENSITIVITY_SAMPLES:
-                continue
-            try:
-                mean = statistics.fmean(window)
-                stddev = statistics.pstdev(window, mu=mean)
-                value = recommend_sensitivity(base, distance_mean=mean, distance_stddev=stddev)
-            except Exception:
-                continue
-            recommended[name] = value
-            if base > 0 and abs(value - base) / base > SENSITIVITY_CHANGE_THRESHOLD:
-                changed = True
-        return recommended if changed else None
-
-    def _observe_distances(self, analysis: AnalysisOutcome | None) -> None:
-        """Feed this frame's raw per-part RMS distances into the jitter windows."""
-        if analysis is None or analysis.symmetry is None:
-            return
-        for name in PART_NAMES:
-            distance = analysis.symmetry.distance(name)
-            if distance is not None:
-                self._distance_windows[name].append(distance)

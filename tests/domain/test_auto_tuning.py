@@ -4,17 +4,14 @@ from face_symmetry_lab.domain.auto_tuning import (
     ANALYSIS_INTERVAL_CHOICES_MS,
     MAX_AGE_INTERVAL_MS,
     MAX_HISTORY_CAPACITY,
-    MAX_SENSITIVITY,
     MIN_AGE_INTERVAL_MS,
     MIN_HISTORY_CAPACITY,
-    MIN_SENSITIVITY,
     TARGET_MEAN_LUMINANCE,
     AutoTuningError,
     recommend_age_interval_ms,
     recommend_analysis_interval_ms,
     recommend_brightness_gain,
     recommend_history_capacity,
-    recommend_sensitivity,
     recommend_zoom_policy,
 )
 from face_symmetry_lab.domain.frame_adjustments import MAX_BRIGHTNESS_GAIN, MIN_BRIGHTNESS_GAIN
@@ -145,52 +142,3 @@ def test_history_capacity_is_clamped_to_its_bounds() -> None:
 def test_an_invalid_analysis_interval_for_history_is_refused(interval_ms: int) -> None:
     with pytest.raises(AutoTuningError):
         recommend_history_capacity(interval_ms)
-
-
-def test_a_noise_free_signal_keeps_the_base_sensitivity() -> None:
-    sensitivity = recommend_sensitivity(10.0, distance_mean=0.1, distance_stddev=0.0)
-
-    assert sensitivity == pytest.approx(10.0)
-
-
-def test_a_noisy_signal_recommends_a_lower_sensitivity() -> None:
-    sensitivity = recommend_sensitivity(10.0, distance_mean=0.1, distance_stddev=0.1)
-
-    assert sensitivity < 10.0
-
-
-def test_a_degenerate_zero_mean_distance_keeps_the_base_sensitivity() -> None:
-    """No measurable asymmetry at all is not the same as "not enough data"."""
-    sensitivity = recommend_sensitivity(10.0, distance_mean=0.0, distance_stddev=0.0)
-
-    assert sensitivity == pytest.approx(10.0)
-
-
-def test_the_recommended_sensitivity_is_clamped_to_its_bounds() -> None:
-    assert recommend_sensitivity(0.05, distance_mean=1.0, distance_stddev=0.0) == pytest.approx(
-        MIN_SENSITIVITY
-    )
-    huge_noise = recommend_sensitivity(1.0, distance_mean=1.0, distance_stddev=1e9)
-    assert huge_noise == pytest.approx(MIN_SENSITIVITY)
-    assert (
-        recommend_sensitivity(MAX_SENSITIVITY, distance_mean=1.0, distance_stddev=0.0)
-        <= MAX_SENSITIVITY
-    )
-
-
-@pytest.mark.parametrize("base_sensitivity", [0.0, -1.0, float("nan")])
-def test_an_invalid_base_sensitivity_is_refused(base_sensitivity: float) -> None:
-    with pytest.raises(AutoTuningError):
-        recommend_sensitivity(base_sensitivity, distance_mean=0.1, distance_stddev=0.0)
-
-
-@pytest.mark.parametrize("distance_stddev", [-1.0, float("nan"), float("inf")])
-def test_an_invalid_distance_stddev_is_refused(distance_stddev: float) -> None:
-    with pytest.raises(AutoTuningError):
-        recommend_sensitivity(10.0, distance_mean=0.1, distance_stddev=distance_stddev)
-
-
-@pytest.mark.parametrize("distance_mean", [-1.0, float("nan"), float("inf")])
-def test_an_invalid_distance_mean_is_refused(distance_mean: float) -> None:
-    with pytest.raises(AutoTuningError):
-        recommend_sensitivity(10.0, distance_mean=distance_mean, distance_stddev=0.0)

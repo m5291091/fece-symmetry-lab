@@ -22,16 +22,12 @@ def _record(**overrides: object) -> ExportRecord:
         "pitch_deg": -2.5,
         "roll_deg": 0.5,
         "face_area_ratio": 0.25,
-        "score_contour_raw": 80.0,
-        "score_eyes_raw": 81.0,
-        "score_nose_raw": 82.0,
-        "score_mouth_raw": 83.0,
-        "score_overall_raw": 81.5,
-        "score_overall_smooth": 81.25,
         "distance_contour_raw": 0.010,
         "distance_eyes_raw": 0.011,
         "distance_nose_raw": 0.012,
         "distance_mouth_raw": 0.013,
+        "distance_overall_raw": 0.0115,
+        "distance_overall_smooth": 0.0118,
         "skin_quality_score_raw": 72.0,
         "skin_tone_uniformity_raw": 74.0,
         "skin_texture_uniformity_raw": 70.0,
@@ -42,7 +38,7 @@ def _record(**overrides: object) -> ExportRecord:
         "skin_quality_frozen": False,
         "landmark_model_version": "landmark/1",
         "landmark_model_sha256": "a" * 64,
-        "metric_version": "symmetry-2d/1.0.0",
+        "metric_version": "symmetry-2d/2.0.0",
         "app_version": "0.1.0",
         "lock_digest": "b" * 64,
         "config_revision": 1,
@@ -54,16 +50,42 @@ def _record(**overrides: object) -> ExportRecord:
     return ExportRecord.model_validate(values)
 
 
-def test_record_uses_the_breaking_skin_and_demographic_schema() -> None:
+def test_record_uses_the_breaking_distance_schema() -> None:
     record = _record()
 
-    assert record.schema_version == "2.0.0"
-    assert record.metric_version == "symmetry-2d/1.0.0"
+    assert record.schema_version == "3.0.0"
+    assert record.metric_version == "symmetry-2d/2.0.0"
     assert record.config_fingerprint == "c" * 64
     assert record.distance_mouth_raw == pytest.approx(0.013)
+    assert record.distance_overall_raw == pytest.approx(0.0115)
     assert record.skin_quality_score_raw == pytest.approx(72.0)
     assert record.skin_quality_frozen is False
     assert "age_band" not in ExportRecord.model_fields
+
+
+def test_the_schema_no_longer_carries_the_zero_to_hundred_score_columns() -> None:
+    """§8.6/§9.2: v3.0.0 dropped `score_*` rather than aliasing it to a distance."""
+    for removed in (
+        "score_contour_raw",
+        "score_eyes_raw",
+        "score_nose_raw",
+        "score_mouth_raw",
+        "score_overall_raw",
+        "score_overall_smooth",
+    ):
+        assert removed not in ExportRecord.model_fields
+
+
+def test_a_negative_distance_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        _record(distance_overall_raw=-0.001)
+
+
+def test_a_distance_above_one_hundred_is_accepted() -> None:
+    """Distances are unbounded above; only the old 0-100 score had a ceiling."""
+    record = _record(distance_overall_raw=120.0)
+
+    assert record.distance_overall_raw == pytest.approx(120.0)
 
 
 def test_non_finite_values_are_rejected() -> None:
@@ -71,7 +93,7 @@ def test_non_finite_values_are_rejected() -> None:
         _record(processing_ms=float("nan"))
 
 
-def test_non_ok_records_cannot_carry_current_scores_or_distances() -> None:
+def test_non_ok_records_cannot_carry_current_distances() -> None:
     with pytest.raises(ValidationError, match="OK"):
         _record(analysis_status=Status.HOLD)
 
@@ -80,12 +102,8 @@ def test_missing_values_are_null_not_zero_filled() -> None:
     record = _record(
         analysis_status=Status.HOLD,
         reason_codes=(ReasonCode.OFF_AXIS_YAW,),
-        score_contour_raw=None,
-        score_eyes_raw=None,
-        score_nose_raw=None,
-        score_mouth_raw=None,
-        score_overall_raw=None,
-        score_overall_smooth=None,
+        distance_overall_raw=None,
+        distance_overall_smooth=None,
         distance_contour_raw=None,
         distance_eyes_raw=None,
         distance_nose_raw=None,
@@ -100,5 +118,5 @@ def test_missing_values_are_null_not_zero_filled() -> None:
         skin_quality_frozen=None,
     )
 
-    assert record.score_overall_raw is None
+    assert record.distance_overall_raw is None
     assert record.reason_codes == (ReasonCode.OFF_AXIS_YAW,)

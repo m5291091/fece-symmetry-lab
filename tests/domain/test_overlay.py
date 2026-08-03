@@ -8,6 +8,7 @@ from face_symmetry_lab.domain.overlay import (
     DEFAULT_POINT_COLOR,
     draw_face_midline,
     draw_landmark_points,
+    draw_symmetry_deviation,
 )
 
 
@@ -115,3 +116,73 @@ def test_default_midline_is_thick_and_visually_distinct_from_landmarks() -> None
 
     line_pixels = np.all(painted == DEFAULT_MIDLINE_COLOR, axis=2)
     assert np.count_nonzero(line_pixels[10]) >= DEFAULT_MIDLINE_THICKNESS
+
+
+def test_the_deviation_overlay_draws_both_layers_and_leaves_the_source_alone() -> None:
+    """§8.6.2/FR-034: measured and symmetrized points, plus a segment between."""
+    image = np.zeros((40, 40, 3), dtype=np.uint8)
+    measured = np.array([[10.0, 10.0], [30.0, 10.0]], dtype=np.float64)
+    symmetrized = np.array([[14.0, 10.0], [26.0, 10.0]], dtype=np.float64)
+
+    painted = draw_symmetry_deviation(
+        image,
+        measured=measured,
+        symmetrized=symmetrized,
+        indices=(0, 1),
+        measured_color=(255, 0, 0),
+        symmetrized_color=(0, 255, 0),
+        deviation_color=(0, 0, 255),
+        radius=0,
+    )
+
+    assert np.array_equal(image, np.zeros((40, 40, 3), dtype=np.uint8))  # pure
+    assert tuple(painted[10, 10]) == (255, 0, 0)  # measured
+    assert tuple(painted[10, 14]) == (0, 255, 0)  # symmetrized
+    assert tuple(painted[10, 12]) == (0, 0, 255)  # the deviation segment
+
+
+def test_the_deviation_overlay_skips_points_with_no_correspondence() -> None:
+    """Only symmetrized indices are drawn; the rest were never folded."""
+    image = np.zeros((40, 40, 3), dtype=np.uint8)
+    measured = np.array([[10.0, 10.0], [30.0, 30.0]], dtype=np.float64)
+    symmetrized = measured.copy()
+
+    painted = draw_symmetry_deviation(
+        image,
+        measured=measured,
+        symmetrized=symmetrized,
+        indices=(0,),
+        radius=0,
+    )
+
+    assert not np.array_equal(painted[10, 10], np.zeros(3, dtype=np.uint8))
+    assert np.array_equal(painted[30, 30], np.zeros(3, dtype=np.uint8))
+
+
+def test_the_deviation_overlay_clamps_points_outside_the_frame() -> None:
+    image = np.zeros((20, 20, 3), dtype=np.uint8)
+    measured = np.array([[-40.0, 5.0]], dtype=np.float64)
+    symmetrized = np.array([[60.0, 5.0]], dtype=np.float64)
+
+    painted = draw_symmetry_deviation(
+        image, measured=measured, symmetrized=symmetrized, indices=(0,), radius=0
+    )
+
+    assert painted.shape == image.shape
+
+
+def test_the_deviation_overlay_rejects_a_non_finite_coordinate() -> None:
+    image = np.zeros((20, 20, 3), dtype=np.uint8)
+    measured = np.array([[float("nan"), 5.0]], dtype=np.float64)
+    symmetrized = np.array([[6.0, 5.0]], dtype=np.float64)
+
+    with pytest.raises(LandmarkError):
+        draw_symmetry_deviation(image, measured=measured, symmetrized=symmetrized, indices=(0,))
+
+
+def test_the_deviation_overlay_rejects_an_out_of_range_index() -> None:
+    image = np.zeros((20, 20, 3), dtype=np.uint8)
+    points = np.array([[6.0, 5.0]], dtype=np.float64)
+
+    with pytest.raises(LandmarkError):
+        draw_symmetry_deviation(image, measured=points, symmetrized=points, indices=(3,))

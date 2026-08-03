@@ -12,7 +12,6 @@ from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.auto_tune_controller import (
     CADENCE_RETUNE_INTERVAL_SECONDS,
 )
-from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.auto_tuning import recommend_age_interval_ms
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
@@ -26,9 +25,7 @@ from face_symmetry_lab.domain.landmarks import (
     TrackingStatus,
     build_landmark_frame,
 )
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
 from face_symmetry_lab.domain.models import AnalysisState, DemographicEstimate, Status
-from face_symmetry_lab.domain.symmetry import SymmetryResult
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 #: Spread-out points so `extract_face_crop` can derive a non-degenerate bbox.
@@ -171,113 +168,18 @@ class StubAnalyzer:
             frame_id=frame.frame_id,
             state=AnalysisState(status=Status.HOLD),
             symmetry=None,
-            overall_smooth=None,
+            overall_distance_smooth=None,
             pose=frame.pose,
             face_area_ratio=frame.face_area_ratio,
             metric_version="metric/test",
             landmark_map_version="map/test",
-            sensitivity_frozen=False,
         )
 
     def reset(self) -> None:
         self.reset_calls += 1
 
-    def update(
-        self,
-        *,
-        thresholds: object,
-        tau_seconds: float,
-        config: object = None,
-    ) -> None:
-        self.update_calls.append((thresholds, tau_seconds, config))
-        if config is not None:
-            self.config = config
-
-
-def _metric_config():
-    return build_metric_config(
-        metric_version="symmetry/test",
-        landmark_map_version="map/test",
-        landmark_count=16,
-        left_eye_corners=(0, 1),
-        right_eye_corners=(2, 3),
-        midline_indices=(4, 5, 6),
-        parts={
-            "contour": PartMap(pairs=((7, 8),), min_pairs=1),
-            "eyes": PartMap(pairs=((0, 3), (1, 2)), min_pairs=1),
-            "nose": PartMap(pairs=((9, 10),), min_pairs=1),
-            "mouth": PartMap(pairs=((11, 12),), min_pairs=1),
-        },
-        sensitivity=dict.fromkeys(PART_NAMES, 30.0),
-        weights=dict.fromkeys(PART_NAMES, 0.25),
-        sensitivity_frozen=True,
-    )
-
-
-class NoisyAnalyzer:
-    """A real config/thresholds/tau contract with an injectable distance signal.
-
-    Used only by the sensitivity auto-tune tests, which need `with_tunables`
-    to actually validate the recommended sensitivity against a real bundle.
-    """
-
-    def __init__(self, *, config=None, distances: dict[str, float] | None = None) -> None:
-        self.config = config if config is not None else _metric_config()
-        self._thresholds = QualityThresholds()
-        self._tau_seconds = 0.4
-        self.distances = distances if distances is not None else dict.fromkeys(PART_NAMES, 0.1)
-        self.update_calls: list[tuple[object, float, object]] = []
-        self.reset_calls = 0
-
-    @property
-    def thresholds(self) -> QualityThresholds:
-        return self._thresholds
-
-    @property
-    def tau_seconds(self) -> float:
-        return self._tau_seconds
-
-    def analyze(
-        self,
-        frame: LandmarkFrame,
-        *,
-        at: float,
-        rgb_image: np.ndarray | None = None,
-    ) -> AnalysisOutcome:
-        symmetry = SymmetryResult(
-            scores=dict.fromkeys(PART_NAMES, 90.0),
-            distances=dict(self.distances),
-            overall=90.0,
-            metric_version=self.config.metric_version,
-            landmark_map_version=self.config.landmark_map_version,
-        )
-        return AnalysisOutcome(
-            frame_id=frame.frame_id,
-            state=AnalysisState(status=Status.OK),
-            symmetry=symmetry,
-            overall_smooth=90.0,
-            pose=frame.pose,
-            face_area_ratio=frame.face_area_ratio,
-            metric_version=self.config.metric_version,
-            landmark_map_version=self.config.landmark_map_version,
-            sensitivity_frozen=self.config.sensitivity_frozen,
-        )
-
-    def reset(self) -> None:
-        self.reset_calls += 1
-
-    def update(
-        self,
-        *,
-        thresholds: object,
-        tau_seconds: float,
-        config: object = None,
-    ) -> None:
-        self.update_calls.append((thresholds, tau_seconds, config))
-        self._thresholds = thresholds  # type: ignore[assignment]
-        self._tau_seconds = tau_seconds
-        if config is not None:
-            self.config = config
+    def update(self, *, thresholds: object, tau_seconds: float) -> None:
+        self.update_calls.append((thresholds, tau_seconds))
 
 
 class RecorderSpy:
@@ -800,12 +702,11 @@ def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> N
         zoom_policy=zoom_policy,
     )
 
-    assert analyzer.update_calls == [(thresholds, 0.7, None)]
+    assert analyzer.update_calls == [(thresholds, 0.7)]
     assert landmarker.policy_updates == [zoom_policy]
     assert recorder.reset_kwargs[-1] == {
         "thresholds": thresholds,
         "tau_seconds": 0.7,
-        "metric_config": None,
         "history_capacity": None,
         "analysis_interval_ms": None,
     }
@@ -824,23 +725,22 @@ def test_metric_config_reflects_the_attached_analyzers_bundle() -> None:
     assert pipeline.metric_config is analyzer.config
 
 
-def test_apply_advanced_settings_can_swap_the_metric_config() -> None:
-    """§15.2: an edited part_weights/sensitivity bundle must reach analyzer + recorder."""
-    landmarker = FakeLandmarker()
+def test_apply_advanced_settings_cannot_swap_the_metric_config() -> None:
+    """§8.6/§15.2: with no coefficient left, the bundle is pinned per session."""
     analyzer = StubAnalyzer()
     recorder = RecorderSpy()
-    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=recorder)
-    metric_config = object()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+    original = analyzer.config
 
-    pipeline.apply_advanced_settings(
-        thresholds=object(),
-        tau_seconds=0.4,
-        zoom_policy=object(),
-        metric_config=metric_config,
-    )
+    with pytest.raises(TypeError):
+        pipeline.apply_advanced_settings(
+            thresholds=object(),
+            tau_seconds=0.4,
+            zoom_policy=object(),
+            metric_config=object(),  # type: ignore[call-arg]
+        )
 
-    assert analyzer.update_calls[-1][2] is metric_config
-    assert recorder.reset_kwargs[-1]["metric_config"] is metric_config
+    assert analyzer.config is original
 
 
 def test_apply_advanced_settings_can_resize_history_capacity() -> None:
@@ -1435,54 +1335,176 @@ def _sensitivity_pipeline(
     )
 
 
-def test_auto_tune_enabled_retunes_sensitivity_from_a_noisy_part() -> None:
+def test_auto_tuning_never_reaches_the_analyzer_or_starts_a_new_segment() -> None:
+    """§8.6/AC-AUTOTUNE-02: nothing auto-tuned may move a measured value.
+
+    Cadence and display tuning run freely below; what must never happen is a
+    `FrameAnalyzer.update` or `SessionRecorder.reset` behind the user's back,
+    which is what the removed sensitivity path used to do every time it fired.
+    """
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
-    analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
+    analyzer = StubAnalyzer()
     recorder = RecorderSpy()
     clock = ManualClock()
     pipeline = _sensitivity_pipeline(
         landmarker, clock, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True
     )
 
-    for i in range(15):  # 15 * 1s > the 10s retune interval, well past 8 samples
-        analyzer.distances["contour"] = 0.05 if i % 2 == 0 else 0.35
-        pipeline.process(_rgb(height=40, width=40))
-        clock.advance(1.0)
-
-    assert analyzer.update_calls != []
-    assert analyzer.config.sensitivity["contour"] != pytest.approx(30.0)
-    assert analyzer.config.sensitivity["eyes"] == pytest.approx(30.0)
-    assert analyzer.config.weights == dict.fromkeys(PART_NAMES, 0.25)  # part_weights frozen
-    assert analyzer.config.sensitivity_frozen is False
-    assert recorder.reset_calls >= 1  # a real scoring change starts a new segment
-
-
-def test_auto_tune_enabled_does_not_retune_sensitivity_when_distances_are_stable() -> None:
-    landmarker = FakeLandmarker(points=SPREAD_POINTS)
-    analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
-    recorder = RecorderSpy()
-    clock = ManualClock()
-    pipeline = _sensitivity_pipeline(
-        landmarker, clock, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True
-    )
-
-    for _ in range(15):
+    for _ in range(15):  # far past every retune interval in the controller
         pipeline.process(_rgb(height=40, width=40))
         clock.advance(1.0)
 
     assert analyzer.update_calls == []
+    assert analyzer.reset_calls == 0
     assert recorder.reset_calls == 0
 
 
-def test_auto_tune_disabled_never_retunes_sensitivity() -> None:
+# --- §14.3g one-shot capture (FR-034, AC-SYMM-01) ----------------------------
+
+
+def test_no_frame_is_retained_until_a_capture_is_requested() -> None:
+    """The realtime loop pays nothing for a button that was never pressed."""
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+
+    for _ in range(5):
+        pipeline.process(_rgb())
+
+    assert pipeline.capture_pending is False
+    assert pipeline.take_capture() is None
+
+
+def test_a_requested_capture_keeps_the_next_analysed_frame() -> None:
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+    source = np.full((20, 20, 3), 77, dtype=np.uint8)
+
+    pipeline.request_capture()
+    assert pipeline.capture_pending is True
+    pipeline.process(source)
+
+    captured = pipeline.take_capture()
+    assert captured is not None
+    assert captured.frame.has_single_face
+    assert np.array_equal(captured.rgb_image, source)
+    assert pipeline.capture_pending is False
+
+
+def test_the_capture_holds_the_raw_frame_not_the_painted_preview() -> None:
+    """§14.3g: the overlay draws its own geometry over an unannotated frame."""
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+    source = np.full((20, 20, 3), 77, dtype=np.uint8)
+
+    pipeline.request_capture()
+    painted = pipeline.process(source)
+
+    captured = pipeline.take_capture()
+    assert captured is not None
+    assert not np.array_equal(captured.rgb_image, painted)
+    assert np.array_equal(captured.rgb_image, source)
+
+
+def test_the_capture_survives_the_source_buffer_being_reused() -> None:
+    """WebRTC owns the incoming buffer, so the hold must be a copy."""
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+    source = np.full((20, 20, 3), 77, dtype=np.uint8)
+
+    pipeline.request_capture()
+    pipeline.process(source)
+    source[:] = 3  # the next frame overwrites the same array
+
+    captured = pipeline.take_capture()
+    assert captured is not None
+    assert int(captured.rgb_image[0, 0, 0]) == 77
+
+
+def test_taking_a_capture_consumes_it() -> None:
+    """§10.4: the raw image is held only until the UI has used it."""
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+
+    pipeline.request_capture()
+    pipeline.process(_rgb())
+
+    assert pipeline.take_capture() is not None
+    assert pipeline.take_capture() is None
+
+
+def test_a_capture_request_waits_for_a_single_face_frame() -> None:
+    """A multi-face frame cannot be symmetrized, so it must not spend the request."""
+    landmarker = FakeLandmarker(face_count=2)
+    pipeline = _pipeline(landmarker)
+
+    pipeline.request_capture()
+    pipeline.process(_rgb())
+
+    assert pipeline.take_capture() is None
+    assert pipeline.capture_pending is True
+
+    landmarker.face_count = 1
+    pipeline.process(_rgb())
+
+    assert pipeline.take_capture() is not None
+
+
+def test_a_capture_request_survives_a_failed_frame() -> None:
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
-    analyzer = NoisyAnalyzer(distances=dict.fromkeys(PART_NAMES, 0.1))
-    clock = ManualClock()
-    pipeline = _sensitivity_pipeline(landmarker, clock, analyzer=analyzer)
+    pipeline = _pipeline(landmarker)
+    landmarker.error = RuntimeError("boom")
 
-    for i in range(15):
-        analyzer.distances["contour"] = 0.05 if i % 2 == 0 else 0.35
-        pipeline.process(_rgb(height=40, width=40))
-        clock.advance(1.0)
+    pipeline.request_capture()
+    pipeline.process(_rgb())
+    assert pipeline.capture_pending is True
 
-    assert analyzer.update_calls == []
+    landmarker.error = None
+    pipeline.process(_rgb())
+
+    assert pipeline.take_capture() is not None
+
+
+def test_capturing_does_not_disturb_the_running_analysis() -> None:
+    """FR-034: the continuous loop is neither stopped nor altered."""
+    landmarker = FakeLandmarker(points=SPREAD_POINTS)
+    analyzer = StubAnalyzer()
+    pipeline = _pipeline(landmarker, analyzer=analyzer)
+
+    pipeline.process(_rgb())
+    before = pipeline.snapshot()
+    pipeline.request_capture()
+    pipeline.process(_rgb())
+    after = pipeline.snapshot()
+
+    assert analyzer.reset_calls == 0
+    assert after.frame_id == before.frame_id + 1
+    assert after.analysis is not None
+
+
+def test_resetting_the_analysis_drops_the_capture() -> None:
+    """§4.4/FR-034: reset must clear the held frame too."""
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+    pipeline.request_capture()
+    pipeline.process(_rgb())
+
+    pipeline.reset_analysis()
+
+    assert pipeline.take_capture() is None
+    assert pipeline.capture_pending is False
+
+
+def test_clear_capture_drops_a_pending_request_too() -> None:
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+
+    pipeline.request_capture()
+    pipeline.clear_capture()
+    pipeline.process(_rgb())
+
+    assert pipeline.capture_pending is False
+    assert pipeline.take_capture() is None
+
+
+def test_closing_the_pipeline_releases_the_capture() -> None:
+    """AC-PRIV-01: no face-derived image outlives the session."""
+    pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
+    pipeline.request_capture()
+    pipeline.process(_rgb())
+
+    pipeline.close()
+
+    assert pipeline.take_capture() is None

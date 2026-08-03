@@ -1,21 +1,22 @@
 """Versioned metric configuration (§8.6, §15.2).
 
-The landmark correspondence map, sensitivity coefficients, and part weights are
-all part of the metric version. Nothing here is derived at runtime: the values
-come from a frozen config bundle so a result can always be reproduced.
+The landmark correspondence map is part of the metric version. Nothing here is
+derived at runtime: the values come from a frozen config bundle so a result can
+always be reproduced.
+
+The bundle carries no sensitivity coefficient and no part weight. §8.6 replaced
+the `100 × exp(-k_p × d_p)` transform and the `Σ(w_p × score_p)` blend with the
+raw distances themselves, so there is no free parameter left for a bundle to
+pin — which is also why nothing may auto-tune scoring any more (FR-030).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from math import isfinite
 from typing import Final
 
 PART_NAMES: Final[tuple[str, ...]] = ("contour", "eyes", "nose", "mouth")
-
-#: Total part weights must sum to 1 within this tolerance (§15.2).
-WEIGHT_SUM_TOLERANCE: Final[float] = 1e-9
 
 #: A line fit needs at least three midline points to be meaningful (§8.4).
 MIN_MIDLINE_POINTS: Final[int] = 3
@@ -44,9 +45,27 @@ class MetricConfig:
     right_eye_corners: tuple[int, int]
     midline_indices: tuple[int, ...]
     parts: Mapping[str, PartMap]
-    sensitivity: Mapping[str, float]
-    weights: Mapping[str, float]
-    sensitivity_frozen: bool
+
+    @property
+    def all_pairs(self) -> tuple[tuple[int, int], ...]:
+        """Every part's pairs as one pooled set, for §8.6's overall distance.
+
+        `build_metric_config` rejects a landmark used twice, so pooling can
+        never double-count a point: each correspondence carries exactly one
+        vote in the overall fold, whichever part defined it.
+        """
+        return tuple(pair for name in PART_NAMES for pair in self.parts[name].pairs)
+
+    @property
+    def overall_min_pairs(self) -> int:
+        """How many pooled pairs §8.6 needs before an overall distance exists.
+
+        The sum of the per-part minimums rather than a separate number: those
+        are already the versioned statement of "enough correspondences to
+        measure this face", and reusing them keeps the bundle free of one more
+        uncalibrated threshold.
+        """
+        return sum(self.parts[name].min_pairs for name in PART_NAMES)
 
 
 def _validate_indices(indices: tuple[int, ...], landmark_count: int, label: str) -> None:
@@ -64,11 +83,8 @@ def build_metric_config(
     right_eye_corners: tuple[int, int],
     midline_indices: tuple[int, ...],
     parts: Mapping[str, PartMap],
-    sensitivity: Mapping[str, float],
-    weights: Mapping[str, float],
-    sensitivity_frozen: bool,
 ) -> MetricConfig:
-    """Validate a metric bundle. Invalid coefficients must never reach a score."""
+    """Validate a metric bundle. An invalid map must never reach a distance."""
     if landmark_count <= 0:
         raise MetricConfigError("landmark_count は正の値である必要があります。")
 
@@ -101,20 +117,6 @@ def build_metric_config(
             seen.add(left)
             seen.add(right)
 
-    for name in PART_NAMES:
-        coefficient = sensitivity.get(name)
-        if coefficient is None or not isfinite(coefficient) or coefficient <= 0:
-            raise MetricConfigError(f"{name} の感度係数は正の有限値である必要があります。")
-
-    total = 0.0
-    for name in PART_NAMES:
-        weight = weights.get(name)
-        if weight is None or not isfinite(weight) or weight < 0:
-            raise MetricConfigError(f"{name} の重みは 0 以上の有限値である必要があります。")
-        total += weight
-    if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
-        raise MetricConfigError("部位の重みの合計は 1 である必要があります。")
-
     return MetricConfig(
         metric_version=metric_version,
         landmark_map_version=landmark_map_version,
@@ -123,34 +125,4 @@ def build_metric_config(
         right_eye_corners=right_eye_corners,
         midline_indices=tuple(midline_indices),
         parts={name: parts[name] for name in PART_NAMES},
-        sensitivity={name: float(sensitivity[name]) for name in PART_NAMES},
-        weights={name: float(weights[name]) for name in PART_NAMES},
-        sensitivity_frozen=sensitivity_frozen,
-    )
-
-
-def with_tunables(
-    config: MetricConfig,
-    *,
-    weights: Mapping[str, float],
-    sensitivity: Mapping[str, float],
-) -> MetricConfig:
-    """Return a bundle with edited `part_weights`/`sensitivity`, else pinned (§15.2).
-
-    Reuses `build_metric_config`'s validation so an edited bundle can never
-    violate the same invariants as the frozen one. The result is always
-    unfrozen: it no longer carries the calibrated bundle's provenance, so a
-    caller must not report it as the original frozen calibration.
-    """
-    return build_metric_config(
-        metric_version=config.metric_version,
-        landmark_map_version=config.landmark_map_version,
-        landmark_count=config.landmark_count,
-        left_eye_corners=config.left_eye_corners,
-        right_eye_corners=config.right_eye_corners,
-        midline_indices=config.midline_indices,
-        parts=config.parts,
-        sensitivity=sensitivity,
-        weights=weights,
-        sensitivity_frozen=False,
     )

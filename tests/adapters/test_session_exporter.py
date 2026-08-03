@@ -9,7 +9,7 @@ from face_symmetry_lab.adapters.export.session_exporter import (
 )
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.application.session import SessionRecorder
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
+from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
 
 
 def _bundle():
@@ -26,9 +26,6 @@ def _bundle():
             "nose": PartMap(pairs=((9, 10),), min_pairs=1),
             "mouth": PartMap(pairs=((11, 12),), min_pairs=1),
         },
-        sensitivity=dict.fromkeys(PART_NAMES, 30.0),
-        weights=dict.fromkeys(PART_NAMES, 0.25),
-        sensitivity_frozen=False,
     )
     recorder = SessionRecorder(
         metric_config=config,
@@ -49,7 +46,7 @@ def test_csv_and_json_records_have_the_same_meaning() -> None:
     csv_record = next(csv.DictReader(io.StringIO(csv_bytes(bundle).decode("utf-8"))))
     json_record = payload["records"][0]
 
-    assert csv_record["schema_version"] == json_record["schema_version"] == "2.0.0"
+    assert csv_record["schema_version"] == json_record["schema_version"] == "3.0.0"
     assert csv_record["metric_version"] == json_record["metric_version"]
     assert csv_record["config_fingerprint"] == json_record["config_fingerprint"]
     assert csv_record["segment_id"] == json_record["segment_id"]
@@ -63,11 +60,11 @@ def test_csv_and_json_records_have_the_same_meaning() -> None:
 def test_json_contains_the_reproducibility_manifest() -> None:
     manifest = json.loads(json_bytes(_bundle()))["manifest"]
 
-    assert manifest["schema_version"] == "2.0.0"
+    assert manifest["schema_version"] == "3.0.0"
     assert manifest["metric_version"] == "symmetry/test"
     assert manifest["models"][0]["version"] == "landmark/1"
     assert manifest["config_revisions"][0]["fingerprint"]
-    assert manifest["config_revisions"][0]["settings"]["sensitivity"]
+    assert manifest["config_revisions"][0]["settings"]["part_pair_counts"]
 
 
 def test_default_filename_contains_only_the_short_random_session_id() -> None:

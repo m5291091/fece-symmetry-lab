@@ -1,6 +1,6 @@
 """Single-frame analysis orchestration (§14.2 `application.analyzer`).
 
-Sequence: quality gate → symmetry metric → smoothing. The analyzer holds no
+Sequence: quality gate → symmetry distances → smoothing. The analyzer holds no
 Streamlit state, draws nothing, and never fetches a model. One instance belongs
 to one session.
 """
@@ -45,21 +45,21 @@ class AnalysisOutcome:
     frame_id: int
     state: AnalysisState
     symmetry: SymmetryResult | None
-    overall_smooth: float | None
+    #: §8.7's EMA of the overall *distance*; part distances stay raw.
+    overall_distance_smooth: float | None
     pose: FacePose | None
     face_area_ratio: float | None
     metric_version: str
     landmark_map_version: str
-    sensitivity_frozen: bool
     skin_quality: SkinQualityResult | None = None
 
     @property
-    def overall_raw(self) -> float | None:
+    def overall_distance_raw(self) -> float | None:
         return self.symmetry.overall if self.symmetry is not None else None
 
 
 class FrameAnalyzer:
-    """Turn one landmark frame into a state, a score, and a smoothed value."""
+    """Turn one landmark frame into a state, distances, and a smoothed total."""
 
     def __init__(
         self,
@@ -93,19 +93,14 @@ class FrameAnalyzer:
         *,
         thresholds: QualityThresholds,
         tau_seconds: float,
-        config: MetricConfig | None = None,
     ) -> None:
         """Atomically replace thresholds/tau and reset gate + EMA history (§15.2).
 
         Build-new-then-swap, per the Advanced settings contract: a change
-        that affects scoring must not let stale gate streak or smoothed
-        value leak across the change. ``config`` additionally swaps
-        `part_weights`/`sensitivity` when the caller supplies an edited
-        bundle (e.g. `domain.metrics.with_tunables`); omitting it keeps the
-        existing bundle unchanged.
+        must not let a stale gate streak or smoothed value leak across it.
+        The metric bundle is deliberately not replaceable: §8.6 left it with
+        no tunable coefficient, so it is pinned for the session's lifetime.
         """
-        if config is not None:
-            self._config = config
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
         self._lost_since = None
@@ -161,12 +156,11 @@ class FrameAnalyzer:
             frame_id=frame.frame_id,
             state=state,
             symmetry=symmetry,
-            overall_smooth=smooth,
+            overall_distance_smooth=smooth,
             pose=frame.pose,
             face_area_ratio=frame.face_area_ratio,
             metric_version=self._config.metric_version,
             landmark_map_version=self._config.landmark_map_version,
-            sensitivity_frozen=self._config.sensitivity_frozen,
             skin_quality=skin_quality,
         )
 

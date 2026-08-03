@@ -2,13 +2,15 @@
 
 No new model is introduced (invariants 7, 10). Every recommendation reuses
 statistics already available elsewhere in the pipeline — frame luminance,
-tracked face bbox area, measured processing time, and per-part landmark
-RMS distance — and clamps its output to a fixed range, so an auto-tuned
-value can never exceed FR-026/FR-028/FR-030's bounds. Quality-gate
-thresholds and `part_weights` are deliberately not covered here: the
-former would let auto-tuning loosen the very validity bar it's measured
-against, and the latter has no statistical signal to optimise against
-(§14.3d, "Explain, do not judge").
+tracked face bbox area, and measured processing time — and clamps its output
+to a fixed range, so an auto-tuned value can never exceed FR-026/FR-028/
+FR-030's bounds.
+
+Nothing here touches scoring, and nothing can: §8.6 removed the sensitivity
+coefficients and part weights that were the only scoring-relevant settings,
+so every recommendation below is a display or cadence concern. Quality-gate
+thresholds are deliberately excluded too — auto-tuning them would loosen the
+very validity bar the result is measured against (§14.3d).
 """
 
 from __future__ import annotations
@@ -124,34 +126,3 @@ def recommend_history_capacity(analysis_interval_ms: int) -> int:
         raise AutoTuningError("analysis_interval_ms は正の整数である必要があります。")
     recommended = round(_HISTORY_TARGET_SECONDS * 1000.0 / analysis_interval_ms)
     return min(max(recommended, MIN_HISTORY_CAPACITY), MAX_HISTORY_CAPACITY)
-
-
-#: The §15.2 sensitivity range. Auto-tuning is the only thing that sets it
-#: now, but the bound stays a domain rule rather than a caller's business.
-MIN_SENSITIVITY: Final[float] = 0.1
-MAX_SENSITIVITY: Final[float] = 100.0
-
-
-def recommend_sensitivity(
-    base_sensitivity: float, *, distance_mean: float, distance_stddev: float
-) -> float:
-    """Damp a part's sensitivity when its raw RMS distance is noisy.
-
-    This is a signal-quality calibration, not a judgement of which facial
-    part matters more (§14.3d): the input is the coefficient of variation of
-    a single part's own raw distance samples, so a jittery detection under
-    the current conditions gets a gentler score-vs-distance curve instead of
-    an unstable display. A degenerate zero mean (no measurable asymmetry at
-    all) is not "not enough data" and simply keeps the base value.
-    """
-    if not math.isfinite(base_sensitivity) or base_sensitivity <= 0:
-        raise AutoTuningError("base_sensitivity は正の有限値である必要があります。")
-    if not math.isfinite(distance_stddev) or distance_stddev < 0:
-        raise AutoTuningError("distance_stddev は 0 以上の有限値である必要があります。")
-    if not math.isfinite(distance_mean) or distance_mean < 0:
-        raise AutoTuningError("distance_mean は 0 以上の有限値である必要があります。")
-    if distance_mean == 0:
-        return base_sensitivity
-    coefficient_of_variation = distance_stddev / distance_mean
-    damped = base_sensitivity / (1.0 + coefficient_of_variation)
-    return min(max(damped, MIN_SENSITIVITY), MAX_SENSITIVITY)

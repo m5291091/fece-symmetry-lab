@@ -1,17 +1,28 @@
-"""Symmetry scoring (§8.5, §8.6).
+"""Symmetry distances (§8.5, §8.6).
 
-    d_p     = sqrt(mean(||left_i - mirror(right_i)||^2))
-    score_p = clamp(100 * exp(-k_p * d_p), 0, 100)
-    overall = sum(w_p * score_p)
+    d_p   = sqrt(mean_{i in pairs(p)}(||left_i - mirror(right_i)||^2))
+    d_all = sqrt(mean_{i in every part's pairs pooled}(same))
 
-A part with too few usable pairs is missing, never zero, and a missing part
-makes the overall score missing too (§8.5).
+Both are normalized RMS distances in units of the interocular distance, which
+§8.3 scales to 1. There is no `100 × exp(-k_p × d_p)` readability transform and
+no `Σ(w_p × score_p)` blend any more: the sensitivity coefficients were never
+frozen against a fixed evaluation set and the part weights had no empirical
+basis, so both arbitrary parameters were removed rather than left to shape a
+displayed number.
+
+`d_all` is not composed from `d_p`. It folds one pooled set of correspondences
+once, so every point carries exactly one vote and no part-importance judgement
+enters the total. The per-part values are a parallel, purely diagnostic output
+("where is the deviation concentrated?") and never feed the overall one.
+
+A part with too few usable pairs is missing, never zero. A missing part does
+*not* make the overall value missing — the two are independent outputs, and the
+pooled fold stays well defined on whatever pairs remain (§8.5, §8.6).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import exp, isfinite
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,25 +34,21 @@ from face_symmetry_lab.domain.geometry import (
     reflect_across_midline,
 )
 from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig
-from face_symmetry_lab.domain.models import SymmetryScore
+from face_symmetry_lab.domain.models import SymmetryDistance
 
 
 class SymmetryError(ValueError):
-    """The input cannot produce a symmetry score at all."""
+    """The input cannot produce a symmetry distance at all."""
 
 
 @dataclass(frozen=True, slots=True)
 class SymmetryResult:
-    """Per-part scores with their raw normalized distances."""
+    """Per-part normalized RMS distances plus the independent pooled total."""
 
-    scores: dict[str, float | None]
     distances: dict[str, float | None]
     overall: float | None
     metric_version: str
     landmark_map_version: str
-
-    def part(self, name: str) -> float | None:
-        return self.scores.get(name)
 
     def distance(self, name: str) -> float | None:
         return self.distances.get(name)
@@ -49,35 +56,29 @@ class SymmetryResult:
     @property
     def is_complete(self) -> bool:
         return self.overall is not None and all(
-            self.scores.get(name) is not None for name in PART_NAMES
+            self.distances.get(name) is not None for name in PART_NAMES
         )
 
-    def to_score(self) -> SymmetryScore | None:
-        """Convert to the shared DTO, or None when any part is missing."""
+    def to_distance(self) -> SymmetryDistance | None:
+        """Convert to the shared DTO, or None when any value is missing."""
         if not self.is_complete:
             return None
-        return SymmetryScore(
-            contour=float(self.scores["contour"]),  # type: ignore[arg-type]
-            eyes=float(self.scores["eyes"]),  # type: ignore[arg-type]
-            nose=float(self.scores["nose"]),  # type: ignore[arg-type]
-            mouth=float(self.scores["mouth"]),  # type: ignore[arg-type]
+        return SymmetryDistance(
+            contour=float(self.distances["contour"]),  # type: ignore[arg-type]
+            eyes=float(self.distances["eyes"]),  # type: ignore[arg-type]
+            nose=float(self.distances["nose"]),  # type: ignore[arg-type]
+            mouth=float(self.distances["mouth"]),  # type: ignore[arg-type]
             overall=float(self.overall),  # type: ignore[arg-type]
         )
 
 
-def score_from_distance(distance: float, sensitivity: float) -> float:
-    """Map a normalized RMS distance to 0-100. Purely a readability transform."""
-    if not isfinite(distance) or distance < 0:
-        raise SymmetryError("距離が有限の非負値ではありません。")
-    return float(min(100.0, max(0.0, 100.0 * exp(-sensitivity * distance))))
-
-
-def _part_distance(
+def _pair_distance(
     normalized: NDArray[np.float64],
     mirrored: NDArray[np.float64],
     pairs: tuple[tuple[int, int], ...],
     available: int,
 ) -> tuple[float, int]:
+    """RMS distance over the usable pairs, and how many there were."""
     usable = [(left, right) for left, right in pairs if left < available and right < available]
     if not usable:
         return 0.0, 0
@@ -91,7 +92,7 @@ def compute_symmetry(
     points: NDArray[np.float64],
     config: MetricConfig,
 ) -> SymmetryResult:
-    """Score the left/right difference of one normalized face."""
+    """Measure the left/right difference of one normalized face."""
     try:
         normalized = normalize_landmarks(
             points,
@@ -106,25 +107,18 @@ def compute_symmetry(
 
     mirrored = reflect_across_midline(normalized, midline)
 
-    scores: dict[str, float | None] = {}
     distances: dict[str, float | None] = {}
     for name in PART_NAMES:
         part = config.parts[name]
-        distance, used = _part_distance(normalized, mirrored, part.pairs, available)
-        if used < part.min_pairs:
-            scores[name] = None
-            distances[name] = None
-            continue
-        distances[name] = distance
-        scores[name] = score_from_distance(distance, config.sensitivity[name])
+        distance, used = _pair_distance(normalized, mirrored, part.pairs, available)
+        distances[name] = distance if used >= part.min_pairs else None
 
-    overall: float | None = None
-    if all(scores[name] is not None for name in PART_NAMES):
-        total = sum(config.weights[name] * float(scores[name] or 0.0) for name in PART_NAMES)
-        overall = float(min(100.0, max(0.0, total)))
+    # §8.6: folded once over the pooled pairs, not assembled from the four
+    # values above, so this stays defined even when a part has gone missing.
+    pooled, pooled_used = _pair_distance(normalized, mirrored, config.all_pairs, available)
+    overall = pooled if pooled_used >= config.overall_min_pairs else None
 
     return SymmetryResult(
-        scores=scores,
         distances=distances,
         overall=overall,
         metric_version=config.metric_version,

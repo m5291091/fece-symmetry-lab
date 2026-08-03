@@ -9,6 +9,7 @@ also exercise a real detection. Such images are face-derived data and must not
 be committed to this repository (§21.4).
 """
 
+import math
 import os
 from pathlib import Path
 
@@ -177,10 +178,10 @@ def test_real_photo_produces_a_full_landmark_set() -> None:
     assert not np.array_equal(result.preview, image)
 
 
-def test_the_synthetic_face_produces_a_symmetry_score(
+def test_the_synthetic_face_produces_a_symmetry_distance(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
-    """End-to-end: real model -> pose -> quality gate -> score."""
+    """End-to-end: real model -> pose -> quality gate -> distance."""
     from face_symmetry_lab.adapters.io.metric_config import load_metric_config
     from face_symmetry_lab.application.still_image import analyze_still_image
 
@@ -196,17 +197,18 @@ def test_the_synthetic_face_produces_a_symmetry_score(
     outcome = analysis.outcome
     assert outcome.state.status is Status.OK, outcome.state.reason_codes
     assert outcome.symmetry is not None
-    assert outcome.overall_raw is not None
-    assert 0.0 <= outcome.overall_raw <= 100.0
+    assert outcome.overall_distance_raw is not None
+    assert math.isfinite(outcome.overall_distance_raw)
+    assert outcome.overall_distance_raw >= 0.0
     for name in PART_NAMES:
-        value = outcome.symmetry.part(name)
-        assert value is not None and 0.0 <= value <= 100.0
+        value = outcome.symmetry.distance(name)
+        assert value is not None and math.isfinite(value) and value >= 0.0
 
 
-def test_a_drawn_symmetric_face_scores_higher_than_a_skewed_one(
+def test_a_drawn_symmetric_face_measures_less_deviation_than_a_skewed_one(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
-    """A deliberately asymmetric render must not score above the symmetric one."""
+    """A deliberately asymmetric render must not measure below the symmetric one."""
     from PIL import Image
 
     from face_symmetry_lab.adapters.io.metric_config import load_metric_config
@@ -233,18 +235,18 @@ def test_a_drawn_symmetric_face_scores_higher_than_a_skewed_one(
     finally:
         landmarker.close()
 
-    assert balanced.outcome.overall_raw is not None
-    if distorted.outcome.overall_raw is not None:
-        assert distorted.outcome.overall_raw <= balanced.outcome.overall_raw
+    assert balanced.outcome.overall_distance_raw is not None
+    if distorted.outcome.overall_distance_raw is not None:
+        assert distorted.outcome.overall_distance_raw >= balanced.outcome.overall_distance_raw
 
 
-def test_image_and_video_running_modes_score_an_identical_frame_the_same(
+def test_image_and_video_running_modes_measure_an_identical_frame_the_same(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
     """§14.3: IMAGE and VIDEO use separate detector instances.
 
-    A user-reported gap between the still-image score and the live camera
-    score raised the question of whether the two MediaPipe running modes
+    A user-reported gap between the still-image value and the live camera
+    value raised the question of whether the two MediaPipe running modes
     themselves diverge. Feeding VIDEO mode the same unchanging frame
     repeatedly (so its internal tracker settles) and comparing against IMAGE
     mode isolates that one variable from camera noise, motion, and capture
@@ -286,11 +288,12 @@ def test_image_and_video_running_modes_score_an_identical_frame_the_same(
     assert settled is not None and settled.state.status is Status.OK, (
         settled.state.reason_codes if settled is not None else None
     )
-    assert still.outcome.overall_raw is not None
-    assert settled.overall_raw is not None
-    # Measured 0.0 on this fixture; a small tolerance absorbs future
-    # non-determinism in MediaPipe's tracker without hiding a real regression.
-    assert abs(still.outcome.overall_raw - settled.overall_raw) <= 1.0
+    assert still.outcome.overall_distance_raw is not None
+    assert settled.overall_distance_raw is not None
+    # Measured identical on this fixture; the tolerance is a fraction of the
+    # interocular distance, absorbing future non-determinism in MediaPipe's
+    # tracker without hiding a real regression.
+    assert abs(still.outcome.overall_distance_raw - settled.overall_distance_raw) <= 0.01
 
 
 def test_tracking_zoom_keeps_detecting_a_small_in_frame_face_across_frames(

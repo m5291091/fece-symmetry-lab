@@ -10,7 +10,7 @@ from face_symmetry_lab.application.session import (
     config_fingerprint,
 )
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config, with_tunables
+from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
 from face_symmetry_lab.domain.models import (
     AnalysisState,
     DemographicEstimate,
@@ -36,9 +36,6 @@ def _metric_config():
             "nose": PartMap(pairs=((9, 10),), min_pairs=1),
             "mouth": PartMap(pairs=((11, 12),), min_pairs=1),
         },
-        sensitivity=dict.fromkeys(PART_NAMES, 30.0),
-        weights=dict.fromkeys(PART_NAMES, 0.25),
-        sensitivity_frozen=False,
     )
 
 
@@ -55,7 +52,15 @@ def test_config_fingerprint_is_canonical_and_covers_metric_and_gate_settings() -
     changed = dict(settings)
     changed["ema_tau_seconds"] = 0.5
     assert config_fingerprint(changed) != config_fingerprint(settings)
-    assert settings["sensitivity"] == dict.fromkeys(PART_NAMES, 30.0)
+    # §8.6 left no coefficient, so what makes two segments comparable is the
+    # pair map the pooled overall distance is folded from.
+    assert settings["part_pair_counts"] == {
+        "contour": 1,
+        "eyes": 2,
+        "nose": 1,
+        "mouth": 1,
+    }
+    assert settings["overall_min_pairs"] == 4
     changed_interval = dict(settings)
     changed_interval["analysis_interval_ms"] = 200
     assert config_fingerprint(changed_interval) != config_fingerprint(settings)
@@ -127,8 +132,8 @@ def test_reset_with_new_thresholds_recomputes_the_config_fingerprint() -> None:
     assert after.settings["ema_tau_seconds"] == 0.8
 
 
-def test_reset_with_a_new_metric_config_recomputes_the_config_fingerprint() -> None:
-    """§15.2: editing part_weights/sensitivity must also bump the fingerprint."""
+def test_reset_does_not_accept_a_replacement_metric_bundle() -> None:
+    """§8.6/§15.2: the bundle has no tunable left, so it is pinned per session."""
     recorder = SessionRecorder(
         metric_config=_metric_config(),
         thresholds=QualityThresholds(),
@@ -138,20 +143,9 @@ def test_reset_with_a_new_metric_config_recomputes_the_config_fingerprint() -> N
         app_version="0.1.0",
         lock_digest="b" * 64,
     )
-    before = recorder.export_bundle().manifest.config_revisions[0]
-    tuned = with_tunables(
-        _metric_config(),
-        weights={"contour": 0.1, "eyes": 0.5, "nose": 0.3, "mouth": 0.1},
-        sensitivity=dict.fromkeys(PART_NAMES, 10.0),
-    )
 
-    recorder.reset(metric_config=tuned)
-
-    after = recorder.export_bundle().manifest.config_revisions[0]
-    assert after.revision == before.revision + 1
-    assert after.fingerprint != before.fingerprint
-    assert after.settings["weights"] == tuned.weights
-    assert after.settings["sensitivity"] == tuned.sensitivity
+    with pytest.raises(TypeError):
+        recorder.reset(metric_config=_metric_config())  # type: ignore[call-arg]
 
 
 def test_reset_with_a_new_history_capacity_rebounds_the_buffer() -> None:
@@ -235,7 +229,7 @@ def test_resize_history_capacity_rejects_less_than_one() -> None:
         recorder.resize_history_capacity(0)
 
 
-def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -> None:
+def test_analysis_records_keep_distances_and_reproducibility_metadata() -> None:
     config = _metric_config()
     recorder = SessionRecorder(
         metric_config=config,
@@ -255,9 +249,8 @@ def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -
         height=480,
     )
     symmetry = SymmetryResult(
-        scores={"contour": 80.0, "eyes": 81.0, "nose": 82.0, "mouth": 83.0},
         distances={"contour": 0.01, "eyes": 0.02, "nose": 0.03, "mouth": 0.04},
-        overall=81.5,
+        overall=0.025,
         metric_version=config.metric_version,
         landmark_map_version=config.landmark_map_version,
     )
@@ -265,12 +258,11 @@ def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -
         frame_id=9,
         state=AnalysisState(status=Status.OK),
         symmetry=symmetry,
-        overall_smooth=81.25,
+        overall_distance_smooth=0.024,
         pose=frame.pose,
         face_area_ratio=frame.face_area_ratio,
         metric_version=config.metric_version,
         landmark_map_version=config.landmark_map_version,
-        sensitivity_frozen=False,
         skin_quality=SkinQualityResult(
             score=72.0,
             tone_uniformity=74.0,
@@ -287,7 +279,8 @@ def test_analysis_records_keep_scores_distances_and_reproducibility_metadata() -
         processing_ms=4.567,
     )
 
-    assert record.score_overall_raw == 81.5
+    assert record.distance_overall_raw == 0.025
+    assert record.distance_overall_smooth == 0.024
     assert record.distance_mouth_raw == 0.04
     assert record.skin_quality_score_raw == 72.0
     assert record.skin_tone_uniformity_raw == 74.0

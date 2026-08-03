@@ -19,9 +19,25 @@ def test_the_frozen_repository_bundle_loads() -> None:
     assert set(config.parts) == set(PART_NAMES)
 
 
-def test_the_frozen_bundle_is_not_yet_calibrated() -> None:
-    """AC-SCORE-04: until the coefficients are frozen the UI must say so."""
-    assert load_metric_config().sensitivity_frozen is False
+def test_the_frozen_bundle_carries_no_calibratable_coefficient() -> None:
+    """AC-SCORE-04: §8.6 left the metric with no free parameter to freeze."""
+    raw = json.loads(DEFAULT_METRIC_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert "sensitivity" not in raw
+    assert "weights" not in raw
+    assert "sensitivity_frozen" not in raw
+
+
+def test_the_frozen_bundle_pools_every_pair_for_the_overall_distance() -> None:
+    """§8.6: the overall fold sees each of the 63 correspondences once."""
+    config = load_metric_config()
+
+    pooled = config.all_pairs
+
+    assert len(pooled) == sum(len(config.parts[name].pairs) for name in PART_NAMES)
+    assert len(pooled) == len(set(pooled))
+    assert config.overall_min_pairs == sum(config.parts[name].min_pairs for name in PART_NAMES)
+    assert config.overall_min_pairs < len(pooled)
 
 
 def test_the_frozen_map_has_enough_pairs_for_every_part() -> None:
@@ -73,13 +89,13 @@ def test_a_malformed_file_is_reported(tmp_path: Path) -> None:
         load_metric_config(path)
 
 
-def test_a_bundle_with_broken_weights_is_refused(tmp_path: Path) -> None:
+def test_a_bundle_with_a_reused_landmark_is_refused(tmp_path: Path) -> None:
     raw = json.loads(DEFAULT_METRIC_CONFIG_PATH.read_text(encoding="utf-8"))
-    raw["weights"]["nose"] = 0.9
+    raw["parts"]["nose"]["pairs"][0] = raw["parts"]["mouth"]["pairs"][0]
     path = tmp_path / "metric.json"
     path.write_text(json.dumps(raw), encoding="utf-8")
 
-    with pytest.raises(MetricConfigError, match="重み"):
+    with pytest.raises(MetricConfigError, match="重複"):
         load_metric_config(path)
 
 

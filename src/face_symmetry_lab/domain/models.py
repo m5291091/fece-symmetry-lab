@@ -56,14 +56,21 @@ class AnalysisState(BaseModel):
     warning_codes: tuple[ReasonCode, ...] = ()
 
 
-class SymmetryScore(BaseModel):
+class SymmetryDistance(BaseModel):
+    """§8.6's normalized RMS distances, in units of the interocular distance.
+
+    0 is the floor and there is no upper bound: the values are measurements,
+    not a 0-100 score, and `overall` is the pooled fold rather than a weighted
+    blend of the four parts.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contour: float = Field(ge=0, le=100)
-    eyes: float = Field(ge=0, le=100)
-    nose: float = Field(ge=0, le=100)
-    mouth: float = Field(ge=0, le=100)
-    overall: float = Field(ge=0, le=100)
+    contour: float = Field(ge=0)
+    eyes: float = Field(ge=0)
+    nose: float = Field(ge=0)
+    mouth: float = Field(ge=0)
+    overall: float = Field(ge=0)
 
 
 class DemographicEstimate(BaseModel):
@@ -117,5 +124,5 @@ class AnalysisResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     state: AnalysisState
-    score: SymmetryScore | None = None
+    distance: SymmetryDistance | None = None
     demographic_estimate: DemographicEstimate | None = None

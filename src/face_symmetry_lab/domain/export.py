@@ -22,7 +22,7 @@ from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 #: manifest. `Final` narrows it to its literal type, so it can serve as
 #: the default for the `Literal` fields below and the version has one
 #: definition instead of one per model that must agree on it.
-SCHEMA_VERSION: Final = "2.0.0"
+SCHEMA_VERSION: Final = "3.0.0"
 
 
 class InputMode(StrEnum):
@@ -35,7 +35,7 @@ class ExportRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal["2.0.0"] = SCHEMA_VERSION
+    schema_version: Literal["3.0.0"] = SCHEMA_VERSION
     session_id: str
     segment_id: str
     frame_id: int = Field(ge=0)
@@ -51,16 +51,15 @@ class ExportRecord(BaseModel):
     roll_deg: float | None = None
     face_area_ratio: float | None = Field(default=None, ge=0, le=1)
     quality_score: float | None = Field(default=None, ge=0, le=1)
-    score_contour_raw: float | None = Field(default=None, ge=0, le=100)
-    score_eyes_raw: float | None = Field(default=None, ge=0, le=100)
-    score_nose_raw: float | None = Field(default=None, ge=0, le=100)
-    score_mouth_raw: float | None = Field(default=None, ge=0, le=100)
-    score_overall_raw: float | None = Field(default=None, ge=0, le=100)
-    score_overall_smooth: float | None = Field(default=None, ge=0, le=100)
+    # §8.6: normalized RMS distances, so 0 is the floor and there is no upper
+    # bound to validate against. `distance_overall_raw` is the pooled fold, not
+    # a blend of the four parts above.
     distance_contour_raw: float | None = Field(default=None, ge=0)
     distance_eyes_raw: float | None = Field(default=None, ge=0)
     distance_nose_raw: float | None = Field(default=None, ge=0)
     distance_mouth_raw: float | None = Field(default=None, ge=0)
+    distance_overall_raw: float | None = Field(default=None, ge=0)
+    distance_overall_smooth: float | None = Field(default=None, ge=0)
     skin_quality_score_raw: float | None = Field(default=None, ge=0, le=100)
     skin_tone_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
     skin_texture_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
@@ -102,26 +101,22 @@ class ExportRecord(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def scores_belong_only_to_ok_records(self) -> ExportRecord:
-        score_values = (
-            self.score_contour_raw,
-            self.score_eyes_raw,
-            self.score_nose_raw,
-            self.score_mouth_raw,
-            self.score_overall_raw,
-            self.score_overall_smooth,
+    def measurements_belong_only_to_ok_records(self) -> ExportRecord:
+        measured_values = (
             self.distance_contour_raw,
             self.distance_eyes_raw,
             self.distance_nose_raw,
             self.distance_mouth_raw,
+            self.distance_overall_raw,
+            self.distance_overall_smooth,
             self.skin_quality_score_raw,
             self.skin_tone_uniformity_raw,
             self.skin_texture_uniformity_raw,
         )
         if self.analysis_status is not Status.OK and any(
-            value is not None for value in score_values
+            value is not None for value in measured_values
         ):
-            raise ValueError("左右差スコアと距離は OK レコードだけに保持できます。")
+            raise ValueError("左右差の距離と肌表面参考値は OK レコードだけに保持できます。")
         return self
 
     @model_validator(mode="after")
@@ -167,7 +162,7 @@ class ConfigRevision(BaseModel):
 class ExportManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["2.0.0"] = SCHEMA_VERSION
+    schema_version: Literal["3.0.0"] = SCHEMA_VERSION
     app_version: str = Field(min_length=1)
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     session_id: str

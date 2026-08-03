@@ -27,6 +27,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Frozen metric bundle | `configs/metrics/symmetry-2d-v1.json` |
 | Landmark map derivation | `scripts/derive_landmark_map.py` |
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
+| 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
+| 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
 | Camera correction / skin-surface metric | `src/face_symmetry_lab/domain/skin_quality.py` |
 | Quality gate / hysteresis | `src/face_symmetry_lab/application/quality.py` |
 | Frame analysis orchestration | `src/face_symmetry_lab/application/analyzer.py` |
@@ -55,18 +57,19 @@ Read this file once at the start of a task. After locating the relevant module, 
 |---|---|---|---|
 | Analysis DTO | `domain/models.py` | `tests/domain/test_models.py` | FR-008, FR-011 |
 | Landmark DTO / pixel mapping | `domain/landmarks.py` | `tests/domain/test_landmarks.py` | FR-008, FR-009 |
-| Landmark overlay painting | `domain/overlay.py` | `tests/domain/test_overlay.py` | FR-013 |
+| Landmark overlay painting | `domain/overlay.py` | `tests/domain/test_overlay.py` | FR-013, FR-034 |
 | Export record DTO | `domain/export.py` | `tests/domain/test_export.py` | FR-017, NFR-020 |
 | Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
 | Normalization / TLS midline | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, AC-SCORE-02 |
-| Symmetry scoring | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01 |
+| Symmetry distances | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01, AC-SCORE-04 |
+| 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
 | Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
 | Display smoothing | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, §8.7 |
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
-| 自動調整の判断ロジック | `application/auto_tune_controller.py` | `tests/application/test_auto_tune_controller.py` | FR-029, FR-030, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
+| 自動調整の判断ロジック（cadence・表示のみ） | `application/auto_tune_controller.py` | `tests/application/test_auto_tune_controller.py` | FR-029, FR-030, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | 年齢・性別の独立worker | `application/demographic_worker.py` | `tests/application/test_demographic_worker.py` | FR-022〜024, §14.3 |
 | Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
 | Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
@@ -82,14 +85,15 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
-| Score presentation | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3 |
+| 左右差の表示（距離の百分率整形を含む） | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3 |
 | CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
+| 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, AC-SYMM-01, §14.3g |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
-| Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, NFR-009 |
+| Camera composition（対称化キャプチャUIを含む） | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, FR-034, NFR-009 |
 | 位置誘導メッセージ | `ui/guidance.py` | `tests/ui/test_guidance.py` | FR-031, AC-GUIDE-01 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Streamlit flow | `ui/app.py` | future UI / E2E tests | AC-FLOW-01, AC-AGE-02 |
@@ -104,7 +108,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `5c050492c365d7e604304256da4b3a11fe61c788cbfb42b5e7322de776a4a27c`_
+_File-list SHA-256: `8f77813a0af92fcb00eb92f01dd4c6b54fd396297ec0ed7c0573a53dcb15e17f`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -148,9 +152,9 @@ face-symmetry-lab/
         - … (3 files)
       - … (1 files)
     - `application/`
-      - … (10 files)
+      - … (11 files)
     - `domain/`
-      - … (15 files)
+      - … (16 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
@@ -175,6 +179,7 @@ face-symmetry-lab/
     - `test_realtime.py`
     - `test_session.py`
     - `test_still_image.py`
+    - `test_symmetrization.py`
   - `domain/`
     - `__init__.py`
     - `test_auto_tuning.py`
@@ -189,6 +194,7 @@ face-symmetry-lab/
     - `test_pose.py`
     - `test_skin_quality.py`
     - `test_smoothing.py`
+    - `test_symmetrization.py`
     - `test_symmetry.py`
     - `test_tracking_zoom.py`
   - `model/`

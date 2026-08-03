@@ -42,11 +42,14 @@ SYNTHETIC_FACE = np.array(
 
 
 def _config(**overrides):
+    # `min_pairs` deliberately sits below the pair count, as the real bundle's
+    # does (30 of 63): the overall minimum is their sum, so the pooled value
+    # keeps some headroom after a part has already gone missing.
     parts = {
-        "contour": PartMap(pairs=((7, 8), (9, 10), (11, 12)), min_pairs=3),
-        "eyes": PartMap(pairs=((0, 3), (1, 2), (25, 26)), min_pairs=3),
-        "nose": PartMap(pairs=((13, 14), (15, 16), (17, 18)), min_pairs=3),
-        "mouth": PartMap(pairs=((19, 20), (21, 22), (23, 24)), min_pairs=3),
+        "contour": PartMap(pairs=((7, 8), (9, 10), (11, 12)), min_pairs=2),
+        "eyes": PartMap(pairs=((0, 3), (1, 2), (25, 26)), min_pairs=2),
+        "nose": PartMap(pairs=((13, 14), (15, 16), (17, 18)), min_pairs=2),
+        "mouth": PartMap(pairs=((19, 20), (21, 22), (23, 24)), min_pairs=2),
     }
     settings = {
         "metric_version": "symmetry-2d/test",
@@ -56,9 +59,6 @@ def _config(**overrides):
         "right_eye_corners": (2, 3),
         "midline_indices": (4, 5, 6),
         "parts": parts,
-        "sensitivity": dict.fromkeys(PART_NAMES, 30.0),
-        "weights": dict.fromkeys(PART_NAMES, 0.25),
-        "sensitivity_frozen": False,
     }
     settings.update(overrides)
     return build_metric_config(**settings)
@@ -72,23 +72,34 @@ def _rotation(degrees: float) -> np.ndarray:
     )
 
 
-def test_a_perfectly_symmetric_face_scores_one_hundred() -> None:
+def test_a_perfectly_symmetric_face_has_zero_distance_everywhere() -> None:
     result = compute_symmetry(SYNTHETIC_FACE, _config())
 
-    assert result.overall == pytest.approx(100.0, abs=1e-6)
+    assert result.overall == pytest.approx(0.0, abs=1e-9)
     for name in PART_NAMES:
-        assert result.part(name) == pytest.approx(100.0, abs=1e-6)
+        assert result.distance(name) == pytest.approx(0.0, abs=1e-9)
 
 
-def test_perturbing_one_part_lowers_that_part_monotonically() -> None:
-    scores = []
+def test_perturbing_one_part_raises_that_part_monotonically() -> None:
+    distances = []
     for offset in (0.0, 1.0, 3.0, 8.0):
         points = SYNTHETIC_FACE.copy()
         points[19, 0] -= offset
-        scores.append(compute_symmetry(points, _config()).part("mouth"))
+        distances.append(compute_symmetry(points, _config()).distance("mouth"))
 
-    assert scores == sorted(scores, reverse=True)
-    assert scores[0] > scores[-1]
+    assert distances == sorted(distances)
+    assert distances[0] < distances[-1]
+
+
+def test_perturbing_one_part_raises_the_overall_distance_monotonically() -> None:
+    distances = []
+    for offset in (0.0, 1.0, 3.0, 8.0):
+        points = SYNTHETIC_FACE.copy()
+        points[19, 0] -= offset
+        distances.append(compute_symmetry(points, _config()).overall)
+
+    assert distances == sorted(distances)
+    assert distances[0] < distances[-1]
 
 
 def test_perturbing_one_part_leaves_the_others_untouched() -> None:
@@ -97,13 +108,13 @@ def test_perturbing_one_part_leaves_the_others_untouched() -> None:
 
     result = compute_symmetry(points, _config())
 
-    assert result.part("contour") == pytest.approx(100.0, abs=1e-6)
-    assert result.part("nose") == pytest.approx(100.0, abs=1e-6)
-    assert result.part("mouth") < 100.0
+    assert result.distance("contour") == pytest.approx(0.0, abs=1e-9)
+    assert result.distance("nose") == pytest.approx(0.0, abs=1e-9)
+    assert result.distance("mouth") > 0.0
 
 
 @pytest.mark.parametrize("degrees", [-28.0, -9.0, 11.0, 24.0])
-def test_scores_are_invariant_to_roll(degrees: float) -> None:
+def test_distances_are_invariant_to_roll(degrees: float) -> None:
     baseline = compute_symmetry(SYNTHETIC_FACE, _config()).overall
 
     rolled = compute_symmetry(SYNTHETIC_FACE @ _rotation(degrees).T, _config()).overall
@@ -111,15 +122,18 @@ def test_scores_are_invariant_to_roll(degrees: float) -> None:
     assert rolled == pytest.approx(baseline, abs=1e-6)
 
 
-def test_scores_are_invariant_to_translation_and_scale() -> None:
-    baseline = compute_symmetry(SYNTHETIC_FACE, _config()).overall
+def test_distances_are_invariant_to_translation_and_scale() -> None:
+    """§8.3 normalizes the eye distance to 1, so a distance is a ratio, not pixels."""
+    points = SYNTHETIC_FACE.copy()
+    points[19, 0] -= 4.0
+    baseline = compute_symmetry(points, _config()).overall
 
-    moved = compute_symmetry(SYNTHETIC_FACE * 7.5 + np.array([300.0, -80.0]), _config()).overall
+    moved = compute_symmetry(points * 7.5 + np.array([300.0, -80.0]), _config()).overall
 
     assert moved == pytest.approx(baseline, abs=1e-6)
 
 
-def test_scores_are_invariant_to_mirroring() -> None:
+def test_distances_are_invariant_to_mirroring() -> None:
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 5.0
     baseline = compute_symmetry(points, _config()).overall
@@ -131,45 +145,68 @@ def test_scores_are_invariant_to_mirroring() -> None:
     assert result == pytest.approx(baseline, abs=1e-6)
 
 
-def test_overall_is_the_configured_weighted_sum() -> None:
+def test_the_overall_distance_pools_every_pair_instead_of_weighting_parts() -> None:
+    """§8.6: one fold over the pooled pairs, so each point counts exactly once."""
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 4.0
-    weights = {"contour": 0.4, "eyes": 0.3, "nose": 0.2, "mouth": 0.1}
+    points[7, 1] += 2.0
+    config = _config()
 
-    result = compute_symmetry(points, _config(weights=weights))
+    result = compute_symmetry(points, config)
 
-    expected = sum(weights[name] * (result.part(name) or 0.0) for name in PART_NAMES)
+    # Pooling is equivalent to the count-weighted quadratic mean, which the
+    # equal-count parts here make an equal-weight quadratic mean. That is a
+    # consequence of pooling, not a configurable weight.
+    per_part = [result.distance(name) for name in PART_NAMES]
+    expected = math.sqrt(sum(value**2 for value in per_part) / len(per_part))
     assert result.overall == pytest.approx(expected, abs=1e-9)
+    # It is emphatically *not* the arithmetic mean the old Σ(w_p × score_p) used.
+    assert result.overall != pytest.approx(sum(per_part) / len(per_part), abs=1e-9)
 
 
-def test_a_larger_sensitivity_penalises_the_same_deviation_more() -> None:
+def test_pooling_weights_a_part_by_how_many_pairs_it_contributes() -> None:
+    """A part with more pairs moves the pooled value more, by count alone."""
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 4.0
+    wide_mouth = _config(
+        parts={
+            "contour": PartMap(pairs=((7, 8),), min_pairs=1),
+            "eyes": PartMap(pairs=((0, 3), (1, 2)), min_pairs=2),
+            "nose": PartMap(pairs=((13, 14),), min_pairs=1),
+            "mouth": PartMap(pairs=((19, 20), (21, 22), (23, 24)), min_pairs=3),
+        }
+    )
+    narrow_mouth = _config(
+        parts={
+            "contour": PartMap(pairs=((7, 8), (9, 10), (11, 12)), min_pairs=3),
+            "eyes": PartMap(pairs=((0, 3), (1, 2), (25, 26)), min_pairs=3),
+            "nose": PartMap(pairs=((13, 14), (15, 16), (17, 18)), min_pairs=3),
+            "mouth": PartMap(pairs=((19, 20),), min_pairs=1),
+        }
+    )
 
-    gentle = compute_symmetry(points, _config(sensitivity=dict.fromkeys(PART_NAMES, 10.0)))
-    harsh = compute_symmetry(points, _config(sensitivity=dict.fromkeys(PART_NAMES, 90.0)))
+    assert compute_symmetry(points, wide_mouth).overall > 0.0
+    assert (
+        compute_symmetry(points, wide_mouth).overall
+        > compute_symmetry(points, narrow_mouth).overall
+    )
 
-    assert harsh.part("mouth") < gentle.part("mouth")
 
-
-def test_scores_stay_inside_zero_to_one_hundred() -> None:
+def test_distances_are_non_negative_and_unbounded_above() -> None:
+    """§8.6: 0 is the floor; there is no 100 to clamp against any more."""
     points = SYNTHETIC_FACE.copy()
-    points[19, 0] -= 5000.0
+    points[19, 0] -= 20_000.0
 
     result = compute_symmetry(points, _config())
 
-    assert 0.0 <= result.part("mouth") <= 100.0
-    assert 0.0 <= result.overall <= 100.0
-
-
-def test_raw_distances_are_reported_alongside_the_scores() -> None:
-    result = compute_symmetry(SYNTHETIC_FACE, _config())
-
-    assert result.distance("mouth") == pytest.approx(0.0, abs=1e-9)
+    # Far past the old 0-100 ceiling, which would have clamped this to 0.
+    assert result.distance("mouth") > 100.0
+    assert result.overall > 0.0
+    assert math.isfinite(result.overall)
 
 
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
-def test_non_finite_landmarks_produce_no_score(bad: float) -> None:
+def test_non_finite_landmarks_produce_no_distance(bad: float) -> None:
     points = SYNTHETIC_FACE.copy()
     points[13, 1] = bad
 
@@ -177,7 +214,7 @@ def test_non_finite_landmarks_produce_no_score(bad: float) -> None:
         compute_symmetry(points, _config())
 
 
-def test_zero_eye_distance_produces_no_score() -> None:
+def test_zero_eye_distance_produces_no_distance() -> None:
     points = SYNTHETIC_FACE.copy()
     points[[2, 3]] = points[[0, 1]]
 
@@ -189,23 +226,37 @@ def test_a_part_below_its_minimum_pair_count_is_missing_not_zero() -> None:
     """A short landmark set makes some pairs unusable; those parts go missing."""
     result = compute_symmetry(SYNTHETIC_FACE[:20], _config())
 
-    assert result.part("mouth") is None
-    assert result.part("contour") == pytest.approx(100.0, abs=1e-6)
+    assert result.distance("mouth") is None
+    assert result.distance("contour") == pytest.approx(0.0, abs=1e-9)
 
 
-def test_the_overall_score_is_missing_when_any_part_is_missing() -> None:
-    result = compute_symmetry(SYNTHETIC_FACE[:20], _config())
+def test_a_missing_part_does_not_make_the_overall_distance_missing() -> None:
+    """§8.6: the two are parallel outputs, so one is not composed of the other."""
+    points = SYNTHETIC_FACE[:20].copy()
+    points[7, 1] += 2.0
+
+    result = compute_symmetry(points, _config())
+
+    assert result.distance("mouth") is None
+    assert result.overall is not None
+    assert result.overall > 0.0
+    assert result.is_complete is False
+
+
+def test_the_overall_distance_is_missing_below_its_own_pair_minimum() -> None:
+    """Too few usable pairs overall is missing, never zero (§8.6)."""
+    result = compute_symmetry(SYNTHETIC_FACE[:8], _config())
 
     assert result.overall is None
     assert result.is_complete is False
 
 
-def test_a_complete_result_converts_to_the_shared_score_model() -> None:
-    score = compute_symmetry(SYNTHETIC_FACE, _config()).to_score()
+def test_a_complete_result_converts_to_the_shared_distance_model() -> None:
+    distance = compute_symmetry(SYNTHETIC_FACE, _config()).to_distance()
 
-    assert score is not None
-    assert score.overall == pytest.approx(100.0, abs=1e-6)
+    assert distance is not None
+    assert distance.overall == pytest.approx(0.0, abs=1e-9)
 
 
-def test_an_incomplete_result_does_not_convert_to_a_score() -> None:
-    assert compute_symmetry(SYNTHETIC_FACE[:20], _config()).to_score() is None
+def test_an_incomplete_result_does_not_convert_to_a_distance() -> None:
+    assert compute_symmetry(SYNTHETIC_FACE[:20], _config()).to_distance() is None

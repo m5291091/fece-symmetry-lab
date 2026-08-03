@@ -66,9 +66,6 @@ def load_metric_config(path: Path = DEFAULT_METRIC_CONFIG_PATH) -> MetricConfig:
             ),
             midline_indices=tuple(int(index) for index in raw["midline_indices"]),
             parts=parts,
-            sensitivity={name: float(value) for name, value in raw["sensitivity"].items()},
-            weights={name: float(value) for name, value in raw["weights"].items()},
-            sensitivity_frozen=bool(raw.get("sensitivity_frozen", False)),
         )
     except MetricConfigError:
         raise

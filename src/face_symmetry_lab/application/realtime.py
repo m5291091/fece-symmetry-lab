@@ -40,7 +40,7 @@ from face_symmetry_lab.domain.frame_adjustments import (
     composite_background,
 )
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
-from face_symmetry_lab.domain.metrics import MetricConfig, with_tunables
+from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.overlay import (
     DEFAULT_MIDLINE_COLOR,
@@ -70,6 +70,19 @@ DEFAULT_DISPLAY_TTL_MS = 250
 #: would expire the cache every single cycle, which is exactly what caused the
 #: reported background-replacement flicker at the 333ms candidate.
 _DISPLAY_TTL_SAFETY_MULTIPLIER = 2.0
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedFrame:
+    """One analysed frame held for §14.3g's one-shot symmetrization.
+
+    Carries the *raw* image, not the painted preview: the symmetrization
+    overlay draws its own geometry, and compositing it over an already
+    annotated frame would show two generations of landmarks at once.
+    """
+
+    rgb_image: NDArray[np.uint8]
+    frame: LandmarkFrame
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +197,16 @@ class RealtimeLandmarkPipeline:
         #: the same `_display_ttl_seconds`.
         self._geometry_cache: TtlCache[LandmarkFrame] = TtlCache()
         self._mask_cache: TtlCache[NDArray[np.float32]] = TtlCache()
+        #: §14.3g: deliberately *not* the geometry cache. That one answers
+        #: "what may a frame we did not analyse still draw?" and expires on a
+        #: TTL; this one answers "which frame did the user ask to keep?", is
+        #: filled only while `_capture_requested` is set, and is consumed
+        #: rather than expired. Copying every frame just in case would cost a
+        #: full-resolution copy per analysed frame for a button that is
+        #: usually never pressed.
+        self._capture_requested = False
+        self._captured: CapturedFrame | None = None
+        self._capture_lock = threading.Lock()
 
     def process(self, rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Analyse one frame and return the image to send back to the browser."""
@@ -284,6 +307,7 @@ class RealtimeLandmarkPipeline:
             # §14.3c: measured on the raw frame, and only ever affecting the
             # *next* one, so its position relative to painting is free.
             self._apply_display_tuning(self._auto_tune.display_tuning(rgb_image, frame, at=started))
+            self._store_capture(rgb_image, frame)
             painted = self._paint_geometry(rgb_image, frame)
             painted, segmentation_ms = self._apply_background(
                 rgb_image, painted, timestamp_ms, at=started
@@ -350,7 +374,6 @@ class RealtimeLandmarkPipeline:
                 current_interval_ms=self.analysis_interval_ms,
             )
         )
-        self._apply_sensitivity_tuning(analysis, at=finished)
 
         with self._sample_lock:
             throttled_frames = self._throttled_frames
@@ -512,32 +535,54 @@ class RealtimeLandmarkPipeline:
             else:
                 self._recorder.resize_history_capacity(capacity)
 
-    def _apply_sensitivity_tuning(self, analysis: AnalysisOutcome | None, *, at: float) -> None:
-        """Adopt §14.3d's `sensitivity` recommendation, if it made one.
+    def request_capture(self) -> None:
+        """§14.3g: keep the next successfully analysed single-face frame.
 
-        Goes through `apply_advanced_settings` so config_revision, segment
-        and EMA reset exactly as §15.2 requires of any scoring-affecting
-        change. `part_weights` is passed through untouched (§14.3d,
-        "Explain, do not judge").
+        Arming rather than always retaining is what keeps this free: without
+        a pending request no frame is ever copied, so the realtime loop pays
+        nothing for a feature the user may never invoke.
         """
-        # Checked before touching the analyzer at all: with auto-tuning off
-        # nothing here may read its config, let alone swap it.
-        if not self._auto_tune.enabled or self._analyzer is None:
+        with self._capture_lock:
+            self._capture_requested = True
+
+    def _store_capture(self, rgb_image: NDArray[np.uint8], frame: LandmarkFrame) -> None:
+        """Fulfil a pending capture request, if this frame can serve it.
+
+        Copies the image because the caller owns the WebRTC buffer and will
+        reuse it for the next frame. Only a single-face frame is accepted:
+        symmetrization needs one midline, and a capture that cannot be
+        symmetrized would just fail later with the request already spent.
+        """
+        if not frame.has_single_face:
             return
-        config = self._analyzer.config
-        recommended = self._auto_tune.sensitivity_tuning(analysis, at=at, config=config)
-        if recommended is None:
-            return
-        try:
-            new_config = with_tunables(config, weights=config.weights, sensitivity=recommended)
-            self.apply_advanced_settings(
-                thresholds=self._analyzer.thresholds,
-                tau_seconds=self._analyzer.tau_seconds,
-                zoom_policy=self.zoom_policy or TrackingZoomPolicy(),
-                metric_config=new_config,
-            )
-        except Exception:
-            return
+        with self._capture_lock:
+            if not self._capture_requested:
+                return
+            self._capture_requested = False
+            self._captured = CapturedFrame(rgb_image=rgb_image.copy(), frame=frame)
+
+    def take_capture(self) -> CapturedFrame | None:
+        """Consume the held frame, or None when none is ready yet.
+
+        Consuming rather than peeking keeps the raw image in memory only
+        until the UI has actually used it (§10.4, FR-034).
+        """
+        with self._capture_lock:
+            captured = self._captured
+            self._captured = None
+            return captured
+
+    @property
+    def capture_pending(self) -> bool:
+        """Whether a request is still waiting for a usable frame."""
+        with self._capture_lock:
+            return self._capture_requested
+
+    def clear_capture(self) -> None:
+        """Drop any pending request and any held frame (§4.4, §10.4)."""
+        with self._capture_lock:
+            self._capture_requested = False
+            self._captured = None
 
     def _active_demographic_worker(self) -> DemographicSampler | None:
         """Return the worker only while the user has age/gender display on."""
@@ -640,6 +685,7 @@ class RealtimeLandmarkPipeline:
         self.scheduler.reset()
         self._geometry_cache.clear()
         self._mask_cache.clear()
+        self.clear_capture()
         self._reset_demographic_worker()
         with self._sample_lock:
             self._next_analysis_at = self._clock()
@@ -660,7 +706,6 @@ class RealtimeLandmarkPipeline:
         thresholds: QualityThresholds,
         tau_seconds: float,
         zoom_policy: TrackingZoomPolicy,
-        metric_config: MetricConfig | None = None,
         history_capacity: int | None = None,
         age_interval_ms: int | None = None,
         analysis_interval_ms: int | None = None,
@@ -672,25 +717,22 @@ class RealtimeLandmarkPipeline:
         state), the tracking-zoom policy is swapped in place against the
         still-valid last known face, and the recorder starts a new segment
         with a recomputed config fingerprint so exported records before and
-        after this change are never conflated. ``metric_config`` additionally
-        swaps `part_weights`/`sensitivity` (e.g. via
-        `domain.metrics.with_tunables`); ``history_capacity`` resizes the
-        session buffer; ``age_interval_ms`` and ``analysis_interval_ms``
+        after this change are never conflated. ``history_capacity`` resizes
+        the session buffer; ``age_interval_ms`` and ``analysis_interval_ms``
         retune the two independent sampling cadences. Any left as ``None``
         keeps its current value.
+
+        The metric bundle is not among the settings: §8.6 left it with no
+        tunable coefficient, so this path is reached only from an explicit
+        user action, never from auto-tuning (AC-AUTOTUNE-02).
         """
         if self._analyzer is not None:
-            self._analyzer.update(
-                thresholds=thresholds,
-                tau_seconds=tau_seconds,
-                config=metric_config,
-            )
+            self._analyzer.update(thresholds=thresholds, tau_seconds=tau_seconds)
         self._update_zoom_policy(zoom_policy)
         if self._recorder is not None:
             self._recorder.reset(
                 thresholds=thresholds,
                 tau_seconds=tau_seconds,
-                metric_config=metric_config,
                 history_capacity=history_capacity,
                 analysis_interval_ms=analysis_interval_ms,
             )
@@ -700,6 +742,7 @@ class RealtimeLandmarkPipeline:
             self._demographic_worker.set_interval_ms(age_interval_ms)
         self._geometry_cache.clear()
         self._mask_cache.clear()
+        self.clear_capture()
         self._reset_demographic_worker()
 
     def _set_analysis_interval_ms(self, interval_ms: int) -> None:
@@ -773,12 +816,7 @@ class RealtimeLandmarkPipeline:
 
     @property
     def metric_config(self) -> MetricConfig | None:
-        """The analyzer's live bundle, or None when no analyzer is attached.
-
-        A readback of whichever bundle is in force right now, including one
-        that sensitivity auto-tuning (§14.3d) derived via
-        `domain.metrics.with_tunables` and swapped in.
-        """
+        """The analyzer's pinned bundle, or None when no analyzer is attached."""
         return self._analyzer.config if self._analyzer is not None else None
 
     @property
@@ -809,6 +847,7 @@ class RealtimeLandmarkPipeline:
         self._closed = True
         self._geometry_cache.clear()
         self._mask_cache.clear()
+        self.clear_capture()
         self._landmarker.close()
         if self._segmenter is not None:
             self._segmenter.close()

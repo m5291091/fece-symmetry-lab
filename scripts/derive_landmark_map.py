@@ -44,7 +44,7 @@ from face_symmetry_lab.adapters.io.model_store import (  # noqa: E402
 
 DEFAULT_CONFIG_PATH = REPOSITORY_ROOT / "configs" / "metrics" / "symmetry-2d-v1.json"
 LANDMARK_MAP_VERSION = "mediapipe-478-mirror/1.0.0"
-METRIC_VERSION = "symmetry-2d/1.0.0"
+METRIC_VERSION = "symmetry-2d/2.0.0"
 
 
 def _connection_indices(connections: Any) -> set[int]:
@@ -164,22 +164,11 @@ def derive_map(model_path: Path) -> dict[str, Any]:
         },
         "midline_indices": midline,
         "parts": parts,
-        "sensitivity": {
-            "contour": 30.0,
-            "eyes": 40.0,
-            "nose": 40.0,
-            "mouth": 35.0,
-        },
-        "weights": {
-            "contour": 0.25,
-            "eyes": 0.25,
-            "nose": 0.25,
-            "mouth": 0.25,
-        },
-        "sensitivity_frozen": False,
         "notes": (
-            "感度係数 k_p は固定評価セットで凍結するまで暫定値。"
-            "UI は『試験中の指標』として表示すること (requirement.md §8.6, AC-SCORE-04)。"
+            "出力は正規化RMS距離そのもの。感度係数k_pと部位重みw_pは、固定評価セットで較正されて"
+            "おらず恣意的な重み付けを持ち込むため v2.0.0 で廃止した "
+            "(requirement.md §8.6, AC-SCORE-04)。全体距離は全対応ペアをプールし正中線で1回だけ"
+            "折りたたんだRMSであり、部位別からの合成値ではない。"
         ),
     }
 

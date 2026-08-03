@@ -42,9 +42,14 @@ def build_config_settings(
     settings: dict[str, JsonValue] = {
         "metric_version": config.metric_version,
         "landmark_map_version": config.landmark_map_version,
-        "sensitivity": cast(dict[str, JsonValue], dict(config.sensitivity)),
-        "weights": cast(dict[str, JsonValue], dict(config.weights)),
-        "sensitivity_frozen": config.sensitivity_frozen,
+        # §8.6 left the bundle with no coefficient, so the pair counts that
+        # decide how the pooled overall distance is composed are what makes
+        # two segments comparable.
+        "part_pair_counts": cast(
+            dict[str, JsonValue],
+            {name: len(part.pairs) for name, part in config.parts.items()},
+        ),
+        "overall_min_pairs": config.overall_min_pairs,
         "yaw_inner_deg": thresholds.yaw_inner_deg,
         "yaw_outer_deg": thresholds.yaw_outer_deg,
         "pitch_inner_deg": thresholds.pitch_inner_deg,
@@ -161,16 +166,12 @@ class SessionRecorder:
                 pitch_deg=pose.pitch_deg if pose is not None else None,
                 roll_deg=pose.roll_deg if pose is not None else None,
                 face_area_ratio=outcome.face_area_ratio,
-                score_contour_raw=symmetry.part("contour") if symmetry is not None else None,
-                score_eyes_raw=symmetry.part("eyes") if symmetry is not None else None,
-                score_nose_raw=symmetry.part("nose") if symmetry is not None else None,
-                score_mouth_raw=symmetry.part("mouth") if symmetry is not None else None,
-                score_overall_raw=symmetry.overall if symmetry is not None else None,
-                score_overall_smooth=outcome.overall_smooth,
                 distance_contour_raw=symmetry.distance("contour") if symmetry is not None else None,
                 distance_eyes_raw=symmetry.distance("eyes") if symmetry is not None else None,
                 distance_nose_raw=symmetry.distance("nose") if symmetry is not None else None,
                 distance_mouth_raw=symmetry.distance("mouth") if symmetry is not None else None,
+                distance_overall_raw=symmetry.overall if symmetry is not None else None,
+                distance_overall_smooth=outcome.overall_distance_smooth,
                 skin_quality_score_raw=skin.score if skin is not None else None,
                 skin_tone_uniformity_raw=skin.tone_uniformity if skin is not None else None,
                 skin_texture_uniformity_raw=skin.texture_uniformity if skin is not None else None,
@@ -307,17 +308,17 @@ class SessionRecorder:
         thresholds: QualityThresholds | None = None,
         tau_seconds: float | None = None,
         analysis_interval_ms: int | None = None,
-        metric_config: MetricConfig | None = None,
         history_capacity: int | None = None,
     ) -> None:
         """Clear history and begin a new comparison segment.
 
-        Passing a changed threshold/tau/interval/metric_config recomputes
-        the config fingerprint too, so the new segment's exported records
-        are correctly distinguished from the one before it (§15.2).
-        ``history_capacity`` rebuilds the bounded buffer at the new size;
-        the segment is being cleared either way, so no record is dropped
-        to make room.
+        Passing a changed threshold/tau/interval recomputes the config
+        fingerprint too, so the new segment's exported records are correctly
+        distinguished from the one before it (§15.2). The metric bundle is
+        not among them: §8.6 left it with no tunable coefficient, so it is
+        pinned for the session. ``history_capacity`` rebuilds the bounded
+        buffer at the new size; the segment is being cleared either way, so
+        no record is dropped to make room.
         """
         with self._lock:
             if thresholds is not None:
@@ -326,13 +327,10 @@ class SessionRecorder:
                 self._tau_seconds = tau_seconds
             if analysis_interval_ms is not None:
                 self._analysis_interval_ms = analysis_interval_ms
-            if metric_config is not None:
-                self._metric_config = metric_config
             if (
                 thresholds is not None
                 or tau_seconds is not None
                 or analysis_interval_ms is not None
-                or metric_config is not None
             ):
                 self._settings = build_config_settings(
                     self._metric_config,

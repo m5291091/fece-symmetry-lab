@@ -24,7 +24,7 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 2. **18〜75歳向け年齢・性別推定を独立機能として統合する。** 8年代分類は削除し、Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` の連続年齢と二値確率を採用する。年齢は「モデル推定の参考年齢」、性別は「外見からのモデル推定の参考性別」と表示し、本人の自己認識・法的性別を表さない。左右差・肌表面参考値とは分離する。
 3. **初回体験を要件化する。** モデル準備、プライバシー説明、カメラ許可、撮影品質調整、分析という一連の導線を定義する。
 4. **分析状態と理由コードを分離する。** `HOLD` だけでなく、姿勢、距離、複数顔、低品質など「次に何を直せばよいか」を UI が説明できるようにする。
-5. **スコアを版管理する。** モデルだけでなく、ランドマーク対応表、係数、重み、前処理を含む `metric_version` を結果に記録する。
+5. **指標を版管理する。** モデルだけでなく、ランドマーク対応表、計算式、前処理を含む `metric_version` を結果に記録する。
 6. **リアルタイム処理を latest-frame-wins にする。** 受信スレッドを重い推論で塞がず、古いフレームを溜めない。
 7. **Streamlit のブロッキングループを廃止する。** UI 更新は定期再実行フラグメントで行い、推論スレッドから Streamlit API に触れない。
 8. **ネットワーク境界を明示する。** localhost 実行時は STUN/TURN を使わず、モデル取得は明示操作・固定 URL・sha256 検証を必須にする。
@@ -37,12 +37,14 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 15. **画像由来の外観差と肌表面参考値は幾何スコアと分離する。** 顔cropへ端末内のホワイトバランス・明度正規化を適用し、頬領域の色調均一性と局所テクスチャを「撮影条件依存の肌表面参考値」として算出する。疾患、肌質、美しさ、健康を推定せず、補正量を記録し、校正完了までは4部位＋全体の幾何スコアへ混合しない。
 16. **年齢・性別入力は顔 crop に限定する。** MediaPipe の単一顔 landmark bbox から余白付き crop を作り、Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` へ入力する。公式XML/BINを出所の正本として固定し、再現可能な開発時変換で生成した固定ONNXを既存の `opencv-contrib-python` DNNから実行する。元assetと派生assetのsize、SHA-256、変換recipeをmanifestへ登録し、parityとslice評価はリリース条件として残す。
 17. **リアルタイム映像には幾何だけを重ねる。** 映像へ描くのはランドマークと中心線に限り（実測約1ms/フレーム）、数値パネルは映像へ描かず隣のパネルが担う（従来18.6ms/フレームを要し遅延として現れたため）。間引きフレームでは直近の幾何と背景置換maskを既定250ms（`analysis_interval_ms`の自動調整でこれを上回る場合は2倍を上限に延長）まで再利用し、検出失敗・複数顔・リセット・TTL超過では即時消去して古い結果を別の顔へ長時間重ねない。
+18. **0〜100 スコアを廃止し、距離をそのまま出力する。** `exp` 変換の感度係数 `k_p` と部位重み `w_p` は固定評価セットで較正されておらず、恣意的な重み付けを結果へ持ち込むため削除した。部位別は正規化 RMS 距離、全体は全対応ペアを 1 つの集合としてプールし正中線で 1 回だけ折りたたんだ RMS 距離とする。各対応点が等しく 1 票となり、自由パラメータは残らない（§8.6）。
+19. **左右差を「形」で示す。** 正中線で折りたたんだ中点からなる対称化点群を実測点と重ねて描き、ズレを線分で可視化する。リアルタイムには載せず、明示的なキャプチャ操作からの一発処理として実行する。対称化した顔を「理想」「正解」として提示しない（§8.6.2、FR-034）。
 
 ### 0.1 現在の実装位置（2026-08-01）
 
 | Milestone | 状態 | 現在地 |
 |---|---|---|
-| M0 | 未完 | OD-01、OD-02、OD-04、OD-07 と実モデル互換性確認が未完。左右差は相対比較専用 |
+| M0 | 未完 | OD-02、OD-04、OD-07 と実モデル互換性確認が未完。左右差は相対比較専用（OD-01 は §8.6 のスコア変換廃止により解消） |
 | M1 | 一部実装 | 静止画入力、品質判定、幾何左右差、年齢・性別境界、schema は実装中。固定評価と肌表面指標校正は未完 |
 | M2 | 一部実装 | WebRTC、latest-frame-wins、短時間overlay保持、Stop、年齢・性別の独立worker（capacity 1・独自cadence・segment単位の破棄）は実装中。E2E、cleanup実測は未完 |
 | M3 | 一部実装 | 同意、入力切替、CSV / JSON export、About は実装済み。trend、Session、設定UI、A11y実機確認は未完 |
@@ -83,10 +85,10 @@ Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマ�
 
 | 指標 | MVP 目標 | 測定方法 |
 |---|---:|---|
-| 初回分析到達率 | 90% 以上 | 5 名以上のタスクテストで、説明なしに有効スコアへ到達した割合 |
+| 初回分析到達率 | 90% 以上 | 5 名以上のタスクテストで、説明なしに有効な左右差結果へ到達した割合 |
 | Time to first valid result | p90 60 秒以内 | モデル準備済みの起動から最初の `OK` まで |
 | 撮影条件の理解 | 80% 以上 | テスト後に「姿勢や照明で値が変わる」と回答できた割合 |
-| 固定条件での表示安定性 | 標準偏差 2.0 点以下 | 同一 fixture または固定撮影で連続 10 秒の平滑化済み全体スコア |
+| 固定条件での表示安定性 | 変動係数 0.10 以下 | 同一 fixture または固定撮影で連続 10 秒の平滑化済み全体距離 |
 | 年齢・性別モデルの再現性 | 年齢 MAE 6.99年、性別 accuracy 95.80% の公開値を基準に差を記録 | 採用 asset と固定評価セットで runtime parity と slice を比較 |
 | 画像の外部送信・永続化 | 0 件 | ネットワーク遮断テスト、ファイル書込監査、ログ監査 |
 
@@ -195,7 +197,7 @@ Analyze と About は Streamlit の `st.navigation` / `st.Page` による multip
 ### 5.1 レイアウト
 
 - Analyze ページの操作順は、利用前の同意 → 入力方法選択（Camera / Image）→ 選択した入力のプレビューと結果、の順に上から下へ並べる。アプリ説明文はページ最下部に要約と About ページへの導線だけを置き、算出方法の詳細は About ページへ分離する。
-- デスクトップでは 12 カラム相当とし、映像／画像 7、見出し結果 5 の比率を基準とする。全体スコア・参考性別・参考年齢の 3 つと状態・位置誘導は映像／画像の隣に表示する。部位別・姿勢・肌表面参考値・参考年齢参考性別の詳細などの残りの数値は、映像／画像と見出し結果の下に画面幅いっぱいで表示する（FR-013, FR-032, AC-LAYOUT-01）。
+- デスクトップでは 12 カラム相当とし、映像／画像 7、見出し結果 5 の比率を基準とする。全体の左右差・参考性別・参考年齢の 3 つと状態・位置誘導は映像／画像の隣に表示する。部位別・姿勢・肌表面参考値・参考年齢参考性別の詳細などの残りの数値は、映像／画像と見出し結果の下に画面幅いっぱいで表示する（FR-013, FR-032, AC-LAYOUT-01）。
 - Camera と Image は同一の構成（同意 → 入力方法選択 → 映像／画像と見出し結果 → 詳細結果）に揃え、Image 側だけ異なる並びにしない。
 - 狭い画面では映像／画像、見出し結果、詳細結果、トレンドの順に 1 カラムへ積む。
 - 重要操作をサイドバーだけに置かない。停止、入力切替、リセットは主画面から到達可能にする。
@@ -207,13 +209,15 @@ Analyze と About は Streamlit の `st.navigation` / `st.Page` による multip
 - Streamlit の公式テーマ設定を用い、light / dark の両方に対応する。
 - 既定は dark とし、背景・カード・本文・補助文の階調を公式 theme token で定義する。
 - 生の HTML/CSS セレクタによる内部 DOM の上書きは MUST NOT。必要な独自 UI はテーマ変数に追従するコンポーネントとして隔離する。
-- 色の意味を固定する: neutral=未開始、blue=処理中、amber=調整が必要、red=回復不能なエラー。スコアの高低に赤／緑の価値判断を割り当てない。
-- 数値は最大 1 桁の小数で表示し、精度以上の細かさを演出しない。
-- 年齢・性別推定と肌表面参考値を対称性スコアより目立たせず、各結果に関係があるような配置・文言を避ける。
+- 色の意味を固定する: neutral=未開始、blue=処理中、amber=調整が必要、red=回復不能なエラー。左右差の大小に赤／緑の価値判断を割り当てない。
+- 距離は両眼距離に対する百分率として小数 2 桁までで表示し、精度以上の細かさを演出しない。
+- 対称化ビジュアライゼーションでは、実測点と対称化点を色で区別し、どちらかを「正しい側」として強調しない。
+- 年齢・性別推定と肌表面参考値を対称性の結果より目立たせず、各結果に関係があるような配置・文言を避ける。
 
 ### 5.3 文言
 
-- `Score` 単独ではなく、初出で「左右差スコア（実験値）」と表示する。
+- `Score` 単独ではなく、初出で「左右差（実験値・両眼距離比）」と表示する。値が小さいほど対応点のズレが小さいことだけを意味し、「高得点／低得点」と呼ばない。
+- 対称化ビジュアライゼーションは「左右対称にそろえた位置」と説明し、「理想」「正解」「補正後」「あるべき顔」と呼ばない。
 - `HOLD` は内部値とし、UI では「少し右を向いてください」「顔を 10cm ほど離してください」のような行動可能な文言に変換する。
 - `ERROR` は原因、影響、回復操作を示す。内部例外やスタックトレースを表示しない。
 - 「完璧」「理想」「欠点」「歪み」「正常／異常」を使用しない。
@@ -290,28 +294,29 @@ Analyze と About は Streamlit の `st.navigation` / `st.Page` による multip
 | FR-008 | P0 | 単一顔ポリシー | 0 顔は `NO_FACE`、2 顔以上は `MULTI_FACE` とし、最大顔を黙って採点しない |
 | FR-009 | P0 | ランドマーク・姿勢 | 478 点ランドマークと yaw / pitch / roll を取得し、失敗を理由コードへ変換する |
 | FR-010 | P0 | 品質ゲート | 姿勢、顔サイズ、連続安定性を必須判定し、照度・ぼけは P0 では警告、P1 で評価後にゲート化できる |
-| FR-011 | P0 | 対称性指標 | §8 の手順で輪郭、目、鼻、口、全体を 0〜100 で算出し、範囲外値を拒否する |
+| FR-011 | P0 | 対称性指標 | §8 の手順で輪郭、目、鼻、口の部位別正規化 RMS 距離と、全対応ペアをプールした全体距離を算出する。いずれも 0 以上の有限値で、非有限値・負値を拒否する。全体距離は部位別の加重合成ではない（§8.6） |
 | FR-012 | P0 | 平滑化 | 表示用全体値に EMA を適用し、生値を別保持する。リセット条件は §8.8 に従う |
-| FR-013 | P0 | 結果オーバーレイ | **Camera**: 映像には478点ランドマークとTLS中心線だけを重ねる（実測0.99ms/フレーム、720p/30fpsの1フレーム予算33msの約3%）。中心線はON/OFFを切り替えられ既定ON、ランドマークと異なる色・5px以上とする。数値パネルは映像へ描画しない（従来のPILパネル描画は18.6ms/フレームを要し遅延の主因だったため）。間引きフレームでは直近の単一顔幾何を既定250ms（`analysis_interval_ms`自動調整時は`max(250ms, analysis_interval_ms×2)`）だけ再描画し、エラー・複数顔・リセット・TTL超過で消去する。**数値は映像の隣**の「ライブ解析」パネルに§11 NFR-003の4〜5Hzで表示し、うち全体スコア・参考性別・参考年齢の3つと、追跡状態・位置誘導は映像のすぐ隣で一目で読めるよう見出しとして並べる。部位別・姿勢・肌表面参考値・年齢性別詳細などの残りの数値は、映像と見出し結果の下に画面幅いっぱいで表示する（§5.1）。**Image**: 静止画も同様にランドマークと中心線をプレビューへ重ね、Camera と同じ構成（全体スコア・参考性別・参考年齢と状態を写真の隣に見出しとして、残りの数値をその下に画面幅いっぱいで）で結果を表示する。いずれも欠測は `—` とする |
+| FR-013 | P0 | 結果オーバーレイ | **Camera**: 映像には478点ランドマークとTLS中心線だけを重ねる（実測0.99ms/フレーム、720p/30fpsの1フレーム予算33msの約3%）。中心線はON/OFFを切り替えられ既定ON、ランドマークと異なる色・5px以上とする。数値パネルは映像へ描画しない（従来のPILパネル描画は18.6ms/フレームを要し遅延の主因だったため）。間引きフレームでは直近の単一顔幾何を既定250ms（`analysis_interval_ms`自動調整時は`max(250ms, analysis_interval_ms×2)`）だけ再描画し、エラー・複数顔・リセット・TTL超過で消去する。**数値は映像の隣**の「ライブ解析」パネルに§11 NFR-003の4〜5Hzで表示し、うち全体の左右差・参考性別・参考年齢の3つと、追跡状態・位置誘導は映像のすぐ隣で一目で読めるよう見出しとして並べる。部位別・姿勢・肌表面参考値・年齢性別詳細などの残りの数値は、映像と見出し結果の下に画面幅いっぱいで表示する（§5.1）。**Image**: 静止画も同様にランドマークと中心線をプレビューへ重ね、Camera と同じ構成（全体の左右差・参考性別・参考年齢と状態を写真の隣に見出しとして、残りの数値をその下に画面幅いっぱいで）で結果を表示する。いずれも欠測は `—` とする |
 | FR-014 | P0 | 結果表示 | 全体値、4 部位、姿勢、品質状態、比較上の注意を 1 画面に表示する |
 | FR-015 | P0 | トレンド | 直近 60 秒を既定表示し、欠測を 0 点として結ばず空白で表す |
 | FR-016 | P0 | セッション履歴 | 上限 3,000 件のリングバッファに数値結果のみ保持し、上限到達時は古い順に破棄する |
 | FR-017 | P0 | エクスポート | 1 件以上の結果がある場合のみ CSV / JSON を生成し、§9 のスキーマとメタ情報を含める |
-| FR-018 | P0 | 設定 | 基本設定と Advanced を分離し、不正な重み・係数・上限を保存できないよう検証する |
+| FR-018 | P0 | 設定 | 基本設定と Advanced を分離し、不正な対応マップ・閾値・上限を保存できないよう検証する |
 | FR-019 | P0 | セッション制御 | Stop / Resume / Reset があり、結果・カメラ・モデルキャッシュへの影響を確認ダイアログで区別する |
 | FR-020 | P0 | バージョン表示 | 各 `*_model_version` / `*_model_sha256`、`metric_version`、`schema_version`、設定 fingerprint を画面と出力に含める |
 | FR-021 | P1 | セッション要約 | 有効率、中央値、変動幅、主な HOLD 理由を表示する。人物間比較は行わない |
 | FR-022 | P0 | 年齢・性別推定 | 単一顔 landmark bbox の余白付き顔 crop を `age-gender-recognition-retail-0013` へ入力し、18〜75歳の連続年齢と二値確率を、断定ではない参考値として左右差と別区画に表示する。対象範囲外には推論を提供しない |
 | FR-023 | P0 | 年齢・性別の再現性 | `demographic_model_version`、`demographic_model_sha256`、推定年齢、性別2クラス確率、観測時刻、cache 状態を結果へ含める |
 | FR-024 | P0 | 年齢・性別の失敗分離 | モデルなし・不正出力・推論失敗でも左右差分析を継続し、年齢・性別区画だけに回復手順を示す |
-| FR-025 | P1 | 補正後の肌表面参考値 | 顔cropへ端末内のGray-worldホワイトバランスとrobust明度正規化を適用し、頬領域の色調均一性と局所テクスチャを独立した参考値として算出する。補正係数・指標版・未校正状態を記録し、肌色、疾患、健康、美的品質を推定せず、幾何の全体スコアへ混合しない |
+| FR-025 | P1 | 補正後の肌表面参考値 | 顔cropへ端末内のGray-worldホワイトバランスとrobust明度正規化を適用し、頬領域の色調均一性と局所テクスチャを独立した参考値として算出する。補正係数・指標版・未校正状態を記録し、肌色、疾患、健康、美的品質を推定せず、幾何の全体の左右差へ混合しない |
 | FR-026 | P1 | 追跡ズーム | リアルタイムのVIDEOモードで、直前フレームの単一顔bboxを追跡し周辺を切り出して拡大した上でlandmark検出へ渡し、結果を元フレーム座標へ写像する。初回検出・顔見失い時は全体フレームへ復帰し、既定間隔ごとに全体フレームを再検査して2顔以上の出現を見逃さない |
 | FR-027 | P1 | 背景の黒/白置換（表示専用） | `selfie_segmenter`による前景confidence maskを使い、表示用frameの背景だけを黒または白へ置換する。既定OFFのON/OFF切替を持ち、左右差・年齢性別・肌表面参考値のいずれの入力にも使わない。合成失敗時は元映像へfallbackし、分析を止めない |
 | FR-028 | P1 | 映像の明るさ調整（検出専用、非表示） | 0.25〜3.0倍のgainを、landmark検出directlyへ渡すframeにだけ乗算する。display出力（ユーザーに見える映像）には適用せず、常にカメラの生映像を表示する。既定gain 1.0（無調整）とし、範囲外の値は拒否する。AIによる検出補助が画面へ視覚的に現れないようにするための意図的な分離であり、遅延低減も兼ねる（毎映像フレームではなく解析cadenceの頻度でしか演算しなくなるため） |
 | FR-029 | P1 | 明るさ・追跡ズームの自動調整 | 手動スライダーは持たず、新規MLモデルを追加せず、既存のフレーム統計（フレーム平均輝度、追跡中の顔bbox面積比）から`brightness_gain`と追跡ズームpolicy（`zoom_margin_ratio`・`zoom_target_px`）をFR-028・FR-026それぞれの許容範囲内でheuristicに算出し、一定間隔で常時自動更新する。対称性・年齢性別・肌表面参考値の入力・スコア計算には一切使わない（FR-027・FR-028と同じ表示・検出補助専用の扱い） |
-| FR-030 | P1 | Advanced設定 cadence・感度の自動調整 | FR-029と同じく手動UIを持たず常時、次の2系統を自動更新する。(a) scoringに影響しないcadence設定 — 直近の`processing_ms`から`analysis_interval_ms`（既定候補125/200/333msの中から選択）、それに連動する`age_interval_ms`（500〜10,000ms）、一定時間分の履歴を保つ`history_capacity`（100〜20,000件）を、config_revision・segment・EMAを変えずに継続更新する。(b) scoringに影響する`sensitivity` — 直近フレームの部位別RMS距離のばらつき（検出ノイズの指標）からheuristicに算出し、既存値との差が一定割合を超えた場合のみ、既存のAdvanced設定適用と同じ手順（config_revision・segment更新、EMA・履歴reset）で反映する。`part_weights`は固定既定値のまま変更しない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）も固定既定値のまま、手動UI・AI調整のいずれの対象にもしない |
+| FR-030 | P1 | Advanced設定 cadenceの自動調整 | FR-029と同じく手動UIを持たず常時、scoringに影響しないcadence設定を自動更新する。直近の`processing_ms`から`analysis_interval_ms`（既定候補125/200/333msの中から選択）、それに連動する`age_interval_ms`（500〜10,000ms）、一定時間分の履歴を保つ`history_capacity`（100〜20,000件）を、config_revision・segment・EMAを変えずに継続更新する。**scoringに影響する自動調整は持たない**。§8.6で感度係数`k_p`と部位重み`w_p`を廃止したため、AIが調整しうる採点パラメータ自体が存在しない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）も固定既定値のまま、手動UI・AI調整のいずれの対象にもしない |
 | FR-031 | P1 | リアルタイム位置誘導 | 品質ゲートが算出済みの理由コード（`ReasonCode`: `NO_FACE`・`MULTIPLE_FACES`・`OFF_AXIS_YAW`・`OFF_AXIS_PITCH`・`OFF_AXIS_ROLL`・`TOO_CLOSE`・`TOO_FAR`・`LOW_CONFIDENCE`・`UNSTABLE`等）を、新たな判定ロジックを追加せずに日本語の短い指示文へ変換し、「ライブ解析」パネルに表示する。理由が複数該当する場合は`AnalysisState.reason`（既存の優先順位で決まる先頭の理由）を1件だけ表示し、同時に矛盾する指示を出さない。品質ゲートを満たしている間は指示文を表示しない。カメラ映像pixelへの直接描画は行わない（FR-013の遅延要件、および PIL 既定bitmapフォントに日本語グリフが無く文字化けするため。§14.3e） |
-| FR-032 | P1 | 「ライブ解析」パネルの配置選択 | 全体スコア・参考性別・参考年齢と状態・位置誘導を含む見出し部分は、動画に対する配置（右・左・下）から利用者がその場で選べる。部位別・姿勢・肌表面参考値などの残りの数値は、配置に関わらず常に動画の下へ画面幅いっぱいで表示する。選択はスコア計算・分析結果に影響しない表示専用設定で、既定は動画の右。映像内へは何も描画しないため、映像内表示位置の選択肢は持たない |
+| FR-032 | P1 | 「ライブ解析」パネルの配置選択 | 全体の左右差・参考性別・参考年齢と状態・位置誘導を含む見出し部分は、動画に対する配置（右・左・下）から利用者がその場で選べる。部位別・姿勢・肌表面参考値などの残りの数値は、配置に関わらず常に動画の下へ画面幅いっぱいで表示する。選択はスコア計算・分析結果に影響しない表示専用設定で、既定は動画の右。映像内へは何も描画しないため、映像内表示位置の選択肢は持たない |
+| FR-034 | P1 | 対称化ビジュアライゼーション | §8.6.2 の対称化点群を算出し、実測ランドマークと色を分けて重ね、対応ペアごとのズレを線分で示す。Camera では「この瞬間を対称化して見る」操作で直近の解析成功フレームを 1 枚だけ取り出して静的に処理し、Image では表示中の写真に対して処理する。いずれも EMA・履歴を持たない stateless な一発処理で、リアルタイムの連続分析・映像描画を停止も変更もしない。キャプチャした映像と対称化結果は Streamlit セッション内のメモリだけに保持し、ディスク保存・外部送信を行わない。セッションのリセットでキャプチャ内容も破棄する。「理想」「正解」「補正後」といった価値判断を含む文言を使わない（§10.7） |
 | ~~FR-033~~ | — | ~~全画面表示でも参照値が分かる~~ | **撤回**。ブラウザの動画全画面は`<video>`要素だけを拡大するため、全画面時にも数値を見せるには映像pixelへ焼き込むほかないが、その描画コストが遅延の主因であることが実測で判明した（FR-013）。遅延ゼロを優先し、全画面表示中は数値を表示しない。数値は全画面を解除した通常表示の「ライブ解析」パネルで確認する |
 
 ---
@@ -370,20 +375,25 @@ MVP は正面品質ゲートを前提とした 2D 指標とする。3D frontaliz
 d_p = sqrt(mean(||left_i - mirror(right_i)||²))
 ```
 
-- 使用可能なペア数が部位ごとの最小数を下回る場合、その部位と全体スコアを欠測にし、0 点へ置換しない。
+- 使用可能なペア数が部位ごとの最小数を下回る場合、その部位を欠測にし、0 へ置換しない。部位の欠測は全体値を欠測にしない（全体値は §8.6 のとおり部位から合成しないため）。
 
-### 8.6 スコア変換
+### 8.6 出力値
+
+全体値は部位別値の加重合成ではなく、**全部位の対応ペアを 1 つの集合へプールし、正中線で 1 回だけ折りたたんだ正規化 RMS 距離**とする。
 
 ```text
-score_p = clamp(100 × exp(-k_p × d_p), 0, 100)
-overall = Σ(w_p × score_p),  Σw_p = 1,  w_p ≥ 0
+P_all   = contour ∪ eyes ∪ nose ∪ mouth      （版管理された全対応ペア）
+d_all   = sqrt(mean_{i ∈ P_all}(||left_i - mirror(right_i)||²))
 ```
 
-- `k_p` と `w_p` は指標設定の一部として版管理する。
-- MVP 初期値は部位重み各 0.25 とする。
-- 感度係数 `k_p` は固定評価セットによる分布確認後に凍結する。凍結前の UI は「試験中の指標」と表示する。
-- 0〜100 は理解しやすさのための変換値であり、母集団内順位、正常範囲、美的品質を意味しない。
-- 数学上、全部位の正規化距離 `d_p = 0` なら各部位と全体は 100 になる。ただし、これは人物の優劣や望ましさを意味しない。実写では検出誤差、姿勢、撮影条件により、見かけ上左右対称でも landmark 距離が 0 になる保証はない。
+- 出力は `d_p`（部位別）と `d_all`（全体）であり、いずれも両眼 anchor 間距離を 1.0 とした無次元の距離とする。`exp` 変換による 0〜100 スコア、感度係数 `k_p`、部位重み `w_p` は**持たない**。いずれも固定評価セットで較正されていない自由パラメータであり、恣意的な重み付けを結果へ持ち込むため廃止した。
+- `d_all` は各対応点を等しく 1 票として扱う。部位ごとのペア数の違いがそのまま寄与の違いになるが、これは「点が多い部位ほど形状情報が多い」という測定上の事実であり、重要度の判断ではない。
+- 全部位のペアが使用可能な場合に限り、`d_all = sqrt(Σ_p n_p·d_p² / Σ_p n_p)`（`n_p` は部位 `p` の使用ペア数）が恒等的に成り立つ。これはプール計算の帰結であって設定可能な重みではなく、`n_p` は版管理された対応マップから一意に決まる。部位が欠測しても `d_all` は残りのペアだけで定義できるため、プール式を primitive とする。
+- `d_p` と `d_all` は**並列の独立した出力**とする。`d_p` は「どこにズレが集中しているか」を見る診断値であり、`d_all` の計算には一切関与しない。
+- `d_all` に使用可能なペア総数が `Σ_p min_pairs_p`（部位ごとの最小ペア数の合計）を下回る場合、`d_all` を欠測にし、0 へ置換しない。
+- 値は 0 が下限で上限を持たない。小さいほど対応点のズレが小さいことだけを意味し、母集団内順位、正常範囲、美的品質、人物の優劣や望ましさを意味しない。
+- 数学上、対応点距離がすべて 0 なら `d_p = d_all = 0` になる。実写では検出誤差、姿勢、撮影条件により、見かけ上左右対称でも 0 になる保証はない。
+- UI は絶対値ではなく同一人物・同一環境内の相対変化を参照するよう注意を表示する。
 
 ### 8.6.1 補正後の肌表面参考値（実験値）
 
@@ -392,7 +402,19 @@ overall = Σ(w_p × score_p),  Σw_p = 1,  w_p ≥ 0
 - patch が画像外、分散不足、欠測、不正 shape の場合は欠測とし、0 点へ置換しない。
 - 出力は `skin_quality_score_raw`、`skin_tone_uniformity_raw`、`skin_texture_uniformity_raw`、補正gain、`skin_metric_version` とする。
 - ソフトウェア補正はcamera固有の露出・HDR・レンズ・ISP処理を復元できず、同一人物・同一端末・近い照明での相対比較を補助するだけである。疾患、肌タイプ、肌色、清潔さ、健康、美的品質を表さない。
-- OD-08 の固定評価が完了するまで `skin_quality_frozen: false` とし、幾何の `score_overall_*` へ混合しない。
+- OD-08 の固定評価が完了するまで `skin_quality_frozen: false` とし、幾何の `distance_overall_*` へ混合しない。
+
+### 8.6.2 対称化ビジュアライゼーション（FR-034）
+
+左右差を「数値」ではなく「形」で示すため、正中線で折りたたんだ際の中点からなる**対称化点群**を算出し、実測点との差を重ねて表示できる。
+
+- 対応ペア `(l, r)` の対称化点は `mid_l = (left_l + mirror(right_r)) / 2`、`mid_r = mirror(mid_l)` とする。
+- 正中点集合の点は `(p + mirror(p)) / 2`、すなわち正中線への直交射影とする。ペアの中点と同じ式であり、規則を 1 つに保つ。
+- 対応ペアが定義されていない点（478 点のうち 63 組 = 126 点と正中点以外）は**対称化対象外**とし、実座標のまま残す。推測で対応を補わない。
+- 表示は §8.3 の正規化を逆変換して元の画素座標へ戻したうえで行う。逆変換は正規化の厳密な逆（平行移動・回転・スケール）とする。
+- この可視化は「対称化した顔の方が良い」という価値判断を含意しない。文言は §5.3 と §10.7 に従い、対称化点を「理想」「正解」「補正後」と呼ばない。
+- 数値的には対称化点と実測点の距離は §8.5 の `||left_i - mirror(right_i)||` の 1/2 であり、新しい指標を導入しない。
+- リアルタイム映像へは組み込まない。1 回きりの静的処理として、静止画分析と同じ stateless な一発処理パスで実行する（§14.3g）。
 
 ### 8.7 平滑化
 
@@ -404,8 +426,8 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 - フレームレート変動で平滑化の時間特性が変わらないよう、固定 `α` ではなく時間ベース EMA を用いる。
 - 既定 `tau = 0.4 秒`。`delta_t` は単調時計の有効分析時刻差とする。
 - UI は平滑値を主表示し、生値は詳細・エクスポートで確認可能にする。
-- 部位別は P0 では生値、全体のみ EMA とする。
-- 静止画は stateless とし、`score_overall_smooth = null` とする。
+- 部位別距離は P0 では生値、全体距離 `d_all` のみ EMA とする。
+- 静止画は stateless とし、`distance_overall_smooth = null` とする。
 
 ### 8.8 EMA のリセット
 
@@ -434,11 +456,11 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 
 「数値のみ」は匿名を意味しない。エクスポート前に、顔由来の派生データであることと共有時の注意を表示する。
 
-### 9.2 レコードスキーマ v2.0
+### 9.2 レコードスキーマ v3.0
 
 | フィールド | 型 | 規約 |
 |---|---|---|
-| `schema_version` | string | `2.0.0`。8年代分類フィールド削除を含む破壊的変更 |
+| `schema_version` | string | `3.0.0`。`score_*` 列の削除と距離ベース出力への移行を含む破壊的変更（§8.6） |
 | `session_id` | UUID string | 起動セッション内のランダム値。端末・人物を識別しない |
 | `segment_id` | UUID string | 指標に影響する設定変更ごとに更新 |
 | `frame_id` | int | セッション内で単調増加 |
@@ -452,13 +474,9 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 | `yaw_deg` / `pitch_deg` / `roll_deg` | float / null | 有限値、度 |
 | `face_area_ratio` | float / null | 0〜1 |
 | `quality_score` | float / null | P1。0〜1、指標本体とは分離 |
-| `score_contour_raw` | float / null | `OK` のみ、0〜100 |
-| `score_eyes_raw` | float / null | `OK` のみ、0〜100 |
-| `score_nose_raw` | float / null | `OK` のみ、0〜100 |
-| `score_mouth_raw` | float / null | `OK` のみ、0〜100 |
-| `score_overall_raw` | float / null | `OK` のみ、0〜100 |
-| `score_overall_smooth` | float / null | EMA 初期化後のみ |
-| `distance_contour_raw` / `distance_eyes_raw` / `distance_nose_raw` / `distance_mouth_raw` | float / null | `OK` のみ。§8.5 の正規化 RMS。校正可能性のため保持し、landmark 座標は含めない |
+| `distance_contour_raw` / `distance_eyes_raw` / `distance_nose_raw` / `distance_mouth_raw` | float / null | `OK` のみ。§8.5 の部位別正規化 RMS 距離、0 以上。landmark 座標は含めない |
+| `distance_overall_raw` | float / null | `OK` のみ。§8.6 の全ペアプール正規化 RMS 距離、0 以上。部位別からの合成値ではない |
+| `distance_overall_smooth` | float / null | EMA 初期化後のみ、0 以上 |
 | `skin_quality_score_raw` | float / null | §8.6.1 の独立した暫定0〜100参考値。幾何全体へ混合しない |
 | `skin_tone_uniformity_raw` / `skin_texture_uniformity_raw` | float / null | 補正後の頬patchから得た0〜100の構成値 |
 | `skin_correction_gain_r` / `skin_correction_gain_g` / `skin_correction_gain_b` | float / null | Gray-world補正gain |
@@ -474,7 +492,7 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 | `demographic_model_sha256` | string / null | モデルgraphとweightsを組み合わせたhash |
 | `landmark_model_version` | string | ランドマーク推論モデルの版 |
 | `landmark_model_sha256` | string | 使用バイナリの hash |
-| `metric_version` | string | 前処理、対応表、式、係数、重みの版 |
+| `metric_version` | string | 前処理、対応表、式の版 |
 | `app_version` | string | 実行アプリの版 |
 | `lock_digest` | string | `uv.lock` の sha256 |
 | `config_revision` | int | セッション内設定版 |
@@ -492,7 +510,7 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
 ```json
 {
   "manifest": {
-    "schema_version": "2.0.0",
+    "schema_version": "3.0.0",
     "app_version": "0.1.0",
     "lock_digest": "...",
     "session_id": "uuid",
@@ -501,7 +519,7 @@ ema_t = alpha_t × raw_t + (1 - alpha_t) × ema_(t-1)
       {"name": "face_landmarker", "version": "...", "sha256": "..."},
       {"name": "age_gender", "version": "...", "sha256": "..."}
     ],
-    "metric_version": "symmetry-2d/1.0.0",
+    "metric_version": "symmetry-2d/2.0.0",
     "config_revisions": [
       {"revision": 1, "fingerprint": "...", "settings": {}}
     ]
@@ -634,7 +652,7 @@ flowchart LR
 | NFR-010 | オフライン | モデル準備後、非 loopback DNS/TCP/UDP 通信 0 件で全 P0 フローが完走する |
 | NFR-011 | 入力安全 | 偽装、破損、巨大、アニメーション画像をプロセス継続可能な形で拒否する |
 | NFR-012 | 再現性 | lock、model hash、metric version、config fingerprint から結果条件を特定できる |
-| NFR-013 | 数値安全 | NaN/Inf、zero eye distance、不正係数・重みを UI と出力へ流さない |
+| NFR-013 | 数値安全 | NaN/Inf、zero eye distance、負の距離、不正な対応マップを UI と出力へ流さない |
 | NFR-014 | 品質 | `domain` 90%、全体 80% 以上の line coverage。分岐とプロパティテストを重視する |
 | NFR-015 | 型 | アプリコードで strict 型チェック。未型付け外部 module の ignore は module 別 override のみ |
 | NFR-016 | アクセシビリティ | §5.4 を満たし、主要フローをキーボードで完了できる |
@@ -661,9 +679,9 @@ NFR-002の`processing_ms`は、landmark検出・背景セグメンテーショ�
 - **AC-ZOOM-01**: リアルタイムの追跡ズームは、単一顔のbboxを追跡して検出入力を拡大しつつ、既定`zoom_recheck_interval_ms`ごとに全体フレームを再検査する。再検査で2顔以上を検出した場合は追跡状態を破棄して`MULTI_FACE`を報告し、顔を見失った場合は次フレームで全体フレーム検索へ復帰する。
 - **AC-DISPLAY-01**: 背景の黒/白置換はON/OFF切替可能で既定OFF、失敗時は元映像へfallbackし左右差・年齢性別・肌表面参考値の分析を止めない。明るさgainはlandmark検出入力にだけ適用され、display出力には適用されない（AC-AUTOTUNE-01のraw測定と合わせて一貫）。範囲外の値は保存前に拒否される。
 - **AC-AUTOTUNE-01**: `brightness_gain`はFR-028の0.25〜3.0倍、追跡ズームpolicyはFR-026の各範囲を超えて算出されない。算出は生映像（補正前）の平均輝度から直接行い、検出専用に適用される。算出に使う統計取得や計算が失敗しても既存gain/policyを維持し、フレーム処理・対称性分析を止めない（NFR-017と同じ1フレーム失敗許容）。手動での編集UIは持たない。
-- **AC-AUTOTUNE-02**: cadence設定（`analysis_interval_ms`・`age_interval_ms`・`history_capacity`）の自動更新はscoringに影響しないため、`config_revision`・`segment_id`・EMAを変更しない。`sensitivity`の自動更新は、直近算出値との差が一定割合を超えた場合だけ適用され、適用のたびに既存のAdvanced設定適用（§15.2末尾）と同じく`config_revision`・`segment_id`を更新しEMA・履歴をリセットする。`part_weights`と品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は固定既定値のまま、手動UI・AI調整のいずれの対象にもしない。
+- **AC-AUTOTUNE-02**: cadence設定（`analysis_interval_ms`・`age_interval_ms`・`history_capacity`）の自動更新はscoringに影響しないため、`config_revision`・`segment_id`・EMAを変更しない。scoringに影響する自動調整は存在せず、自動調整が`MetricConfig`を差し替えることはない。品質ゲート閾値（yaw/pitch/roll・face_area・valid_frames_to_ok・ema_tau_seconds）は固定既定値のまま、手動UI・AI調整のいずれの対象にもしない。
 - **AC-GUIDE-01**: `AnalysisState.reason`が非nullの間、対応する日本語指示文をカメラ映像内と「ライブ解析」パネルの双方に表示し、`reason`がnull（品質ゲートを満たす）の間は指示文を表示しない。`ReasonCode`の全メンバーに指示文が定義されている。
-- **AC-LAYOUT-01**: 「ライブ解析」パネルの左・右・下選択は、選択を変えてもスコア値・`config_revision`・分析結果を変化させない。全体スコア・参考性別・参考年齢の3つと状態・位置誘導は、どの配置でも映像に隣接して見出しとして表示される。部位別・姿勢・肌表面参考値などの残りの数値は、どの配置でも動画の下へ画面幅いっぱいで表示される。映像へ描画するのはランドマークと中心線だけで、数値パネルは描画しない（FR-013）。
+- **AC-LAYOUT-01**: 「ライブ解析」パネルの左・右・下選択は、選択を変えてもスコア値・`config_revision`・分析結果を変化させない。全体の左右差・参考性別・参考年齢の3つと状態・位置誘導は、どの配置でも映像に隣接して見出しとして表示される。部位別・姿勢・肌表面参考値などの残りの数値は、どの配置でも動画の下へ画面幅いっぱいで表示される。映像へ描画するのはランドマークと中心線だけで、数値パネルは描画しない（FR-013）。
 
 ### 12.2 プライバシー・セキュリティ
 
@@ -677,10 +695,11 @@ NFR-002の`processing_ms`は、landmark検出・背景セグメンテーショ�
 
 ### 12.3 指標・性能
 
-- **AC-SCORE-01**: 完全対称な合成点群は許容差内で 100、単一部位の摂動は当該部位値を単調に低下させる。
+- **AC-SCORE-01**: 完全対称な合成点群は部位別・全体とも許容差内で距離 0、単一部位の摂動は当該部位の距離を単調に増加させ、他部位の距離を変えない。全体距離も単調に増加する。
 - **AC-SCORE-02**: 平行移動、一様 scale、roll、鏡映に対する不変性が `1e-6` の許容差内で成立する。
-- **AC-SCORE-03**: zero eye distance、欠損、NaN/Inf、範囲外点ではスコアを出さない。
-- **AC-SCORE-04**: 固定評価セットで感度係数を凍結し、根拠と分布をモデル／指標カードに記録する。
+- **AC-SCORE-03**: zero eye distance、欠損、NaN/Inf、範囲外点では距離を出さない。
+- **AC-SCORE-04**: 全体距離は全対応ペアを 1 回だけ折りたたんだ RMS であり、部位重み・感度係数のような較正されていない自由パラメータを一切持たない。部位別距離は全体距離の計算へ寄与せず、両者が並列の独立出力として得られる。
+- **AC-SYMM-01**: 対称化点群は、対応ペアでは実測点と鏡映点の中点、正中点では正中線への直交射影に一致し、対応ペア未定義の点は実座標のまま残る。正規化の逆変換は往復で `1e-6` 以内に元の画素座標へ戻る。キャプチャは明示操作でのみ発生し、リセットで破棄され、ディスクへ書き出されない。
 - **AC-APPEARANCE-01**: 合成color castの補正後はchannel平均との差が減少し、均一な頬textureは高い参考値、局所変化では値が低下する。いずれも幾何の全体値は変化せず、照明差・camera差の固定評価前は`skin_quality_frozen: false`とする。
 - **AC-PERF-01**: §11 の基準で fps、遅延、静止画時間、メモリの全条件を満たす。
 - **AC-SOAK-01**: 30 分連続稼働後に queue の増大、track 残留、worker 残留、顕著な memory leak がない。
@@ -763,7 +782,8 @@ FastAPI 化では domain / application と adapter の一部を再利用でき�
 | コンポーネント | 責務 | 禁止 |
 |---|---|---|
 | `domain.geometry` | 座標正規化、鏡映、TLS 中心線 | I/O、モデル、Streamlit import |
-| `domain.symmetry` | RMS、スコア、重み統合、EMA | global state、時刻取得 |
+| `domain.symmetry` | 部位別RMS距離、全ペアプールの全体距離 | global state、時刻取得、スコア変換、重み統合 |
+| `domain.symmetrization` | 対称化点群、ペアごとのズレ（純粋幾何） | 画像I/O、状態保持、価値判断 |
 | `domain.skin_quality` | bounded撮影補正、頬patchの肌表面参考値 | 医学・美的判定、I/O |
 | `application.analyzer` | 1 入力の品質判定と分析 orchestration | UI 描画、モデル自動取得 |
 | `application.session` | 状態遷移、segment、履歴、reset | `st.session_state` 直接操作 |
@@ -846,20 +866,21 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 - gainが1.0から外れて`apply_brightness_gain`のfloat演算が実行されるのは解析cadenceの頻度（最大8Hz程度）だけであり、映像fps相当（間引きなし）の頻度では発生しない。
 - 自動調整中も、統計取得や算出に失敗した1フレームは既存値を維持して継続する（NFR-017）。
 
-#### 14.3d cadence・感度の自動調整（FR-030, AC-AUTOTUNE-02）
+#### 14.3d cadenceの自動調整（FR-030, AC-AUTOTUNE-02）
 
-14.3cに加えて次の2系統も常時自動更新する。品質ゲート閾値と`part_weights`はどちらの系統にも含めず、固定値のまま手動UIもAI調整も持たない（前者は測定条件そのものを緩めてしまうため、後者は最適化すべき正解が無く「AIが部位の重要度を判断した」という誤った印象を与えるため）。
+14.3cに加えて次のcadence系統も常時自動更新する。品質ゲート閾値は含めず、固定値のまま手動UIもAI調整も持たない（測定条件そのものを緩めてしまうため）。
+
+§8.6でスコア変換を廃止したことにより、**scoringに影響する自動調整は存在しない**。旧版の感度自動調整（`domain.auto_tuning.recommend_sensitivity`、`AutoTuneController.sensitivity_tuning`、`domain.metrics.with_tunables`）は、調整対象の`sensitivity`ごと削除した。したがって自動調整が`config_revision`・`segment_id`・EMAを動かす経路は 1 つも残らない。
 
 - **cadence（scoringに影響しない）**: 直近`processing_ms`の移動平均から`domain.auto_tuning.recommend_analysis_interval_ms`が既定候補（125/200/333ms）の中から選び、`RealtimeLandmarkPipeline._set_analysis_interval_ms`で即時反映する。同じ値から`recommend_age_interval_ms`・`recommend_history_capacity`を導出し、`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`（履歴を消さずに上限だけ変える、`reset`とは別の非破壊API）へ渡す。数秒間隔で再評価し、config_revision・segment・EMAには触れない。推奨値が現在値と同じ場合は各APIを呼ばない（history_capacityの再構築や`_next_analysis_at`のリセットを、長時間セッションで不要に繰り返さないため）。`_set_analysis_interval_ms`は同時に、幾何・背景置換maskのcache TTL（FR-013）を`max(既定250ms, analysis_interval_ms×2)`へ更新する。TTLが固定250msのままだと、cadenceが333msへ自動的に遅くなった際に毎サイクルcacheが必ず失効し、背景置換の表示が周期的にチラつく（実際に報告された不具合の原因）。
-- **感度（scoringに影響する）**: 直近フレームの部位別RMS距離（`SymmetryResult.distances`、sensitivity適用前の生値）の平均・標準偏差から`domain.auto_tuning.recommend_sensitivity`が部位ごとに新しい`sensitivity`を算出する。既存値との相対差が閾値を超える部位がある場合だけ、`domain.metrics.with_tunables`で`part_weights`は変えずに`sensitivity`だけを差し替えた`MetricConfig`を作り、既存の`RealtimeLandmarkPipeline.apply_advanced_settings`を（現在の`thresholds`・`tau_seconds`・zoom policyをそのまま渡して）呼ぶ。§15.2既存規約どおりconfig_revision・segmentが進み、EMA・履歴がresetされる。差が閾値以下ならresetは発生しない。
-- どちらの系統も、統計取得・算出・適用のいずれかに失敗した場合は例外を握りつぶし、既存値を維持してフレーム処理を継続する（NFR-017、AC-AUTOTUNE-02）。
+- 統計取得・算出・適用のいずれかに失敗した場合は例外を握りつぶし、既存値を維持してフレーム処理を継続する（NFR-017、AC-AUTOTUNE-02）。
 
 #### 14.3e 位置誘導・パネル配置（FR-031, FR-032, AC-GUIDE-01, AC-LAYOUT-01）
 
 いずれも表示専用で、対称性・年齢性別・肌表面参考値のスコア計算入力を変えない。
 
 - **位置誘導（FR-031）**: `ui.guidance.guidance_message(state: AnalysisState) -> str | None`が、既存の品質ゲート（`application.quality.QualityGate`）が既に算出済みの`AnalysisState.reason`を、新しい判定ロジックを追加せずに1件の日本語指示文へ変換する。`reason`が`None`（品質ゲートを満たす）なら`None`を返し、呼び出し側は指示文を表示しない。「ライブ解析」パネルの見出し部分（`ui.camera._render_headline_panel`）だけがこれを表示する。カメラ映像pixelへは描画しない（FR-013の素通し方針。加えてPILの既定bitmapフォント`ImageFont.load_default`には日本語グリフが無く、映像へ描くと文字化けする）。
-- **パネル配置（FR-032）**: 「ライブ解析」パネルの見出し部分（全体スコア・参考性別・参考年齢・状態・位置誘導）は`ui.camera`内の選択（右・左・下）に応じて`st.columns`の並び順・比率を切り替えるか、動画の下へ積む。部位別・姿勢・肌表面参考値などの残りの数値（`ui.camera._render_detail_panel`）は、この選択に関わらず常に動画と見出し部分の下へ画面幅いっぱいで表示する。マウスドラッグやカスタムJS componentは導入しない（プリセット選択のみ）。映像内へは何も描画しないため、映像内位置の選択は存在しない。
+- **パネル配置（FR-032）**: 「ライブ解析」パネルの見出し部分（全体の左右差・参考性別・参考年齢・状態・位置誘導）は`ui.camera`内の選択（右・左・下）に応じて`st.columns`の並び順・比率を切り替えるか、動画の下へ積む。部位別・姿勢・肌表面参考値などの残りの数値（`ui.camera._render_detail_panel`）は、この選択に関わらず常に動画と見出し部分の下へ画面幅いっぱいで表示する。マウスドラッグやカスタムJS componentは導入しない（プリセット選択のみ）。映像内へは何も描画しないため、映像内位置の選択は存在しない。
 - **全画面表示（FR-033撤回）**: 数値を映像へ焼き込む経路が遅延の主因だったため、全画面表示中の数値表示は行わない。全画面中もランドマークと中心線は見えるが、数値は全画面を解除して「ライブ解析」パネルで確認する。
 
 #### 14.3f 処理段階別タイミングの計測（NFR-002 診断用）
@@ -871,6 +892,15 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 - `scoring_ms`: `FrameAnalyzer.analyze`（正規化・対称性・肌表面参考値）の所要時間。分析器未接続時は0。
 
 3値の合計は`processing_ms`の一部を占めるに過ぎず（auto-tune記帳・recorder追記などは含まない）、厳密な内訳ではなく「どの段階が支配的か」を利用者が自分で判断するための目安である。計測自体の失敗はフレーム処理を止めない（NFR-017）。「ライブ解析」パネルは`処理 X ms`の隣にこの3値を表示する。
+
+#### 14.3g 対称化の一発処理とキャプチャ（FR-034, AC-SYMM-01）
+
+対称化（§8.6.2）は連続分析ループへ組み込まない。`application.still_image`と同じ設計思想（EMAなし・履歴なし・stateless、1枚に対する一発分析）の独立した処理パスとして実装する。
+
+- **domain**: `domain.symmetrization`が純粋関数として対称化点群とペアごとのズレを算出する。`domain.geometry`の`normalize_landmarks`・`fit_midline`・`reflect_across_midline`をそのまま再利用し、新しい幾何規約を導入しない。表示画素座標へ戻すため、`domain.geometry`へ正規化の逆変換（`NormalizationTransform`）を追加する。描画は`domain.overlay`が実測点・対称化点・ズレ線分を描く。
+- **application**: `application.symmetrization.symmetrize_frame`が`LandmarkFrame`と元画像から結果DTOを 1 回だけ組み立てる。状態を持たず、`FrameAnalyzer`のEMA・`SessionRecorder`の履歴には触れない。
+- **キャプチャ**: `RealtimeLandmarkPipeline`は「明示的に要求されたときだけ、次の解析成功フレームの生`rgb_image`と`LandmarkFrame`を 1 枚保持し、取り出し時に消費する」保持先を持つ。表示間引き用の`_geometry_cache`（TTL付き、目的が異なる）とは別に持ち、流用しない。要求が無い間はフレームを複製しないため、常時のコピーコストは発生しない。`reset_analysis`・`apply_advanced_settings`・`close`で保持内容を破棄する。
+- WebRTCの連続ループ（映像描画・ライブ数値）はキャプチャによって停止も変更もされない。
 
 ### 14.4 エラーと回復
 
@@ -893,11 +923,11 @@ PCのwebcamは、電話の自撮りより顔がフレームに占める面積比
 | trend window | 60 秒 | 15 / 30 / 60 / 120 秒 |
 | 壁時計を export | OFF | ON 時だけ `captured_at` を出力 |
 | 顔の中心線を表示 | ON | Camera / Image とも ON / OFF（FR-013）。表示専用、スコア計算に影響しない |
-| 「ライブ解析」パネルの配置 | 動画の右 | 右 / 左 / 下（FR-032）。見出し（全体スコア・参考性別・参考年齢・状態・位置誘導）だけに適用し、残りの詳細数値は常に動画の下。表示専用、スコア計算に影響しない |
+| 「ライブ解析」パネルの配置 | 動画の右 | 右 / 左 / 下（FR-032）。見出し（全体の左右差・参考性別・参考年齢・状態・位置誘導）だけに適用し、残りの詳細数値は常に動画の下。表示専用、スコア計算に影響しない |
 
 ### 15.2 Advanced 設定
 
-Advanced設定に手動編集UIは存在しない。品質ゲート閾値と`part_weights`は固定既定値（コード定数）とし、それ以外はFR-029・FR-030のAIが常時自動算出する。いずれもUIの`st.slider`等では公開せず、`ui/camera.py`は現在値を読み取り専用で表示するだけである。
+Advanced設定に手動編集UIは存在しない。品質ゲート閾値は固定既定値（コード定数）とし、それ以外はFR-029・FR-030のAIが常時自動算出する。いずれもUIの`st.slider`等では公開せず、`ui/camera.py`は現在値を読み取り専用で表示するだけである。§8.6でスコア変換を廃止したため、採点に影響する設定項目そのものが存在しない。
 
 | 設定 | 既定 / 初期候補 | 検証・値域 | 決定方法 |
 |---|---:|---|---|
@@ -907,11 +937,9 @@ Advanced設定に手動編集UIは存在しない。品質ゲート閾値と`par
 | `valid_frames_to_ok` | 5 | 1〜30 | 固定既定値（同上） |
 | `face_area_min` / `max` | 0.02 / 0.55 | `0 < min < max < 1` | 固定既定値（同上） |
 | `ema_tau_seconds` | 0.4 | 0.05〜5.0 | 固定既定値（同上） |
-| `part_weights` | 各 0.25 | 各 0 以上、合計 1 を許容差 `1e-9` で検証 | 固定既定値（frozen bundle、コード定数、UI非公開）。FR-030でAI調整の対象外と明記 |
 | `history_capacity` | 3,000 | 100〜20,000 | AIが常時自動算出（FR-030, §14.3d）。UIは読み取り専用表示のみ |
 | `age_interval_ms` | 1,000 | 500〜10,000。左右差分析頻度とは独立 | AIが常時自動算出（同上） |
 | `analysis_interval_ms` | 125 | 125 / 200 / 333ms。映像fpsとは独立し、待ちqueueを作らない | AIが常時自動算出（同上） |
-| `sensitivity` | 指標 bundle 値 | 各正数 | AIが常時自動算出（FR-030, §14.3d）。変化が閾値を超えた場合のみ適用し`config_revision`・`segment_id`を更新、EMA・履歴をreset |
 | `zoom_margin_ratio` | 0.6 | 0〜3.0（FR-026） | AIが常時自動算出（FR-029, §14.3c）。UIは読み取り専用表示のみ |
 | `zoom_min_window` | 0.18 | 0 超〜1.0（同上） | 固定既定値（AIはmargin_ratio/target_pxのみ算出。同上） |
 | `zoom_recheck_interval_ms` | 1,000 | 0 以上（同上） | 固定既定値（同上） |
@@ -920,9 +948,9 @@ Advanced設定に手動編集UIは存在しない。品質ゲート閾値と`par
 | `brightness_gain` | 1.0 | 0.25〜3.0（FR-028） | AIが常時自動算出（FR-029, §14.3c）。UIは読み取り専用表示のみ |
 | `background_mode` | OFF | OFF / BLACK / WHITE（FR-027） | 基本UI（常時表示のラジオボタン、モデル未配置時は無効）。表示専用の二値選択でAI調整の対象外 |
 
-- `sensitivity`の変更のみ`config_revision`と`segment_id`を更新し、EMAをresetする（scoringに影響するため）。`RealtimeLandmarkPipeline`が自身の`_maybe_auto_tune_sensitivity`から`apply_advanced_settings`を（現在の`thresholds`・`tau_seconds`・zoom policyをそのまま渡して）呼び、`FrameAnalyzer.update`・`SessionRecorder.reset`・`TrackingZoomLandmarker.update_policy`をまとめて実行する。cadence（`history_capacity`・`age_interval_ms`・`analysis_interval_ms`）・`brightness_gain`・追跡ズームpolicyの自動更新はこの経路を使わず、`config_revision`・`segment_id`・EMAを変更しない非破壊な更新（`_set_analysis_interval_ms`・`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`・`TrackingZoomLandmarker.update_policy`の直接呼び出し）で行う。
-- 基本ユーザーには検出信頼度、角度閾値、係数、model path を表示しない。`background_mode`のみ、幾何・スコア計算に影響しない表示専用設定として常時表示する。
-- 設定モデルは immutable。`sensitivity`の自動更新は`domain.metrics.with_tunables`で凍結bundleから新しい`MetricConfig`を導出し（`part_weights`は変更しない）、結果は常に`sensitivity_frozen=False`として記録する。
+- scoringに影響する自動更新は存在しないため、`config_revision`・`segment_id`の更新とEMA resetを伴う経路は自動調整には無い。cadence（`history_capacity`・`age_interval_ms`・`analysis_interval_ms`）・`brightness_gain`・追跡ズームpolicyの自動更新は、`config_revision`・`segment_id`・EMAを変更しない非破壊な更新（`_set_analysis_interval_ms`・`DemographicWorker.set_interval_ms`・`SessionRecorder.resize_history_capacity`・`TrackingZoomLandmarker.update_policy`の直接呼び出し）で行う。`apply_advanced_settings`は利用者の明示操作（セッションのリセット等）からのみ呼ばれる。
+- 基本ユーザーには検出信頼度、角度閾値、model path を表示しない。`background_mode`のみ、幾何・距離計算に影響しない表示専用設定として常時表示する。
+- 設定モデルは immutable。`MetricConfig`は凍結bundleそのものであり、実行時に導出・差し替えを行わない。
 
 ## 16. リポジトリ構成
 
@@ -963,11 +991,13 @@ face-symmetry-lab/
 │   │   ├── models.py
 │   │   ├── landmarks.py
 │   │   ├── geometry.py
-│   │   └── symmetry.py
+│   │   ├── symmetry.py
+│   │   └── symmetrization.py
 │   ├── application/
 │   │   ├── ports.py
 │   │   ├── analyzer.py
 │   │   ├── state_machine.py
+│   │   ├── symmetrization.py
 │   │   └── session.py
 │   ├── adapters/
 │   │   ├── inference/mediapipe_landmarker.py
@@ -1164,12 +1194,14 @@ uv sync --frozen
 
 ### 21.2 Domain テスト
 
-- 合成完全対称点群が許容差内で 100 になる。
-- 片側の口点だけを段階的にずらすと、mouth が単調低下し、他部位への影響が規定範囲内である。
+- 合成完全対称点群が許容差内で部位別・全体とも距離 0 になる。
+- 片側の口点だけを段階的にずらすと、mouth の距離が単調増加し、他部位の距離が変化しない。全体距離も単調増加する。
+- 全体距離が全ペアプールの RMS と一致し、部位別距離の**等重み**平均とは一致しないことを確認する（旧 `Σ w_p·score_p` の不在を証明する）。
 - 平行移動、roll、一様 scale、鏡映で結果が許容差内に保たれる。
 - 左右対応 map に重複、自己対応、範囲外 index がない。
 - midline を動かした合成点群で、TLS が本来の非対称を過度に吸収しないことを確認する。
-- zero eye distance、欠損、NaN/Inf、極端座標、負の係数、不正 weight を拒否する。
+- zero eye distance、欠損、NaN/Inf、極端座標、不正な対応 map を拒否する。
+- 対称化点群がペアの中点・正中線への射影と一致し、対応未定義点が実座標のまま残る。正規化の逆変換が往復で元座標へ戻る。
 - OS をまたぐ数値比較は bit 完全一致ではなく `pytest.approx` と事前定義した `atol` / `rtol` を用いる。
 
 ### 21.3 状態・並行性テスト
@@ -1241,15 +1273,15 @@ uv sync --frozen
 
 | M | 内容 | Exit criteria |
 |---|---|---|
-| M0 | Compatibility & metric spike | 3 OS lock、model hash、OpenCV 1 provider、age/gender IR parity、pose 規約、metric 係数案、正式対応環境を確認 |
-| M1 | Static core | Image入力、18〜75歳の年齢・性別、補正後の肌表面参考値、品質判定、4部位＋全体、schema、unit/property testが完成 |
+| M0 | Compatibility & metric spike | 3 OS lock、model hash、OpenCV 1 provider、age/gender IR parity、pose 規約、metric 定義、正式対応環境を確認 |
+| M1 | Static core | Image入力、18〜75歳の年齢・性別、補正後の肌表面参考値、品質判定、4部位＋全体の距離、対称化ビジュアライゼーション、schema、unit/property testが完成 |
 | M2 | Realtime | WebRTC、session runtime、年齢・性別の独立worker、状態機械、overlay、Stop/cleanup、E2Eが完成 |
 | M3 | Product UI | 初回フロー、responsive layout、trend、settings、export、About、A11y が完成 |
 | M4 | Release hardening | offline、security、3 OS、performance、soak、license/SBOM、user test が合格 |
 | M5 | P1 quality | 照度・ぼけ gate、session summary、3D 正規化評価、日本語／英語 |
 | M6 | Research extension | 正面分類器、年齢・性別の別architecture比較、slice改善 |
 
-M0 の完了前に UI 本実装へ進まない。特に感度係数が未校正のまま 0〜100 を製品表示しない。
+M0 の完了前に UI 本実装へ進まない。特に、較正されていない自由パラメータを含む合成値を製品表示しない（§8.6 でスコア変換を廃止し、この条件は指標側では満たされた）。
 
 ## 24. リスク登録簿
 
@@ -1274,7 +1306,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 
 | ID | 決定事項 | 期限 | 完了条件 |
 |---|---|---|---|
-| OD-01 | 部位別感度係数と calibration set | M0 | 分布、感度、再撮影差を評価し `symmetry-2d-v1.json` を凍結 |
+| ~~OD-01~~ | ~~部位別感度係数と calibration set~~ | — | **解消**。§8.6 で感度係数 `k_p` と部位重み `w_p` を廃止し、較正対象の自由パラメータが無くなった（`metric_version` を `symmetry-2d/2.0.0` へ更新）。距離分布そのものの参考統計は OD-08 と同じく将来課題として残るが、リリース条件ではない |
 | OD-02 | R1 / R2 の実機型番 | M0 | 調達可能な端末を固定し benchmark 手順へ記録 |
 | OD-03 | MediaPipe asset の version / license / hash | M0 | manifest、NOTICE、取得元を review（`face_landmarker`、`selfie_segmenter`の両方が対象） |
 | OD-04 | pose 行列変換と符号 | M0 | ADR、合成回転 contract test、同意済み実写の単軸 yaw / pitch / roll 確認結果が承認済み |
@@ -1291,10 +1323,11 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 | 初見で結果へ到達 | FR-001〜010, UX §4〜6 | AC-FLOW-01, user task test |
 | 誤帰属を防ぐ | FR-008, §6, §8.8 | AC-FACE-01, AC-SESSION-01 |
 | 指標を再現できる | FR-011, FR-020, FR-025, §8, §9 | AC-SCORE-01〜04, AC-APPEARANCE-01, AC-EXPORT-01 |
+| 左右差を形として示す（価値判断を伴わない） | FR-034, §8.6.2, §14.3g | AC-SYMM-01 |
 | 年齢・性別モデルをアプリへ接続 | FR-022〜024, §10.8, NFR-021 | AC-AGE-01, AC-AGE-02 |
 | リアルタイムで安定 | FR-012〜016, FR-026, NFR-001〜006 | AC-PERF-01, AC-SOAK-01, AC-ZOOM-01 |
 | 表示調整はスコアへ混入しない | FR-027, FR-028, FR-029 | AC-DISPLAY-01, AC-AUTOTUNE-01 |
-| Advanced設定の自動調整はcadence/感度の境界を守る | FR-030 | AC-AUTOTUNE-02 |
+| Advanced設定の自動調整はcadenceの境界を守り、採点へ触れない | FR-030 | AC-AUTOTUNE-02 |
 | ライブ中に位置を誘導し、映像は素通しで表示する | FR-013, FR-031, FR-032 | AC-GUIDE-01, AC-LAYOUT-01 |
 | 安全な入力 | FR-006, FR-007, NFR-011 | AC-INPUT-01 |
 | 中立でアクセス可能 | UX §5, §10.7, NFR-016 | AC-A11Y-01, copy review |
@@ -1305,7 +1338,7 @@ P/I は Probability / Impact の Low, Medium, High。各 Owner は実チーム�
 MVP は次をすべて満たしたときのみ Done とする。
 
 - P0 の FR / NFR / AC がすべて合格している。
-- OD-01〜08 が解決され、ADR または設定 bundle に反映されている。
+- OD-02〜08 が解決され、ADR または設定 bundle に反映されている（OD-01 は §8.6 のスコア変換廃止により解消）。
 - R1 / R2 で性能・soak、3 OS で lock・model smoke が合格している。
 - 外向き通信 0、loopback 限定、画像非永続化、ログ非保持を検証している。
 - model / metric / schema / config / app / lock の版を結果から追跡できる。

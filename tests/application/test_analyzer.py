@@ -4,7 +4,7 @@ import pytest
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config, with_tunables
+from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
 from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
 
@@ -62,9 +62,6 @@ def _config():
             "nose": PartMap(pairs=((13, 14), (15, 16), (17, 18)), min_pairs=3),
             "mouth": PartMap(pairs=((19, 20), (21, 22), (23, 24)), min_pairs=3),
         },
-        sensitivity=dict.fromkeys(PART_NAMES, 30.0),
-        weights=dict.fromkeys(PART_NAMES, 0.25),
-        sensitivity_frozen=False,
     )
 
 
@@ -104,33 +101,33 @@ def _drive_to_ok(
     return outcome
 
 
-def test_no_score_is_produced_before_the_gate_opens() -> None:
+def test_no_distance_is_produced_before_the_gate_opens() -> None:
     analyzer = _analyzer()
 
     outcome = analyzer.analyze(_frame(), at=0.0)
 
     assert outcome.state.status is Status.HOLD
     assert outcome.symmetry is None
-    assert outcome.overall_raw is None
-    assert outcome.overall_smooth is None
+    assert outcome.overall_distance_raw is None
+    assert outcome.overall_distance_smooth is None
 
 
-def test_a_symmetric_face_scores_once_the_gate_opens() -> None:
+def test_a_symmetric_face_measures_zero_distance_once_the_gate_opens() -> None:
     outcome = _drive_to_ok(_analyzer())
 
     assert outcome.state.status is Status.OK
-    assert outcome.overall_raw == pytest.approx(100.0, abs=1e-6)
+    assert outcome.overall_distance_raw == pytest.approx(0.0, abs=1e-9)
     assert outcome.symmetry is not None
-    assert outcome.symmetry.part("mouth") == pytest.approx(100.0, abs=1e-6)
+    assert outcome.symmetry.distance("mouth") == pytest.approx(0.0, abs=1e-9)
 
 
-def test_the_smoothed_value_starts_at_the_first_raw_score() -> None:
+def test_the_smoothed_value_starts_at_the_first_raw_distance() -> None:
     outcome = _drive_to_ok(_analyzer())
 
-    assert outcome.overall_smooth == pytest.approx(outcome.overall_raw, abs=1e-6)
+    assert outcome.overall_distance_smooth == pytest.approx(outcome.overall_distance_raw, abs=1e-6)
 
 
-def test_the_smoothed_value_lags_a_change_in_the_raw_score() -> None:
+def test_the_smoothed_value_lags_a_change_in_the_raw_distance() -> None:
     analyzer = _analyzer()
     _drive_to_ok(analyzer)
 
@@ -138,12 +135,14 @@ def test_the_smoothed_value_lags_a_change_in_the_raw_score() -> None:
     skewed[19] = (0.20, SYMMETRIC_POINTS[19][1])
     outcome = analyzer.analyze(_frame(tuple(skewed), frame_id=6), at=0.65)
 
-    assert outcome.overall_raw is not None
-    assert outcome.overall_smooth is not None
-    assert outcome.overall_raw < outcome.overall_smooth < 100.0
+    # The raw distance jumped up; the EMA still trails behind it, above the
+    # symmetric face's 0 it started from.
+    assert outcome.overall_distance_raw is not None
+    assert outcome.overall_distance_smooth is not None
+    assert outcome.overall_distance_raw > outcome.overall_distance_smooth > 0.0
 
 
-def test_an_off_axis_frame_stops_producing_scores() -> None:
+def test_an_off_axis_frame_stops_producing_distances() -> None:
     analyzer = _analyzer()
     _drive_to_ok(analyzer)
 
@@ -151,10 +150,10 @@ def test_an_off_axis_frame_stops_producing_scores() -> None:
 
     assert outcome.state.status is Status.HOLD
     assert ReasonCode.OFF_AXIS_YAW in outcome.state.reason_codes
-    assert outcome.overall_raw is None
+    assert outcome.overall_distance_raw is None
 
 
-def test_multi_face_frames_never_score() -> None:
+def test_multi_face_frames_never_measure() -> None:
     analyzer = _analyzer()
     _drive_to_ok(analyzer)
 
@@ -175,10 +174,12 @@ def test_a_prolonged_face_loss_resets_the_smoothing() -> None:
         recovered = analyzer.analyze(_frame(frame_id=index), at=2.0 + index * 0.1)
 
     assert recovered is not None
-    assert recovered.overall_smooth == pytest.approx(recovered.overall_raw, abs=1e-6)
+    assert recovered.overall_distance_smooth == pytest.approx(
+        recovered.overall_distance_raw, abs=1e-6
+    )
 
 
-def test_degenerate_landmarks_become_an_error_rather_than_a_score() -> None:
+def test_degenerate_landmarks_become_an_error_rather_than_a_distance() -> None:
     analyzer = _analyzer()
     _drive_to_ok(analyzer)
 
@@ -189,7 +190,7 @@ def test_degenerate_landmarks_become_an_error_rather_than_a_score() -> None:
 
     assert outcome.state.status is Status.ERROR
     assert outcome.symmetry is None
-    assert outcome.overall_smooth is None
+    assert outcome.overall_distance_smooth is None
 
 
 def test_reset_clears_the_gate_and_the_smoothing() -> None:
@@ -200,7 +201,7 @@ def test_reset_clears_the_gate_and_the_smoothing() -> None:
     outcome = analyzer.analyze(_frame(frame_id=6), at=1.0)
 
     assert outcome.state.status is Status.HOLD
-    assert outcome.overall_smooth is None
+    assert outcome.overall_distance_smooth is None
 
 
 def test_the_outcome_carries_the_versions_needed_to_reproduce_it() -> None:
@@ -208,7 +209,6 @@ def test_the_outcome_carries_the_versions_needed_to_reproduce_it() -> None:
 
     assert outcome.metric_version == "symmetry-2d/test"
     assert outcome.landmark_map_version == "test/1.0.0"
-    assert outcome.sensitivity_frozen is False
 
 
 def test_the_outcome_reports_pose_and_face_area() -> None:
@@ -238,27 +238,13 @@ def test_update_swaps_thresholds_and_resets_the_gate_and_smoothing() -> None:
 
     assert analyzer.thresholds.valid_frames_to_ok == 1
     assert outcome.state.status is Status.OK  # new threshold applies immediately
-    assert outcome.overall_smooth == outcome.overall_raw  # smoothing history was reset
+    assert (
+        outcome.overall_distance_smooth == outcome.overall_distance_raw
+    )  # smoothing history was reset
 
 
-def test_update_can_swap_the_metric_config_too() -> None:
-    """§15.2: an edited part_weights/sensitivity bundle must reach scoring."""
-    analyzer = _analyzer()
-    _drive_to_ok(analyzer)
-    tuned = with_tunables(
-        analyzer.config,
-        weights={"contour": 0.1, "eyes": 0.5, "nose": 0.3, "mouth": 0.1},
-        sensitivity={"contour": 10.0, "eyes": 20.0, "nose": 30.0, "mouth": 40.0},
-    )
-
-    analyzer.update(thresholds=QualityThresholds(), tau_seconds=0.2, config=tuned)
-    outcome = analyzer.analyze(_frame(frame_id=99), at=100.0)
-
-    assert analyzer.config is tuned
-    assert outcome.sensitivity_frozen is False
-
-
-def test_update_without_a_config_keeps_the_existing_one() -> None:
+def test_update_cannot_swap_the_pinned_metric_bundle() -> None:
+    """§8.6/§15.2: the bundle has no tunable left, so it stays pinned."""
     analyzer = _analyzer()
     original = analyzer.config
 
@@ -295,4 +281,4 @@ def test_skin_surface_reference_is_separate_from_the_geometry_overall() -> None:
     assert changed.skin_quality is not None
     assert changed.skin_quality.score is not None
     assert changed.skin_quality.score < baseline.skin_quality.score
-    assert changed.overall_raw == pytest.approx(baseline.overall_raw, abs=1e-6)
+    assert changed.overall_distance_raw == pytest.approx(baseline.overall_distance_raw, abs=1e-6)

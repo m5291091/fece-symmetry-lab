@@ -1,19 +1,13 @@
 import numpy as np
 import pytest
 
-from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.auto_tune_controller import (
     CADENCE_RETUNE_INTERVAL_SECONDS,
     DISPLAY_RETUNE_INTERVAL_SECONDS,
     MIN_CADENCE_SAMPLES,
-    MIN_SENSITIVITY_SAMPLES,
-    SENSITIVITY_RETUNE_INTERVAL_SECONDS,
     AutoTuneController,
 )
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
-from face_symmetry_lab.domain.models import AnalysisState, Status
-from face_symmetry_lab.domain.symmetry import SymmetryResult
 
 #: Spread out so `face_area_ratio` is a usable non-degenerate fraction.
 SPREAD_POINTS = ((0.4, 0.4), (0.6, 0.4), (0.4, 0.6), (0.6, 0.6))
@@ -35,47 +29,6 @@ def _frame(points: tuple[tuple[float, float], ...] = SPREAD_POINTS):
 
 def _flat_rgb(value: int) -> np.ndarray:
     return np.full((8, 8, 3), value, dtype=np.uint8)
-
-
-def _metric_config(sensitivity: float = 30.0):
-    return build_metric_config(
-        metric_version="symmetry/test",
-        landmark_map_version="map/test",
-        landmark_count=16,
-        left_eye_corners=(0, 1),
-        right_eye_corners=(2, 3),
-        midline_indices=(4, 5, 6),
-        parts={
-            "contour": PartMap(pairs=((7, 8),), min_pairs=1),
-            "eyes": PartMap(pairs=((0, 3), (1, 2)), min_pairs=1),
-            "nose": PartMap(pairs=((9, 10),), min_pairs=1),
-            "mouth": PartMap(pairs=((11, 12),), min_pairs=1),
-        },
-        sensitivity=dict.fromkeys(PART_NAMES, sensitivity),
-        weights=dict.fromkeys(PART_NAMES, 0.25),
-        sensitivity_frozen=True,
-    )
-
-
-def _outcome(distances: dict[str, float]) -> AnalysisOutcome:
-    symmetry = SymmetryResult(
-        scores=dict.fromkeys(PART_NAMES, 90.0),
-        distances=dict(distances),
-        overall=90.0,
-        metric_version="symmetry/test",
-        landmark_map_version="map/test",
-    )
-    return AnalysisOutcome(
-        frame_id=1,
-        state=AnalysisState(status=Status.OK),
-        symmetry=symmetry,
-        overall_smooth=90.0,
-        pose=None,
-        face_area_ratio=0.04,
-        metric_version="symmetry/test",
-        landmark_map_version="map/test",
-        sensitivity_frozen=True,
-    )
 
 
 def test_a_disabled_controller_recommends_nothing_at_all() -> None:
@@ -162,49 +115,22 @@ def test_cadence_returns_none_when_the_recommendation_already_holds() -> None:
     assert recommended is None
 
 
-def test_sensitivity_needs_enough_samples_and_a_real_change() -> None:
+def test_the_controller_exposes_no_scoring_affecting_recommendation() -> None:
+    """§8.6/AC-AUTOTUNE-02: nothing here may reach a measured value.
+
+    The metric bundle lost its sensitivity coefficients, so the controller
+    must not regrow a path that swaps a `MetricConfig` and resets
+    config_revision/segment/EMA behind the user's back.
+    """
     controller = _controller()
-    config = _metric_config()
-    steady = dict.fromkeys(PART_NAMES, 0.1)
-    at = 0.0
-    recommended = None
 
-    for _ in range(MIN_SENSITIVITY_SAMPLES + 2):
-        recommended = controller.sensitivity_tuning(_outcome(steady), at=at, config=config)
-        at += SENSITIVITY_RETUNE_INTERVAL_SECONDS
-
-    # A perfectly steady distance has no jitter to damp, so nothing moves.
-    assert recommended is None
+    assert not hasattr(controller, "sensitivity_tuning")
 
 
-def test_a_jittery_part_lowers_its_sensitivity_and_leaves_the_others_alone() -> None:
-    controller = _controller()
-    config = _metric_config(sensitivity=30.0)
-    at = 0.0
-    recommended = None
-
-    for index in range(MIN_SENSITIVITY_SAMPLES + 2):
-        distances = dict.fromkeys(PART_NAMES, 0.1)
-        distances["contour"] = 0.05 if index % 2 == 0 else 0.35
-        recommended = controller.sensitivity_tuning(_outcome(distances), at=at, config=config)
-        at += SENSITIVITY_RETUNE_INTERVAL_SECONDS
-
-    assert recommended is not None
-    assert recommended["contour"] < 30.0
-    assert recommended["eyes"] == pytest.approx(30.0)
-
-
-def test_a_disabled_controller_never_recommends_cadence_or_sensitivity() -> None:
+def test_a_disabled_controller_never_recommends_cadence() -> None:
     controller = _controller(enabled=False)
-    config = _metric_config()
     at = 0.0
 
-    for _ in range(MIN_CADENCE_SAMPLES + MIN_SENSITIVITY_SAMPLES + 2):
+    for _ in range(MIN_CADENCE_SAMPLES + 2):
         assert controller.cadence_tuning(300.0, at=at, current_interval_ms=125) is None
-        assert (
-            controller.sensitivity_tuning(
-                _outcome(dict.fromkeys(PART_NAMES, 0.1)), at=at, config=config
-            )
-            is None
-        )
-        at += SENSITIVITY_RETUNE_INTERVAL_SECONDS
+        at += CADENCE_RETUNE_INTERVAL_SECONDS
