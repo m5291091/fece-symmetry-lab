@@ -17,7 +17,7 @@ from face_symmetry_lab.adapters.inference.opencv_demographic_estimator import (
     OpenCvDemographicEstimator,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
-from face_symmetry_lab.adapters.io.model_store import file_sha256
+from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, file_sha256
 from face_symmetry_lab.application.image_input import (
     ImageInputError,
     decode_uploaded_image,
@@ -49,9 +49,9 @@ from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
+    render_tracking_status,
 )
 
-APP_ROOT = Path(__file__).resolve().parents[3]
 ESTIMATOR_STATE_KEY = "demographic_estimator"
 ESTIMATOR_PATH_KEY = "demographic_estimator_paths"
 RESULT_STATE_KEY = "demographic_estimate"
@@ -145,7 +145,7 @@ def _session_image_recorder(
             landmark_model_version=landmarker.model_version,
             landmark_model_sha256=landmarker.model_sha256,
             app_version=__version__,
-            lock_digest=file_sha256(APP_ROOT / "uv.lock"),
+            lock_digest=file_sha256(LOCK_PATH),
         )
         st.session_state[IMAGE_RECORDER_STATE_KEY] = recorder
     return recorder
@@ -323,23 +323,10 @@ def _render_image_section() -> None:
             st.image(analysis.landmarks.preview, caption="検出したランドマーク", width="stretch")
 
     with status_column:
-        render_headline_metrics(
-            overall=overall,
-            gender=None if estimate is None else estimate.gender,
-            age_years=None if estimate is None else estimate.estimated_age_years,
-        )
+        render_headline_metrics(overall=overall, estimate=estimate)
         st.divider()
         if analysis is not None:
-            status = analysis.landmarks.frame.status
-            message = _IMAGE_STATUS_MESSAGES[status]
-            if status is TrackingStatus.ERROR:
-                st.error(message)
-            elif status is TrackingStatus.MULTI_FACE:
-                st.warning(message)
-            elif status is TrackingStatus.SINGLE_FACE:
-                st.success(message)
-            else:
-                st.info(message)
+            render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
         _render_image_demographic_controls(age_input, recorder=recorder)
 
     # §5.1, AC-LAYOUT-01: detail results always render full width below the

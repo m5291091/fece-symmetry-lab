@@ -35,7 +35,7 @@ from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
     TrackingZoomLandmarker,
 )
 from face_symmetry_lab.adapters.io.metric_config import load_metric_config
-from face_symmetry_lab.adapters.io.model_store import InstallStatus, file_sha256
+from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, InstallStatus, file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
@@ -63,6 +63,7 @@ from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
+    render_tracking_status,
 )
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
@@ -95,7 +96,6 @@ PIPELINE_STATE_KEY = "landmark_pipeline"
 
 #: §11 NFR-003: the result panel refreshes at 4-5 Hz, independent of video fps.
 STATUS_REFRESH_INTERVAL = "200ms"
-LOCK_PATH = Path(__file__).resolve().parents[3] / "uv.lock"
 
 _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
     TrackingStatus.NO_FACE: "顔が見つかりません。カメラの正面に入ってください。",
@@ -238,22 +238,9 @@ def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
         overall = snapshot.analysis.overall_smooth if snapshot.analysis is not None else None
         if overall is None and symmetry is not None:
             overall = symmetry.overall
-        estimate = snapshot.demographic_estimate
-        render_headline_metrics(
-            overall=overall,
-            gender=None if estimate is None else estimate.gender,
-            age_years=None if estimate is None else estimate.estimated_age_years,
-        )
+        render_headline_metrics(overall=overall, estimate=snapshot.demographic_estimate)
         st.divider()
-        message = _STATUS_MESSAGES[snapshot.status]
-        if snapshot.status is TrackingStatus.ERROR:
-            st.error(message)
-        elif snapshot.status is TrackingStatus.MULTI_FACE:
-            st.warning(message)
-        elif snapshot.status is TrackingStatus.SINGLE_FACE:
-            st.success(message)
-        else:
-            st.info(message)
+        render_tracking_status(snapshot.status, _STATUS_MESSAGES)
 
         if snapshot.analysis is not None:
             guidance = guidance_message(snapshot.analysis.state)
@@ -361,26 +348,14 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
     )
 
 
-def render_camera_section() -> None:
-    """Render the realtime landmark preview. Call only after consent."""
-    st.subheader("リアルタイム ランドマーク表示")
-    st.caption(
-        "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
-        "映像にはランドマークと中心線だけを重ね、全体スコア・参考性別・参考年齢は映像のすぐ隣に大きく表示します。"
-        "部位別・姿勢・肌表面参考値などの詳しい数値は、その下に画面幅いっぱいで表示します。"
-    )
+def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
+    """§15.1's display-only preferences, pushed straight onto the pipeline.
 
-    model_path = resolve_ready_landmarker()
-    if model_path is None:
-        return
-
-    try:
-        pipeline = _session_pipeline(model_path)
-    except (LandmarkDetectionError, MetricConfigError) as error:
-        st.error(str(error))
-        return
-
+    None of these change a score (FR-027, FR-028): the midline and background
+    are drawn after analysis, and the age/gender toggle only gates a panel
+    that is already independent of the symmetry side (FR-024). Reading them
+    here and writing them through in one place keeps that claim checkable.
+    """
     midline_column, demographic_column = st.columns(2)
     with midline_column:
         show_midline = st.toggle(
@@ -425,23 +400,52 @@ def render_camera_section() -> None:
     with status_column:
         _render_auto_tune_status(pipeline)
 
-    # FR-032: display-only placement preset ("movable" via preset choice, not
-    # mouse drag — see §14.3e). Does not change scoring.
+
+def _select_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
+    """Ask for the FR-032 placement preset and return (preview, headline).
+
+    Display-only, and "movable" by preset choice rather than mouse drag
+    (§14.3e). A ``None`` headline column means "stack it below the video",
+    which is the one preset that needs no column of its own. §5.1's 7:5
+    ratio holds whichever side the headline lands on.
+    """
     panel_layout = st.radio(
         "「ライブ解析」パネルの配置",
         options=_PANEL_LAYOUT_OPTIONS,
         key="camera_panel_layout",
         horizontal=True,
     )
-
-    result_column: DeltaGenerator | None
     if panel_layout == _PANEL_LAYOUT_BELOW:
-        preview_column = st.container()
-        result_column = None
-    elif panel_layout == _PANEL_LAYOUT_LEFT:
+        return st.container(), None
+    if panel_layout == _PANEL_LAYOUT_LEFT:
         result_column, preview_column = st.columns([5, 7], gap="large")
-    else:
-        preview_column, result_column = st.columns([7, 5], gap="large")
+        return preview_column, result_column
+    preview_column, result_column = st.columns([7, 5], gap="large")
+    return preview_column, result_column
+
+
+def render_camera_section() -> None:
+    """Render the realtime landmark preview. Call only after consent."""
+    st.subheader("リアルタイム ランドマーク表示")
+    st.caption(
+        "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
+        "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
+        "映像にはランドマークと中心線だけを重ね、全体スコア・参考性別・参考年齢は映像のすぐ隣に大きく表示します。"
+        "部位別・姿勢・肌表面参考値などの詳しい数値は、その下に画面幅いっぱいで表示します。"
+    )
+
+    model_path = resolve_ready_landmarker()
+    if model_path is None:
+        return
+
+    try:
+        pipeline = _session_pipeline(model_path)
+    except (LandmarkDetectionError, MetricConfigError) as error:
+        st.error(str(error))
+        return
+
+    _render_display_controls(pipeline)
+    preview_column, result_column = _select_panel_layout()
 
     with preview_column:
         context = webrtc_streamer(

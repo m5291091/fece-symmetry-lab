@@ -7,13 +7,16 @@ judgement is attached to a high or low number.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Final
 
 import streamlit as st
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import PART_NAMES
-from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, ReasonCode, Status
+from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, Status
+from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
 SCORE_HEADING = "左右差スコア（実験値）"
 
@@ -22,20 +25,6 @@ _PART_LABELS: Final[dict[str, str]] = {
     "eyes": "目",
     "nose": "鼻",
     "mouth": "口",
-}
-
-#: §5.3 requires actionable guidance instead of raw reason codes.
-_REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
-    ReasonCode.NO_FACE: "顔がフレームに入るようにしてください。",
-    ReasonCode.MULTIPLE_FACES: "1 名だけが写るようにしてください。",
-    ReasonCode.OFF_AXIS_YAW: "顔をカメラの正面へ向けてください。",
-    ReasonCode.OFF_AXIS_PITCH: "顎を少し上げる、または下げてください。",
-    ReasonCode.OFF_AXIS_ROLL: "頭を水平に戻してください。",
-    ReasonCode.TOO_CLOSE: "カメラから少し離れてください。",
-    ReasonCode.TOO_FAR: "カメラに少し近づいてください。",
-    ReasonCode.UNSTABLE: "そのまま静止してください。",
-    ReasonCode.LOW_CONFIDENCE: "明るさと顔の位置を確認してください。",
-    ReasonCode.LOW_QUALITY: "この画像では計算できませんでした。",
 }
 
 GENDER_LABELS: Final[dict[GenderLabel, str]] = {
@@ -53,12 +42,40 @@ _STATUS_HEADLINE: Final[dict[Status, str]] = {
 
 
 def render_guidance(outcome: AnalysisOutcome) -> None:
-    """Show what to fix before a score can be produced (Guide before score)."""
+    """Show what to fix before a score can be produced (Guide before score).
+
+    §5.3's actionable wording comes from `ui.guidance.REASON_GUIDANCE`, the
+    same §6.3 table the live banner reads, so the detail panel and the banner
+    never describe one condition two ways — and a reason code added to the
+    quality gate cannot silently render as nothing here.
+    """
     st.write(_STATUS_HEADLINE.get(outcome.state.status, ""))
     for code in outcome.state.reason_codes:
-        guidance = _REASON_GUIDANCE.get(code)
+        guidance = REASON_GUIDANCE.get(code)
         if guidance:
             st.markdown(f"- {guidance}")
+
+
+def render_tracking_status(
+    status: TrackingStatus,
+    messages: Mapping[TrackingStatus, str],
+) -> None:
+    """Show one tracking message at the severity §5.2 assigns to its state.
+
+    Camera and Image word the same states differently (a still photo cannot
+    be asked to "hold still"), so the caller owns ``messages`` — but the
+    colour each state maps to is a product rule, not a per-section choice,
+    and lives here so the two sections cannot drift apart.
+    """
+    message = messages[status]
+    if status is TrackingStatus.ERROR:
+        st.error(message)
+    elif status is TrackingStatus.MULTI_FACE:
+        st.warning(message)
+    elif status is TrackingStatus.SINGLE_FACE:
+        st.success(message)
+    else:
+        st.info(message)
 
 
 def render_pose(outcome: AnalysisOutcome) -> None:
@@ -79,18 +96,26 @@ def render_pose(outcome: AnalysisOutcome) -> None:
 def render_headline_metrics(
     *,
     overall: float | None,
-    gender: GenderLabel | None,
-    age_years: float | None,
+    estimate: DemographicEstimate | None,
 ) -> None:
     """FR-013/FR-014: total score, gender and age, right beside the media.
 
     Shared by Camera and Image so both use the same headline layout (§5.1).
-    Missing values show `—` rather than a stale or zeroed number (NFR-013).
+    ``estimate`` is taken whole rather than as pre-split gender/age fields:
+    §10.8 keeps the two demographic values one observation, and both call
+    sites had otherwise been unpacking it identically. Missing values show
+    `—` rather than a stale or zeroed number (NFR-013).
     """
     score_column, gender_column, age_column = st.columns(3)
     score_column.metric("全体スコア", "—" if overall is None else f"{overall:.1f}")
-    gender_column.metric("参考性別", "—" if gender is None else GENDER_LABELS[gender])
-    age_column.metric("参考年齢", "—" if age_years is None else f"{age_years:.0f}歳")
+    gender_column.metric(
+        "参考性別",
+        "—" if estimate is None else GENDER_LABELS[estimate.gender],
+    )
+    age_column.metric(
+        "参考年齢",
+        "—" if estimate is None else f"{estimate.estimated_age_years:.0f}歳",
+    )
 
 
 def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:

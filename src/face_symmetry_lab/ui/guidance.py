@@ -1,8 +1,14 @@
-"""Turn a quality-gate reason into one actionable Japanese instruction (FR-031).
+"""Turn a quality-gate reason into one actionable Japanese instruction.
 
-Shown only in the "ライブ解析" side panel: FR-013 keeps the camera video a
-pass-through preview, and Japanese text could not be drawn onto it anyway
-(PIL's default bitmap font carries no CJK glyphs).
+`REASON_GUIDANCE` is §6.3's 既定ガイド column, and the only place the app
+answers "what do we tell the user about this reason code": the live "ライブ
+解析" banner (FR-031) reads the primary reason through `guidance_message`,
+and `ui.scores.render_guidance` walks every blocking reason through the same
+table, so the two can never word the same condition differently.
+
+The live banner is a side panel rather than an overlay: FR-013 keeps the
+camera video a pass-through preview, and Japanese text could not be drawn
+onto it anyway (PIL's default bitmap font carries no CJK glyphs).
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ from face_symmetry_lab.domain.models import AnalysisState, ReasonCode
 #: Every `ReasonCode` maps to one short, actionable instruction. No new
 #: judgement is made here — this only translates a reason the quality gate
 #: (`application.quality.QualityGate`) already computed (§6.2, §6.3).
-_REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
+REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
     ReasonCode.NO_FACE: "顔がカメラに映るようにしてください",
     ReasonCode.MULTIPLE_FACES: "1人だけがカメラに映るようにしてください",
     ReasonCode.POSTURE: "顔を正面に向けてください",
@@ -43,4 +49,4 @@ def guidance_message(state: AnalysisState) -> str | None:
     """
     if state.reason is None:
         return None
-    return _REASON_GUIDANCE.get(state.reason)
+    return REASON_GUIDANCE.get(state.reason)
