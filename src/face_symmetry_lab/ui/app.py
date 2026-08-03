@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from hashlib import sha256
 from pathlib import Path
+from typing import Final
 
 import numpy as np
 import streamlit as st
@@ -48,7 +49,7 @@ from face_symmetry_lab.ui.model_setup import (
     resolve_ready_landmarker,
 )
 from face_symmetry_lab.ui.scores import (
-    DISTANCE_UNIT_CAPTION,
+    DEVIATION_UNIT_CAPTION,
     format_distance,
     render_demographic_estimate,
     render_headline_metrics,
@@ -60,8 +61,30 @@ ESTIMATOR_STATE_KEY = "demographic_estimator"
 ESTIMATOR_PATH_KEY = "demographic_estimator_paths"
 RESULT_STATE_KEY = "demographic_estimate"
 INPUT_MODE_STATE_KEY = "input_mode"
+#: The last *valid* selection. `st.segmented_control` reports `None` when the
+#: active option is clicked again, and §15.1 requires an input to always be
+#: active, so the resolved mode is remembered separately from the widget.
+ACTIVE_INPUT_MODE_KEY = "active_input_mode"
 INPUT_MODE_CAMERA = "Camera"
 INPUT_MODE_IMAGE = "Image"
+
+#: FR-004: label, icon, and what the mode actually does, so the choice can be
+#: read before it is made. Keyed by the same values the session state holds,
+#: so the stored preference survives a wording change.
+_INPUT_MODE_CARDS: Final[dict[str, tuple[str, str, str]]] = {
+    INPUT_MODE_CAMERA: (
+        "Web カメラ",
+        ":material/videocam:",
+        "映像を見ながら、顔の向きや距離をその場で調整できます。"
+        "数値は最大 8 Hz で更新され、映像は端末内のメモリだけで処理されます。",
+    ),
+    INPUT_MODE_IMAGE: (
+        "画像ファイル",
+        ":material/image:",
+        "JPEG / PNG を 1 枚アップロードして分析します。"
+        "10MB・12MP 以下、EXIF の向きを適用し、平滑化のない 1 回きりの結果を表示します。",
+    ),
+}
 IMAGE_LANDMARKER_STATE_KEY = "image_landmarker"
 IMAGE_LANDMARKER_PATH_KEY = "image_landmarker_path"
 IMAGE_RECORDER_STATE_KEY = "image_session_recorder"
@@ -277,7 +300,7 @@ def _render_image_symmetrization(
         f"対称化した点 {view.symmetrized_point_count} 点。"
         "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
     )
-    st.caption(DISTANCE_UNIT_CAPTION)
+    st.caption(DEVIATION_UNIT_CAPTION)
 
 
 def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
@@ -389,6 +412,45 @@ def _render_image_section() -> None:
         _render_image_export(recorder)
 
 
+def _render_input_mode_selector() -> str:
+    """FR-004: pick the input, with each option explained before choosing.
+
+    `st.segmented_control` allows deselecting the active option, which would
+    leave the page with no input at all; §15.1 requires one to always be
+    active, so a `None` reading falls back to the previous mode rather than
+    rendering an empty screen. Selection stays a native widget so keyboard
+    operation is unchanged (AC-A11Y-01).
+    """
+    st.markdown("#### 入力方法")
+    # Read from a key of our own, not the widget's: once the widget exists,
+    # its key holds `None` for "deselected", which is exactly the value the
+    # fallback has to survive.
+    previous = st.session_state.get(ACTIVE_INPUT_MODE_KEY, INPUT_MODE_CAMERA)
+    selected = st.segmented_control(
+        "入力方法",
+        options=list(_INPUT_MODE_CARDS),
+        format_func=lambda mode: _INPUT_MODE_CARDS[mode][0],
+        key=INPUT_MODE_STATE_KEY,
+        on_change=_switch_input_mode,
+        label_visibility="collapsed",
+    )
+    mode = selected if selected in _INPUT_MODE_CARDS else previous
+    st.session_state[ACTIVE_INPUT_MODE_KEY] = mode
+
+    for column, (name, (label, icon, description)) in zip(
+        st.columns(len(_INPUT_MODE_CARDS)),
+        _INPUT_MODE_CARDS.items(),
+        strict=True,
+    ):
+        with column, st.container(border=True):
+            heading, badge = st.columns([3, 1], vertical_alignment="center")
+            heading.markdown(f"{icon} **{label}**")
+            if name == mode:
+                badge.badge("選択中", color="blue")
+            st.caption(description)
+    return mode
+
+
 def _switch_input_mode() -> None:
     """FR-004: drop the previous input's runtime state when the mode changes."""
     release_session_pipeline()
@@ -418,7 +480,7 @@ def _render_about_footer() -> None:
         "左右差は両眼の間隔に対する対応点のずれとして表示します（0〜100 のスコアではありません）。"
         "数値は、同一人物・同一環境での相対変化だけを参照してください。"
     )
-    st.page_link(ABOUT_PAGE, label="スコアの算出方法・制約について詳しく見る", icon="📘")
+    st.page_link(ABOUT_PAGE, label="対称度の算出方法・制約について詳しく見る", icon="📘")
 
 
 def render_app() -> None:
@@ -452,13 +514,7 @@ def render_app() -> None:
         st.info("3 項目を確認すると、カメラまたは画像を選択できます。")
         return
 
-    input_mode = st.radio(
-        "入力方法",
-        options=(INPUT_MODE_CAMERA, INPUT_MODE_IMAGE),
-        horizontal=True,
-        key=INPUT_MODE_STATE_KEY,
-        on_change=_switch_input_mode,
-    )
+    input_mode = _render_input_mode_selector()
     st.divider()
 
     if input_mode == INPUT_MODE_CAMERA:

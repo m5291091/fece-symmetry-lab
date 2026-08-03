@@ -44,10 +44,10 @@
 | `tests/model/test_onnx_runtime_agreement.py` | OpenVINO・cv2.dnn・onnxruntimeの三者比較で変換recipeのbugを切り分け（OD-07 due diligence、openvino／onnxruntime未導入時は skip） | FR-002, FR-022〜024, OD-07, §21.1 |
 | `tests/model/test_real_segmenter.py` | 実asset由来のImage Segmenter load・出力shape/有限値smoke、domain合成との結合（未配置時は skip） | FR-002, FR-027, §14.3b, §21.1 |
 | `tests/ui/test_about_page.py` | About ページが例外なく描画され、算出方法・禁止用途の見出しを含むこと（AppTest） | §4.1, FR-014, §10.7 |
-| `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition | FR-001, FR-022, AC-FLOW-01, AC-A11Y-01 |
-| `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、frame callbackの描画契約（幾何のみ描画／描くものが無ければ元frameをそのまま返し再encodeしない／解析はsnapshotへ届く／背景置換時のpts保持）、対称化キャプチャUI（arm・1回だけ消費・失敗の明示・クリアで保持破棄・価値判断語を使わない文言） | FR-005, FR-013, FR-034, NFR-006, NFR-009, AC-PRIV-02, AC-LAYOUT-01, AC-SYMM-01 |
+| `tests/ui/test_app.py` | 年齢・性別モデル設定、dark theme、UI composition、入力方法選択（両モードの説明提示・既定Camera・選択解除時に直前のモードを維持・切替時の runtime 解放）、Image側対称化パネルの失敗表示と中立文言 | FR-001, FR-004, FR-022, FR-034, AC-FLOW-01, AC-A11Y-01 |
+| `tests/ui/test_camera.py` | WebRTC 設定（ICE なし・映像のみ）、frame callbackの描画契約（幾何のみ描画／描くものが無ければ元frameをそのまま返し再encodeしない／解析はsnapshotへ届く／背景置換時のpts保持）、対称化キャプチャUI（arm・1回だけ消費・失敗の明示・クリアで保持破棄・価値判断語を使わない文言）、レイアウト（映像がタブより先・表示設定を映像より上に置かない・配置presetの読み書き分離） | FR-005, FR-013, FR-032, FR-034, NFR-006, NFR-009, §5.1, AC-PRIV-02, AC-LAYOUT-01, AC-SYMM-01 |
 | `tests/ui/test_guidance.py` | 位置誘導メッセージの全ReasonCode網羅と、品質ゲート充足時にNoneを返すこと | FR-031, AC-GUIDE-01 |
-| `tests/ui/test_scores.py` | Camera・Image共用の結果表示（追跡状態ごとの severity 割当、欠測時の `—` 表示、距離の百分率整形、詳細パネルが共通guidance表から理由を文言化すること） | FR-013, FR-014, NFR-013, §5.2, §5.3, §6.3, AC-LAYOUT-01 |
+| `tests/ui/test_scores.py` | Camera・Image共用の結果表示（追跡状態ごとの severity 割当、欠測時の `—` 表示、対称度＝`100%-ずれ%`の整形・下限clamp・両者の和が100%、見出しがずれを併記すること、中立文言、詳細パネルが共通guidance表から理由を文言化すること） | FR-013, FR-014, NFR-013, §5.2, §5.3, §6.3, §8.6.3, AC-LAYOUT-01, AC-DISPLAY-02 |
 | `tests/ui/test_model_setup.py` | manifest由来のlandmark・派生ONNX解決、元IR provenance・個別hash検証、状態表示 | FR-001, FR-002, FR-020, FR-024 |
 | `tests/test_cli.py` | localhost 限定の Streamlit 起動 command | NFR-009, AC-SEC-01 |
 | `tests/repository/test_generate_structure.py` | 安全で bounded な `STRUCTURE.md` 生成 | 開発効率・リポジトリ規約 |

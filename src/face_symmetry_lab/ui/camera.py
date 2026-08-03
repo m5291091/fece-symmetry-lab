@@ -62,7 +62,7 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_status,
 )
 from face_symmetry_lab.ui.scores import (
-    DISTANCE_UNIT_CAPTION,
+    DEVIATION_UNIT_CAPTION,
     format_distance,
     render_demographic_estimate,
     render_headline_metrics,
@@ -85,6 +85,7 @@ _PANEL_LAYOUT_OPTIONS: Final[tuple[str, ...]] = (
     _PANEL_LAYOUT_LEFT,
     _PANEL_LAYOUT_BELOW,
 )
+PANEL_LAYOUT_STATE_KEY = "camera_panel_layout"
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
@@ -278,30 +279,12 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     """Poll the immutable snapshot at 5 Hz for the full-width detail block."""
     snapshot = pipeline.snapshot()
     with st.container(border=True):
-        tracking, points = st.columns(2)
-        tracking.metric("追跡状態", snapshot.status.value)
-        points.metric("ランドマーク点数", snapshot.landmark_count)
-        sampled, busy = st.columns(2)
-        sampled.metric("プレビュー専用フレーム", snapshot.throttled_frames)
-        busy.metric("処理中スキップ", snapshot.dropped_frames)
-        st.caption(
-            f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
-            f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
-        )
-        # §14.3f: a NFR-002 diagnostic breakdown of the total above, so a slow
-        # session can be traced to a stage before considering GPU/deployment
-        # changes. segmentation/scoring only show once that stage has run.
-        breakdown = [f"landmark {snapshot.landmark_ms:.1f} ms"]
-        if snapshot.segmentation_ms > 0.0:
-            breakdown.append(f"背景置換 {snapshot.segmentation_ms:.1f} ms")
-        if snapshot.scoring_ms > 0.0:
-            breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
-        st.caption("内訳: " + " · ".join(breakdown))
-
+        # The measured result leads; the runtime counters below are diagnostics
+        # and were burying it under frame bookkeeping the user cannot act on.
         if snapshot.analysis is not None:
-            st.divider()
-            st.caption("カメラ映像の LAST SAMPLE と同じ直近の解析値です。")
             render_score_details(snapshot.analysis)
+        else:
+            st.info("品質ゲートを満たすと、ここに部位別の数値が表示されます。")
 
         if snapshot.demographic_estimate is not None:
             st.divider()
@@ -311,18 +294,36 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
                 show_distribution=False,
             )
 
+        st.divider()
+        with st.expander("処理の状態（診断用）"):
+            tracking, points = st.columns(2)
+            tracking.metric("追跡状態", snapshot.status.value)
+            points.metric("ランドマーク点数", snapshot.landmark_count)
+            sampled, busy = st.columns(2)
+            sampled.metric("プレビュー専用フレーム", snapshot.throttled_frames)
+            busy.metric("処理中スキップ", snapshot.dropped_frames)
+            st.caption(
+                f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
+                f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
+            )
+            # §14.3f: a NFR-002 diagnostic breakdown of the total above, so a
+            # slow session can be traced to a stage before considering
+            # GPU/deployment changes. segmentation/scoring only show once that
+            # stage has run.
+            breakdown = [f"landmark {snapshot.landmark_ms:.1f} ms"]
+            if snapshot.segmentation_ms > 0.0:
+                breakdown.append(f"背景置換 {snapshot.segmentation_ms:.1f} ms")
+            if snapshot.scoring_ms > 0.0:
+                breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
+            st.caption("内訳: " + " · ".join(breakdown))
+            _render_auto_tune_status(pipeline)
 
-def _render_detail_panel(
-    pipeline: RealtimeLandmarkPipeline,
-    context: WebRtcStreamerContext[Any, Any],
-) -> None:
+
+def _render_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     """部位別・姿勢・肌表面参考値などの詳細結果。配置プリセットに関わらず常に
 
     動画とヘッダー結果の下へ画面幅いっぱいで表示する（FR-032, AC-LAYOUT-01）。
     """
-    if not context.state.playing:
-        return
-    st.markdown("#### 詳細結果")
     _render_detail_fragment(pipeline)
 
 
@@ -400,7 +401,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         f"対称化した点 {view.symmetrized_point_count} 点。"
         "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
     )
-    st.caption(DISTANCE_UNIT_CAPTION)
+    st.caption(DEVIATION_UNIT_CAPTION)
     st.caption("取り込んだ映像はこのブラウザセッションのメモリだけに残り、保存も送信もしません。")
 
 
@@ -492,20 +493,20 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
         _render_auto_tune_status(pipeline)
 
 
-def _select_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
-    """Ask for the FR-032 placement preset and return (preview, headline).
+def _split_for_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
+    """Return (preview, headline) columns for the stored FR-032 preset.
+
+    Reads the preference instead of rendering its widget, because §5.1 puts
+    the video at the very top while the control that changes it lives in the
+    "表示設定" tab below. The widget writes the same session-state key, so a
+    change is picked up on the rerun it triggers.
 
     Display-only, and "movable" by preset choice rather than mouse drag
     (§14.3e). A ``None`` headline column means "stack it below the video",
     which is the one preset that needs no column of its own. §5.1's 7:5
     ratio holds whichever side the headline lands on.
     """
-    panel_layout = st.radio(
-        "「ライブ解析」パネルの配置",
-        options=_PANEL_LAYOUT_OPTIONS,
-        key="camera_panel_layout",
-        horizontal=True,
-    )
+    panel_layout = st.session_state.get(PANEL_LAYOUT_STATE_KEY, _PANEL_LAYOUT_RIGHT)
     if panel_layout == _PANEL_LAYOUT_BELOW:
         return st.container(), None
     if panel_layout == _PANEL_LAYOUT_LEFT:
@@ -515,14 +516,51 @@ def _select_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
     return preview_column, result_column
 
 
+def _render_panel_layout_control() -> None:
+    """The FR-032 preset widget, rendered inside the "表示設定" tab.
+
+    `st.tabs` builds every tab's contents on each run, so this widget exists
+    (and keeps its value) whichever tab is on screen.
+    """
+    st.radio(
+        "「ライブ解析」パネルの配置",
+        options=_PANEL_LAYOUT_OPTIONS,
+        key=PANEL_LAYOUT_STATE_KEY,
+        horizontal=True,
+        help="見出し（対称度・参考性別・参考年齢・状態）の位置だけを変えます。数値は変わりません。",
+    )
+
+
+def _render_session_controls(pipeline: RealtimeLandmarkPipeline) -> None:
+    """Stop/reset controls, kept reachable from the main screen (§5.1)."""
+    st.caption("カメラ映像は映像上の `STOP` で停止します。")
+    controls = st.columns(2)
+    if controls[0].button("結果・履歴・平滑化をリセット", key="reset_analysis"):
+        pipeline.reset_analysis()
+        # `reset_analysis` drops the captured frame; the view derived from it
+        # has to go with it, or the panel would outlive its own segment.
+        st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
+        st.rerun()
+    if controls[1].button("推論を停止してモデルを解放", key="release_landmarker"):
+        release_session_pipeline()
+        st.rerun()
+
+
 def render_camera_section() -> None:
-    """Render the realtime landmark preview. Call only after consent."""
+    """Render the realtime landmark preview. Call only after consent.
+
+    §5.1: the video and its headline come first and stay first. Everything
+    else — settings, detail numbers, symmetrization, export — sits below in
+    tabs, so only one of them occupies height at a time and the preview
+    remains on screen instead of being pushed out of view. Tab switching is
+    display-only: it changes no measured value and does not interrupt the
+    WebRTC stream (AC-LAYOUT-01).
+    """
     st.subheader("リアルタイム ランドマーク表示")
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "プレビューは毎フレーム更新し、ランドマーク推論は最新フレームを最大 8 Hz で抽出します。"
-        "映像にはランドマークと中心線だけを重ね、全体スコア・参考性別・参考年齢は映像のすぐ隣に大きく表示します。"
-        "部位別・姿勢・肌表面参考値などの詳しい数値は、その下に画面幅いっぱいで表示します。"
+        "映像にはランドマークと中心線だけを重ね、全体の対称度・参考性別・参考年齢は"
+        "映像のすぐ隣に大きく表示します。設定と詳しい数値は映像の下のタブにまとめています。"
     )
 
     model_path = resolve_ready_landmarker()
@@ -535,8 +573,7 @@ def render_camera_section() -> None:
         st.error(str(error))
         return
 
-    _render_display_controls(pipeline)
-    preview_column, result_column = _select_panel_layout()
+    preview_column, result_column = _split_for_panel_layout()
 
     with preview_column:
         context = webrtc_streamer(
@@ -554,27 +591,29 @@ def render_camera_section() -> None:
         with result_column:
             _render_headline_panel(pipeline, context)
 
-    # §5.1, AC-LAYOUT-01: detail results always render full width below the
-    # video and headline, regardless of the panel_layout preset above.
-    _render_detail_panel(pipeline, context)
-
     if not context.state.playing:
+        # Settings still belong on screen before starting, but there is no
+        # result, capture, or export to offer yet.
+        with st.expander("表示設定"):
+            _render_display_controls(pipeline)
+            _render_panel_layout_control()
         return
 
-    # FR-034/§14.3g: a still, one-shot view. The live preview above keeps
-    # running at its own cadence while this is on screen.
-    _render_symmetrization_panel(pipeline)
-
-    _render_export_panel(pipeline)
-
-    st.caption("カメラ映像は `STOP` で停止します。")
-    controls = st.columns(2)
-    if controls[0].button("結果・履歴・平滑化をリセット", key="reset_analysis"):
-        pipeline.reset_analysis()
-        # `reset_analysis` drops the captured frame; the view derived from it
-        # has to go with it, or the panel would outlive its own segment.
-        st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
-        st.rerun()
-    if controls[1].button("推論を停止してモデルを解放", key="release_landmarker"):
-        release_session_pipeline()
-        st.rerun()
+    # §5.1, AC-LAYOUT-01: everything below the video is full width and one at
+    # a time, so the preview above never scrolls out of reach.
+    detail_tab, symmetry_tab, settings_tab, export_tab = st.tabs(
+        ["詳細結果", "左右対称との比較", "表示設定", "エクスポート"]
+    )
+    with detail_tab:
+        _render_detail_panel(pipeline)
+    with symmetry_tab:
+        # FR-034/§14.3g: a still, one-shot view. The live preview above keeps
+        # running at its own cadence while this is on screen.
+        _render_symmetrization_panel(pipeline)
+    with settings_tab:
+        _render_display_controls(pipeline)
+        _render_panel_layout_control()
+        st.divider()
+        _render_session_controls(pipeline)
+    with export_tab:
+        _render_export_panel(pipeline)

@@ -4,6 +4,12 @@ from streamlit.testing.v1 import AppTest
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.models import ReasonCode
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
+from face_symmetry_lab.ui.scores import (
+    DISTANCE_UNIT_CAPTION,
+    SCORE_HEADING,
+    format_distance,
+    format_symmetry,
+)
 
 
 def _run(body: str) -> AppTest:
@@ -80,3 +86,71 @@ def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None
     assert not at.exception
     assert REASON_GUIDANCE[ReasonCode.TOO_FAR] in rendered
     assert REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW] in rendered
+
+
+# --- §8.6.3 symmetry-percentage display -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("distance", "expected"),
+    [
+        (0.0, "100.00%"),
+        (0.0215, "97.85%"),
+        (0.5, "50.00%"),
+        (1.0, "0.00%"),
+    ],
+)
+def test_a_distance_is_shown_as_its_complement(distance: float, expected: str) -> None:
+    """§8.6.3: `100% - ずれ%`, with no coefficient anywhere in the transform."""
+    assert format_symmetry(distance) == expected
+
+
+def test_the_symmetry_and_deviation_readings_always_sum_to_one_hundred() -> None:
+    """AC-DISPLAY-02: the two directions are the same measurement."""
+    for distance in (0.0, 0.004, 0.0215, 0.31, 0.999):
+        symmetry = float(format_symmetry(distance).rstrip("%"))
+        deviation = float(format_distance(distance).rstrip("%"))
+        assert symmetry + deviation == pytest.approx(100.0, abs=0.02)
+
+
+def test_a_deviation_beyond_the_interocular_distance_floors_at_zero() -> None:
+    """§8.6.3 clamps the *display* only; `d` itself stays unbounded."""
+    assert format_symmetry(4.0) == "0.00%"
+    assert format_distance(4.0) == "400.00%"
+
+
+def test_a_missing_distance_has_no_symmetry_reading() -> None:
+    """NFR-013: missing must not read as a perfectly symmetric 100%."""
+    assert format_symmetry(None) == "—"
+
+
+def test_the_headline_leads_with_symmetry_and_still_states_the_deviation() -> None:
+    """§5.3: both directions are on screen, so 100% cannot pass as a target."""
+    at = AppTest.from_string(
+        "from face_symmetry_lab.ui.scores import render_headline_metrics\n"
+        "render_headline_metrics(overall=0.0215, estimate=None)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert at.metric[0].label == "全体の対称度"
+    assert at.metric[0].value == "97.85%"
+    captions = " ".join(element.value for element in at.caption)
+    assert "2.15%" in captions
+
+
+def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
+    """§5.2/§5.3: reorienting the number must not turn it into a grade.
+
+    Checked against the strings the user actually reads as a verdict — the
+    heading and the unit caption — rather than the whole module, so an
+    explicit disclaimer ("良し悪しを表しません") cannot fail this.
+    """
+    for forbidden in ("スコア", "得点", "評価", "優秀", "理想", "完璧"):
+        assert forbidden not in SCORE_HEADING
+        assert forbidden not in DISTANCE_UNIT_CAPTION
+
+    # The caption has to keep saying what 100% is, or the reorientation
+    # silently becomes a target the user tries to reach.
+    assert "上限" in DISTANCE_UNIT_CAPTION
+    assert "目標値ではありません" in DISTANCE_UNIT_CAPTION

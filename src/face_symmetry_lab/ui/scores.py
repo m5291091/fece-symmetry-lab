@@ -21,19 +21,46 @@ from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, Status
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
-SCORE_HEADING = "左右差（実験値・両眼距離比）"
+SCORE_HEADING = "対称度（実験値・両眼距離比）"
 
 #: §5.2: distances are ratios of the interocular distance, so a percentage
 #: with two decimals is the readable form without inventing precision.
 DISTANCE_UNIT_CAPTION = (
-    "数値は両眼の間隔を 100% としたときの、左右対応点のずれの大きさです。"
-    "小さいほど対応点が近いことだけを意味し、良し悪しを表しません。"
+    "対称度は、両眼の間隔を 100% としたときの左右対応点のずれを 100% から引いた値です。"
+    "100% は対応点距離がすべて 0 になる数学上の上限で、目標値ではありません。"
+    "高い・低いは良し悪しを表しません。"
+)
+
+
+#: §8.6.2's per-point offsets are half the §8.5 pair distance, so they are not
+#: the quantity §8.6.3 reorients. They stay stated as deviations, with their
+#: own caption rather than the symmetry one.
+DEVIATION_UNIT_CAPTION = (
+    "ズレは、両眼の間隔を 100% としたときの、実測点と左右対称にそろえた位置との距離です。"
+    "小さいほど両者が近いことだけを意味し、良し悪しを表しません。"
 )
 
 
 def format_distance(value: float | None) -> str:
     """Render a normalized distance as a percentage, or `—` when missing."""
     return "—" if value is None else f"{value * 100.0:.2f}%"
+
+
+def format_symmetry(value: float | None) -> str:
+    """Render a normalized distance as §8.6.3's symmetry percentage.
+
+    `100% - ずれ%`: linear, invertible, and carrying no coefficient, so it
+    reorients the same measurement rather than scoring it. The metric, the
+    export columns and `metric_version` are all untouched by this — only the
+    direction the number is read in.
+
+    Clamped at 0% for the degenerate case where the deviation exceeds the
+    interocular distance itself; `d` keeps its unbounded value everywhere
+    else (§8.6.3).
+    """
+    if value is None:
+        return "—"
+    return f"{min(100.0, max(0.0, (1.0 - value) * 100.0)):.2f}%"
 
 
 _PART_LABELS: Final[dict[str, str]] = {
@@ -123,7 +150,16 @@ def render_headline_metrics(
     `—` rather than a stale or zeroed number (NFR-013).
     """
     score_column, gender_column, age_column = st.columns(3)
-    score_column.metric("全体の左右差", format_distance(overall))
+    score_column.metric(
+        "全体の対称度",
+        format_symmetry(overall),
+        # §5.3: the deviation is always shown alongside, so the number can be
+        # read in either direction and "100%" cannot pass as a target reached.
+        help=(
+            "100% から、左右対応点のずれ（両眼間隔比）を引いた値です。"
+            "100% は数学上の上限で目標値ではありません。"
+        ),
+    )
     gender_column.metric(
         "参考性別",
         "—" if estimate is None else GENDER_LABELS[estimate.gender],
@@ -132,6 +168,7 @@ def render_headline_metrics(
         "参考年齢",
         "—" if estimate is None else f"{estimate.estimated_age_years:.0f}歳",
     )
+    st.caption(f"ずれ {format_distance(overall)}（対称度との和は 100%）")
 
 
 def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
@@ -154,14 +191,22 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         return
 
     if show_smoothed:
-        st.caption(f"平滑化前の生値 {format_distance(symmetry.overall)}")
+        st.caption(
+            f"平滑化前の生値 {format_symmetry(symmetry.overall)}"
+            f"（ずれ {format_distance(symmetry.overall)}）"
+        )
 
     # §8.6: a diagnostic breakdown of where the deviation sits. These do not
     # add up to the headline value, which is folded once over the pooled pairs.
-    st.caption("部位別（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
+    st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
     columns = st.columns(len(PART_NAMES))
     for column, name in zip(columns, PART_NAMES, strict=True):
-        column.metric(_PART_LABELS[name], format_distance(symmetry.distance(name)))
+        distance = symmetry.distance(name)
+        column.metric(
+            _PART_LABELS[name],
+            format_symmetry(distance),
+            help=f"ずれ {format_distance(distance)}",
+        )
 
     render_pose(outcome)
     if outcome.skin_quality is not None:
@@ -191,8 +236,9 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         st.caption(f"skin metric {skin.metric_version} · 未校正")
     st.caption(DISTANCE_UNIT_CAPTION)
     st.caption(
-        "0% は、正規化後の対応点距離がすべて 0 になった場合の数学上の下限です。"
-        "人物の状態や価値を示す尺度ではなく、実写で 0% になることも保証しません。"
+        "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
+        "部位別の値を平均しても全体の値にはなりません（全体は全対応ペアをまとめて 1 回だけ"
+        "折りたたんで求めるためです）。"
     )
     st.caption(
         "同一人物・同一環境内の相対的な傾向を見るための値です。"
