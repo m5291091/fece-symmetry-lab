@@ -112,6 +112,15 @@ _HUD_PLACEMENTS: Final[dict[str, str]] = {
     "右下": "bottom:24px; right:24px;",
 }
 
+#: §14.3e: the fullscreen band's wording. Kept as constants so the copy can be
+#: asserted on — this is the only text shown while the page chrome is folded
+#: away, so it has to carry both the state and the way out.
+_FULLSCREEN_BADGE: Final[str] = "全画面表示中 — 右上の「終了」で戻ります"
+_FULLSCREEN_HINT: Final[str] = (
+    "画面下の「START」を押すとカメラが始まります。"
+    "ブラウザの F11 と併用すると、タブやアドレスバーも隠れた完全な全画面になります。"
+)
+
 #: The hidden element the 5 Hz fragment writes and the bridge script reads.
 #: Values travel as JSON text: Streamlit sanitizes markdown HTML, and text
 #: content is the one thing guaranteed to survive it intact.
@@ -138,6 +147,26 @@ _HUD_STYLESHEET: Final[str] = """
     font-family: inherit;
 }
 #fsl-hud[hidden] { display: none; }
+/* Fullscreen state band: says where you are and, before START, what to do.
+   Centred so it cannot collide with the HUD (top-left) or the exit control
+   (top-right). */
+#fsl-chrome {
+    position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+    z-index: 1000055; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    font-family: inherit; text-align: center;
+}
+#fsl-chrome[hidden] { display: none; }
+#fsl-chrome-badge {
+    background: rgba(0,0,0,.72); color: #fff;
+    border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
+    padding: 6px 16px; font-size: .8rem; letter-spacing: .04em;
+}
+#fsl-chrome-hint {
+    background: rgba(0,0,0,.72); color: #fff;
+    border-radius: 12px; padding: 10px 18px; font-size: 1rem; max-width: 70vw;
+}
+#fsl-chrome-hint[hidden] { display: none; }
 #fsl-hud-value { font-size: 3.2rem; font-weight: 700; line-height: 1; }
 #fsl-hud-label { font-size: .85rem; opacity: .75; margin-bottom: 10px; }
 #fsl-hud-demo { font-size: 1.1rem; }
@@ -181,6 +210,27 @@ body.fsl-fullscreen .stAppHeader { display: none !important; }
 
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
+
+#: streamlit-webrtc's own `video_html_attrs`, which is the supported way to
+#: configure the `<video>` — far steadier than reaching into the component's
+#: iframe. Two things matter here:
+#:
+#: * `controls: False` removes the native control bar entirely. Its fullscreen
+#:   button promoted the `<video>` into the browser's top layer, above every
+#:   page element including the HUD; and play/pause/seek mean nothing for a
+#:   live preview. START/STOP are the component's own buttons, not these.
+#: * The default is `style={"width": "100%"}` with *auto* height, which is why
+#:   the picture stayed letterboxed at the top of a full-height frame instead
+#:   of filling the screen. Fullscreen sizing is finished in `_VIDEO_CHROME_CSS`.
+VIDEO_HTML_ATTRS: Final[dict[str, object]] = {
+    "autoPlay": True,
+    "controls": False,
+    "muted": True,
+    "playsInline": True,
+    "controlsList": "nofullscreen noremoteplayback nodownload",
+    "disablePictureInPicture": True,
+    "style": {"width": "100%", "background": "#000"},
+}
 
 #: FR-005: video only. No audio permission is requested.
 MEDIA_STREAM_CONSTRAINTS: Final[dict[str, object]] = {
@@ -450,28 +500,35 @@ def _render_hud_payload(snapshot: PipelineSnapshot) -> None:
 
 
 #: Injected into the WebRTC component's own iframe (same-origin), because a
-#: stylesheet in the page does not reach inside it.
+#: stylesheet in the page does not reach inside it. Only two jobs remain now
+#: that `VIDEO_HTML_ATTRS` handles the native controls:
 #:
-#: Chrome's native video controls carry a fullscreen button and an overflow
-#: menu. Native fullscreen promotes the `<video>` into the browser's top
-#: layer, which is above *every* page element — the HUD included — so it
-#: silently defeats the overlay. The app's own fullscreen is the supported
-#: path, and the native affordance is removed rather than left as a trap.
-#:
-#: `.fsl-controls` is a class this app puts on the START/STOP row itself: the
-#: component only ships emotion/MUI hashes, so tagging the node from JS is the
-#: stable hook (§5.2). In fullscreen that row would otherwise sit against the
-#: far-left screen edge, which is where it became hard to hit.
+#: * Make the picture actually fill the screen. The component sizes the video
+#:   `width: 100%` with auto height, so in a full-height frame it stays a
+#:   letterbox strip at the top — pinning it to the frame's viewport is what
+#:   fills the screen.
+#: * Move the START/STOP row off the far-left edge, where it is genuinely hard
+#:   to hit once the frame spans the display. `.fsl-controls` is a class this
+#:   app puts on the row from JS, since the component only ships emotion/MUI
+#:   hashes and offers no stable hook of its own (§5.2).
 _VIDEO_CHROME_CSS: Final[str] = """
-video::-webkit-media-controls-fullscreen-button,
-video::-webkit-media-controls-overflow-button,
-video::-webkit-media-controls-overflow-menu-button,
-video::-webkit-media-controls-picture-in-picture-button { display: none !important; }
-html.fsl-fs body { background: #000; }
+html.fsl-fs, html.fsl-fs body { margin: 0; background: #000; }
+html.fsl-fs video {
+    position: fixed; inset: 0;
+    width: 100vw !important; height: 100vh !important;
+    object-fit: contain; background: #000;
+}
+/* Centred with auto margins rather than `translateX(-50%)`: a transform makes
+   the element a containing block for *fixed* descendants, and when the row
+   turned out to wrap the <video>, the picture was positioned against this pill
+   instead of the viewport — which is how it ended up tucked into the corner. */
 html.fsl-fs .fsl-controls {
-    position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);
+    position: fixed; left: 0; right: 0; bottom: 44px;
+    width: max-content; margin-left: auto; margin-right: auto;
+    transform: none;
     z-index: 20; gap: 16px;
-    background: rgba(0,0,0,.6); padding: 12px 20px; border-radius: 999px;
+    background: rgba(0,0,0,.66); padding: 12px 20px; border-radius: 999px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45);
 }
 html.fsl-fs .fsl-controls button {
     font-size: 1.05rem !important;
@@ -498,6 +555,19 @@ _HUD_RUNTIME_JS: Final[str] = """
     document.head.appendChild(sheet);
   }
   if (sheet.textContent !== CFG.css) sheet.textContent = CFG.css;
+
+  var chrome = document.getElementById('fsl-chrome');
+  if (!chrome) {
+    chrome = document.createElement('div');
+    chrome.id = 'fsl-chrome';
+    chrome.innerHTML =
+      '<span id="fsl-chrome-badge"></span>' +
+      '<span id="fsl-chrome-hint"></span>';
+    document.body.appendChild(chrome);
+  }
+  document.getElementById('fsl-chrome-badge').textContent = CFG.badgeText;
+  document.getElementById('fsl-chrome-hint').textContent = CFG.hintText;
+  chrome.hidden = !CFG.fullscreen;
 
   var hud = document.getElementById('fsl-hud');
   if (!hud) {
@@ -580,17 +650,22 @@ _HUD_RUNTIME_JS: Final[str] = """
     }
     if (vstyle.textContent !== CFG.videoCss) vstyle.textContent = CFG.videoCss;
     vdoc.documentElement.classList.toggle('fsl-fs', !!CFG.fullscreen);
-    var buttons = vdoc.querySelectorAll('button');
-    for (var i = 0; i < buttons.length; i++) {
-      var row = buttons[i].parentElement && buttons[i].parentElement.parentElement;
-      if (row && !row.classList.contains('fsl-controls')) row.classList.add('fsl-controls');
+    // The control row must never be an ancestor of the <video>: styling it
+    // would then reposition the picture too. Walk up only as far as the last
+    // wrapper that still excludes the video, and drop the class from anything
+    // that has since grown to contain it (the tree changes once playing).
+    var stale = vdoc.querySelectorAll('.fsl-controls');
+    for (var s = 0; s < stale.length; s++) {
+      if (stale[s].querySelector('video')) stale[s].classList.remove('fsl-controls');
     }
-    var video = vdoc.querySelector('video');
-    if (video) {
-      // Belt and braces: the pseudo-element rules hide the buttons, these
-      // attributes stop the behaviour being reachable another way.
-      video.setAttribute('controlsList', 'nofullscreen noremoteplayback nodownload');
-      video.disablePictureInPicture = true;
+    var anyButton = vdoc.querySelector('button');
+    if (anyButton) {
+      var row = null;
+      for (var n = anyButton.parentElement; n && n !== vdoc.body; n = n.parentElement) {
+        if (n.querySelector('video')) break;
+        row = n;
+      }
+      if (row && !row.classList.contains('fsl-controls')) row.classList.add('fsl-controls');
     }
   };
 
@@ -603,7 +678,13 @@ _HUD_RUNTIME_JS: Final[str] = """
     // No payload means the camera is not running: the panel that publishes it
     // only renders while playing, so the HUD must go with it rather than
     // linger showing the last frame's numbers.
-    if (!holder) { hudEl.hidden = true; return; }
+    var hint = document.getElementById('fsl-chrome-hint');
+    if (!holder) {
+      hudEl.hidden = true;
+      if (hint) hint.hidden = false;
+      return;
+    }
+    if (hint) hint.hidden = true;
     var data;
     try { data = JSON.parse(holder.textContent); } catch (err) { return; }
     hudEl.hidden = !data.visible;
@@ -649,6 +730,8 @@ def _hud_bridge_script(*, fullscreen: bool, position: str) -> str:
             "css": _HUD_STYLESHEET,
             "videoCss": _VIDEO_CHROME_CSS,
             "intervalMs": _HUD_REFRESH_MS,
+            "badgeText": _FULLSCREEN_BADGE,
+            "hintText": _FULLSCREEN_HINT,
         },
         ensure_ascii=False,
     )
@@ -1048,7 +1131,7 @@ def render_camera_section() -> None:
         # The tabs below are not rendered while fullscreen, so this is the
         # only way back — it has to exist before anything can cover it.
         with st.container(key="fsl_exit_fullscreen"):
-            st.button("全画面を終了", key="exit_fullscreen", on_click=_exit_fullscreen)
+            st.button("✕ 全画面を終了", key="exit_fullscreen", on_click=_exit_fullscreen)
 
     preview_column, result_column = _split_for_panel_layout()
 
@@ -1059,6 +1142,7 @@ def render_camera_section() -> None:
             rtc_configuration=LOOPBACK_RTC_CONFIGURATION,
             media_stream_constraints=MEDIA_STREAM_CONSTRAINTS,
             video_frame_callback=build_video_frame_callback(pipeline),
+            video_html_attrs=VIDEO_HTML_ATTRS,
             async_processing=True,
         )
 

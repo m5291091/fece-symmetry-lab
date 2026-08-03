@@ -776,32 +776,36 @@ def test_the_exit_control_shrinks_to_its_button() -> None:
     assert "left: auto;" in css
 
 
-def test_the_native_video_fullscreen_control_is_removed() -> None:
+def test_the_native_video_controls_are_switched_off_through_the_component_api() -> None:
     """Native fullscreen promotes the <video> into the browser's top layer,
-    above every page element — the HUD included — so it defeats the overlay."""
+    above every page element — the HUD included — so it defeats the overlay.
+    `controls: False` removes the whole bar; the attributes close the routes
+    that survive a hidden bar (context menu, remote playback)."""
+    from face_symmetry_lab.ui.camera import VIDEO_HTML_ATTRS
+
+    assert VIDEO_HTML_ATTRS["controls"] is False
+    assert VIDEO_HTML_ATTRS["disablePictureInPicture"] is True
+    assert "nofullscreen" in VIDEO_HTML_ATTRS["controlsList"]
+
+
+def test_the_video_attributes_reach_the_component() -> None:
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    assert "video_html_attrs=VIDEO_HTML_ATTRS" in inspect.getsource(camera.render_camera_section)
+
+
+def test_fullscreen_makes_the_picture_fill_the_frame() -> None:
+    """The component sizes the video `width: 100%` with *auto* height, so in a
+    full-height frame it stayed a letterbox strip at the top."""
     from face_symmetry_lab.ui import camera
 
     css = camera._VIDEO_CHROME_CSS
 
-    for control in (
-        "media-controls-fullscreen-button",
-        "media-controls-overflow-button",
-        "media-controls-overflow-menu-button",
-        "media-controls-picture-in-picture-button",
-    ):
-        assert control in css
-    assert "display: none !important;" in css
-
-
-def test_the_runtime_also_disables_the_controls_by_attribute() -> None:
-    """CSS hides the buttons; the attributes stop the behaviour being reached
-    another way (keyboard shortcut, context menu)."""
-    from face_symmetry_lab.ui import camera
-
-    runtime = camera._HUD_RUNTIME_JS
-
-    assert "nofullscreen" in runtime
-    assert "disablePictureInPicture" in runtime
+    assert "html.fsl-fs video" in css
+    assert "height: 100vh !important;" in css
+    assert "object-fit: contain;" in css
 
 
 def test_fullscreen_centres_and_enlarges_the_start_stop_row() -> None:
@@ -811,8 +815,8 @@ def test_fullscreen_centres_and_enlarges_the_start_stop_row() -> None:
     css = camera._VIDEO_CHROME_CSS
 
     assert "html.fsl-fs .fsl-controls" in css
-    assert "left: 50%" in css
-    assert "translateX(-50%)" in css
+    assert "width: max-content;" in css  # centred by auto margins, not transform
+    assert "bottom: 44px;" in css
     assert "min-height: 48px" in css
 
 
@@ -828,7 +832,11 @@ def test_the_hud_disappears_when_the_camera_is_not_running() -> None:
     missing payload must hide the HUD instead of freezing its last values."""
     from face_symmetry_lab.ui import camera
 
-    assert "if (!holder) { hudEl.hidden = true; return; }" in camera._HUD_RUNTIME_JS
+    runtime = camera._HUD_RUNTIME_JS
+    branch = runtime[runtime.index("if (!holder)") : runtime.index("if (hint) hint.hidden = true;")]
+
+    assert "hudEl.hidden = true;" in branch
+    assert "return;" in branch
 
 
 def test_the_component_iframe_access_is_guarded() -> None:
@@ -838,3 +846,76 @@ def test_the_component_iframe_access_is_guarded() -> None:
     runtime = camera._HUD_RUNTIME_JS
 
     assert "try { vdoc = host && host.contentDocument; } catch (err) { return; }" in runtime
+
+
+def test_the_fullscreen_band_states_where_you_are_and_how_to_leave() -> None:
+    """Fullscreen folds the page chrome away, so this is the only text left."""
+    from face_symmetry_lab.ui import camera
+
+    assert "全画面表示中" in camera._FULLSCREEN_BADGE
+    assert "終了" in camera._FULLSCREEN_BADGE
+    assert "START" in camera._FULLSCREEN_HINT
+    assert "F11" in camera._FULLSCREEN_HINT
+
+
+def test_the_band_is_built_and_driven_by_the_runtime() -> None:
+    from face_symmetry_lab.ui import camera
+
+    runtime = camera._HUD_RUNTIME_JS
+
+    assert "fsl-chrome" in runtime
+    assert "chrome.hidden = !CFG.fullscreen;" in runtime
+    # The hint is guidance for starting, so it goes once the camera is running.
+    assert "hint.hidden = true;" in runtime
+    assert "hint.hidden = false;" in runtime
+
+
+def test_the_band_never_intercepts_clicks() -> None:
+    from face_symmetry_lab.ui import camera
+
+    css = camera._HUD_STYLESHEET
+    band = css[css.index("#fsl-chrome {") : css.index("#fsl-chrome[hidden]")]
+
+    assert "pointer-events: none;" in band
+
+
+def test_the_exit_control_is_labelled_as_an_exit() -> None:
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    assert "✕ 全画面を終了" in inspect.getsource(camera.render_camera_section)
+
+
+# --- the containing-block trap ----------------------------------------------
+
+
+def test_the_control_row_is_centred_without_a_transform() -> None:
+    """A transform makes an element a containing block for *fixed* descendants.
+
+    When the row turned out to wrap the <video>, that pinned the picture to
+    the pill instead of the viewport and it ended up in the corner.
+    """
+    from face_symmetry_lab.ui import camera
+
+    css = camera._VIDEO_CHROME_CSS
+    rule = css[css.index("html.fsl-fs .fsl-controls {") :]
+    rule = rule[: rule.index("}")]
+
+    assert "translateX" not in rule
+    assert "transform: none;" in rule
+    assert "margin-left: auto;" in rule and "margin-right: auto;" in rule
+
+
+def test_the_control_row_never_wraps_the_video() -> None:
+    """Tagging stops at the last wrapper that still excludes the video, and a
+    wrapper that grows to contain one (the tree changes once playing) is
+    untagged again."""
+    from face_symmetry_lab.ui import camera
+
+    runtime = camera._HUD_RUNTIME_JS
+
+    assert "if (n.querySelector('video')) break;" in runtime
+    assert "if (stale[s].querySelector('video')) stale[s].classList.remove('fsl-controls');" in (
+        runtime
+    )
