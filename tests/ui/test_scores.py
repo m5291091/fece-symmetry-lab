@@ -1,17 +1,21 @@
+import re
+
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.domain.landmarks import TrackingStatus
-from face_symmetry_lab.domain.models import ReasonCode
+from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.scores import (
     DISTANCE_UNIT_CAPTION,
+    GATE_COLORS,
     SCORE_HEADING,
     SYMMETRIZED_IMAGE_CAPTION,
     SYMMETRIZED_IMAGE_LIMITS,
     SYMMETRIZED_IMAGE_NOTICE,
     format_distance,
     format_symmetry,
+    gate_color,
 )
 
 
@@ -240,3 +244,29 @@ def test_the_warped_image_wording_avoids_a_value_judgement() -> None:
         assert forbidden not in shown
     # And it has to keep saying what the image actually is.
     assert "加工画像" in shown
+
+
+# --- §14.3e quality-gate colours ---------------------------------------------
+
+
+def test_every_gate_status_has_a_colour() -> None:
+    """A status added to the gate must not fall through to a KeyError."""
+    for status in Status:
+        assert gate_color(AnalysisState(status=status)) == GATE_COLORS[status]
+
+
+def test_gate_colours_are_valid_hex() -> None:
+    for colour in GATE_COLORS.values():
+        assert re.fullmatch(r"#[0-9A-Fa-f]{6}", colour), colour
+
+
+def test_a_missing_state_reads_as_the_neutral_colour() -> None:
+    """An idle preview must not borrow the "conditions met" colour."""
+    assert gate_color(None) == GATE_COLORS[Status.ERROR]
+
+
+def test_the_blocking_states_are_visually_distinct_from_ok() -> None:
+    """§5.4: colour is one channel, but it still has to differentiate."""
+    assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.HOLD]
+    assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.NO_FACE]
+    assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.ERROR]

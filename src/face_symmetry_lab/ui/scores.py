@@ -19,7 +19,12 @@ from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.symmetrization import SymmetrizationView
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import PART_NAMES
-from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel, Status
+from face_symmetry_lab.domain.models import (
+    AnalysisState,
+    DemographicEstimate,
+    GenderLabel,
+    Status,
+)
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
 SCORE_HEADING = "対称度（実験値・両眼距離比）"
@@ -90,6 +95,35 @@ GENDER_LABELS: Final[dict[GenderLabel, str]] = {
     GenderLabel.FEMALE: "女性",
     GenderLabel.MALE: "男性",
 }
+
+#: §14.3e: one colour per quality-gate state, for the video frame border and
+#: the HUD outline. These are **state identifiers, not grades**: green says
+#: "the measurement conditions are met", never "this is a good face". §5.4
+#: forbids carrying meaning by colour alone, so every caller keeps the
+#: existing `render_tracking_status` / `guidance_message` text alongside.
+GATE_COLORS: Final[dict[Status, str]] = {
+    Status.OK: "#2E9E5B",
+    Status.HOLD: "#D9A21B",
+    Status.NO_FACE: "#B4433B",
+    Status.MULTI_FACE: "#B4433B",
+    Status.ERROR: "#6B6B6B",
+}
+
+#: Shown before any analysis exists, and for a status the table somehow misses
+#: — the neutral grey of `Status.ERROR` rather than a colour implying a verdict.
+_UNKNOWN_GATE_COLOR: Final[str] = GATE_COLORS[Status.ERROR]
+
+
+def gate_color(state: AnalysisState | None) -> str:
+    """The §14.3e display colour for one gate state.
+
+    ``None`` (no analysis yet this session) reads as the neutral grey, so an
+    idle preview never borrows the "conditions met" colour.
+    """
+    if state is None:
+        return _UNKNOWN_GATE_COLOR
+    return GATE_COLORS.get(state.status, _UNKNOWN_GATE_COLOR)
+
 
 _STATUS_HEADLINE: Final[dict[Status, str]] = {
     Status.OK: "計測中です。",

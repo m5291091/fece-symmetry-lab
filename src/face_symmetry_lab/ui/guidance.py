@@ -6,9 +6,17 @@ answers "what do we tell the user about this reason code": the live "ライブ
 and `ui.scores.render_guidance` walks every blocking reason through the same
 table, so the two can never word the same condition differently.
 
-The live banner is a side panel rather than an overlay: FR-013 keeps the
-camera video a pass-through preview, and Japanese text could not be drawn
-onto it anyway (PIL's default bitmap font carries no CJK glyphs).
+Nothing here is ever drawn onto the video *frame*: FR-013 keeps the camera
+preview a pass-through, and Japanese text could not be painted onto it anyway
+(PIL's default bitmap font carries no CJK glyphs). That reasoning is about
+pixels, and it still holds.
+
+It does not extend to the DOM layer. §5.2's overlay exception lets
+`ui.camera` composite a HUD and a gate-coloured border *over* the video with
+CSS (§14.3e), which the browser draws and the frame path never sees — so it
+adds nothing to `processing_ms` and has no font constraint. This guidance
+text stays in the side panel regardless: §5.4 requires the state to be
+readable without relying on the overlay or on colour.
 """
 
 from __future__ import annotations

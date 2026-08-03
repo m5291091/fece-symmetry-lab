@@ -8,6 +8,7 @@ touches Streamlit state (§14.3).
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
@@ -15,6 +16,7 @@ from typing import Any, Final
 import av
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit.delta_generator import DeltaGenerator
 from streamlit_webrtc import WebRtcMode, WebRtcStreamerContext, webrtc_streamer
 
@@ -41,6 +43,7 @@ from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
+    PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
@@ -48,6 +51,7 @@ from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.export_panel import render_export_panel
@@ -64,7 +68,10 @@ from face_symmetry_lab.ui.model_setup import (
 )
 from face_symmetry_lab.ui.scores import (
     DEVIATION_UNIT_CAPTION,
+    GENDER_LABELS,
     format_distance,
+    format_symmetry,
+    gate_color,
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
@@ -89,6 +96,76 @@ _PANEL_LAYOUT_OPTIONS: Final[tuple[str, ...]] = (
 )
 PANEL_LAYOUT_STATE_KEY = "camera_panel_layout"
 
+#: §14.3e/FR-032: the HUD moves by preset, like the panel layout, rather than
+#: by dragging. "非表示" draws nothing at all.
+_HUD_HIDDEN: Final[str] = "非表示"
+_HUD_POSITION_OPTIONS: Final[tuple[str, ...]] = ("左上", "右上", "左下", "右下", _HUD_HIDDEN)
+HUD_POSITION_STATE_KEY = "camera_hud_position"
+FULLSCREEN_STATE_KEY = "camera_fullscreen"
+DEMOGRAPHIC_ENABLED_STATE_KEY = "camera_demographic_enabled"
+
+#: Where each preset pins the HUD inside its positioning context.
+_HUD_PLACEMENTS: Final[dict[str, str]] = {
+    "左上": "top:24px; left:24px;",
+    "右上": "top:24px; right:24px;",
+    "左下": "bottom:24px; left:24px;",
+    "右下": "bottom:24px; right:24px;",
+}
+
+#: The hidden element the 5 Hz fragment writes and the bridge script reads.
+#: Values travel as JSON text: Streamlit sanitizes markdown HTML, and text
+#: content is the one thing guaranteed to survive it intact.
+_HUD_DATA_ELEMENT_ID: Final[str] = "fsl-hud-data"
+
+#: §5.2 exception (§14.3e): the stylesheet is installed **once** by the bridge
+#: and thereafter only toggled by a class, never re-injected. Re-sending a
+#: `<style>` at 5 Hz forces a whole-document style recalculation five times a
+#: second, which is what made the video stutter; the same goes for
+#: `backdrop-filter`, which re-blurs the region behind the HUD on *every*
+#: video frame rather than on every update. Neither is used any more.
+#:
+#: The video is found through `.st-key-camera_preview_frame iframe` — the hook
+#: `st.container(key=...)` emits — so nothing here depends on a Streamlit
+#: internal `data-testid`, which is what silently broke fullscreen before.
+_HUD_STYLESHEET: Final[str] = """
+#fsl-hud {
+    position: fixed; z-index: 1000050;
+    background: rgba(0,0,0,.72); color: #fff;
+    padding: 16px 22px; border-radius: 16px;
+    border: 2px solid #6B6B6B;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+    font-family: inherit;
+}
+#fsl-hud[hidden] { display: none; }
+#fsl-hud-value { font-size: 3.2rem; font-weight: 700; line-height: 1; }
+#fsl-hud-label { font-size: .85rem; opacity: .75; margin-bottom: 10px; }
+#fsl-hud-demo { font-size: 1.1rem; }
+#fsl-hud-demo:empty { display: none; }
+/* Only the grip takes pointer events, so the video's own STOP button stays
+   clickable everywhere else under the HUD. */
+#fsl-hud-grip {
+    pointer-events: auto; cursor: move; touch-action: none;
+    margin-top: 10px; font-size: .75rem; opacity: .55;
+    border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px;
+}
+.st-key-camera_preview_frame { position: relative; border-width: 3px !important; }
+.st-key-fsl_exit_fullscreen { position: fixed; top: 24px; right: 24px; z-index: 1000060; }
+body.fsl-fullscreen .st-key-camera_preview_frame iframe {
+    position: fixed; inset: 0;
+    width: 100vw !important; height: 100vh !important;
+    z-index: 1000000; background: #000;
+}
+/* Streamlit's own chrome sits at z-index 999990/999991 — far above any value
+   a page-level overlay would naturally pick — so fullscreen has to stack
+   above it and fold the chrome away, or the sidebar covers a third of the
+   video and the header hides the HUD. `.stSidebar`/`.stAppHeader` are
+   Streamlit's semantic class names, not emotion hashes, so they are stable
+   hooks (§5.2). Verified against streamlit 1.59.1. */
+body.fsl-fullscreen .stSidebar,
+body.fsl-fullscreen .stAppHeader { display: none !important; }
+"""
+
 #: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
 
@@ -107,6 +184,10 @@ SYMMETRIZATION_STATE_KEY = "symmetrization_view"
 
 #: §11 NFR-003: the result panel refreshes at 4-5 Hz, independent of video fps.
 STATUS_REFRESH_INTERVAL = "200ms"
+
+#: The bridge's own DOM-only refresh. Same cadence as the panels, but it
+#: costs no server round trip — it just re-reads the hidden payload.
+_HUD_REFRESH_MS: Final[int] = 200
 
 _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
     TrackingStatus.NO_FACE: "顔が見つかりません。カメラの正面に入ってください。",
@@ -262,6 +343,257 @@ def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
                 st.warning(guidance)
         if snapshot.needs_recovery:
             st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
+
+    # §14.3e: rides along in this existing 5 Hz fragment rather than adding a
+    # third one. The element is hidden and found by id, so where it lands in
+    # the DOM does not matter.
+    _render_hud_payload(snapshot)
+
+
+def _hud_payload(
+    *,
+    overall: float | None,
+    estimate: DemographicEstimate | None,
+    show_demographics: bool,
+    gate: str,
+    position: str,
+) -> dict[str, object]:
+    """The §14.3e HUD's values. Pure: no Streamlit, no markup, no side effects.
+
+    Every number goes through the same formatter the panels use
+    (`format_symmetry`, `GENDER_LABELS`), so the HUD can never drift into a
+    second way of rendering the same measurement. Missing values read `—`
+    rather than a stale or zeroed number (NFR-013).
+
+    ``demo`` is empty — not `—` — when there is no estimate or the user turned
+    the demographic panel off, since an empty row would imply the feature is
+    running and failing (FR-024).
+    """
+    visible = position != _HUD_HIDDEN and position in _HUD_PLACEMENTS
+    demo = ""
+    if show_demographics and estimate is not None:
+        age = f"{estimate.estimated_age_years:.0f} 歳"
+        # `DemographicEstimate` validates that `gender` is the argmax of
+        # `gender_probabilities`, so this is that label without re-deriving it.
+        gender = GENDER_LABELS.get(estimate.gender, "—")
+        demo = f"参考年齢 {age} · 参考性別 {gender}"
+    return {
+        "visible": visible,
+        "symmetry": format_symmetry(overall),
+        "label": "対称度（実験値）",
+        "demo": demo,
+        "gate": gate,
+    }
+
+
+def _hud_html(
+    *,
+    overall: float | None,
+    estimate: DemographicEstimate | None,
+    show_demographics: bool,
+    gate: str,
+    position: str,
+) -> str:
+    """Serialize the payload into the hidden element the bridge reads.
+
+    Deliberately tiny and unstyled. This is the only thing that crosses the
+    wire at 5 Hz, and the previous version — a fully styled block plus a
+    `<style>` tag — is what made the video stutter: every repaint forced the
+    browser into a whole-document style recalculation.
+    """
+    payload = _hud_payload(
+        overall=overall,
+        estimate=estimate,
+        show_demographics=show_demographics,
+        gate=gate,
+        position=position,
+    )
+    encoded = json.dumps(payload, ensure_ascii=False)
+    return f'<div id="{_HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
+
+
+def _render_hud_payload(snapshot: PipelineSnapshot) -> None:
+    """Publish one snapshot's HUD values (called from the 5 Hz headline fragment).
+
+    Hidden and located by id, so its position in the DOM does not matter —
+    which is what lets it ride along in an existing fragment instead of
+    needing a third one of its own.
+    """
+    analysis = snapshot.analysis
+    overall = analysis.overall_distance_smooth if analysis is not None else None
+    if overall is None and analysis is not None and analysis.symmetry is not None:
+        overall = analysis.symmetry.overall
+
+    st.markdown(
+        _hud_html(
+            overall=overall,
+            estimate=snapshot.demographic_estimate,
+            show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
+            gate=gate_color(analysis.state if analysis is not None else None),
+            position=st.session_state.get(HUD_POSITION_STATE_KEY, _HUD_POSITION_OPTIONS[0]),
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+#: The HUD runtime, injected into the *page's* JS realm (not the component
+#: iframe's). Streamlit tears the component iframe down on every rerun, and a
+#: timer callback defined inside it dies with its realm while the timer id
+#: lives on — which is exactly how the HUD ended up frozen. Running here, the
+#: element, its drag handlers and its timer all outlive any rerun.
+_HUD_RUNTIME_JS: Final[str] = """
+(function () {
+  var CFG = window.__fslHudConfig;
+  if (!CFG) return;
+
+  var sheet = document.getElementById('fsl-hud-style');
+  if (!sheet) {
+    sheet = document.createElement('style');
+    sheet.id = 'fsl-hud-style';
+    document.head.appendChild(sheet);
+  }
+  if (sheet.textContent !== CFG.css) sheet.textContent = CFG.css;
+
+  var hud = document.getElementById('fsl-hud');
+  if (!hud) {
+    hud = document.createElement('div');
+    hud.id = 'fsl-hud';
+    hud.hidden = true;
+    hud.innerHTML =
+      '<div id="fsl-hud-value"></div>' +
+      '<div id="fsl-hud-label"></div>' +
+      '<div id="fsl-hud-demo"></div>' +
+      '<div id="fsl-hud-grip">\u283f ドラッグで移動</div>';
+    document.body.appendChild(hud);
+
+    // Drag by the grip only, so the rest of the HUD stays click-through and
+    // the video's own STOP button underneath keeps working.
+    var grip = hud.querySelector('#fsl-hud-grip');
+    var dragging = false, offsetX = 0, offsetY = 0;
+    grip.addEventListener('pointerdown', function (event) {
+      var box = hud.getBoundingClientRect();
+      dragging = true;
+      offsetX = event.clientX - box.left;
+      offsetY = event.clientY - box.top;
+      try { grip.setPointerCapture(event.pointerId); } catch (err) {}
+      event.preventDefault();
+    });
+    grip.addEventListener('pointermove', function (event) {
+      if (!dragging) return;
+      var x = Math.max(0, event.clientX - offsetX);
+      var y = Math.max(0, event.clientY - offsetY);
+      hud.style.left = x + 'px';
+      hud.style.top = y + 'px';
+      hud.style.right = 'auto';
+      hud.style.bottom = 'auto';
+      try {
+        localStorage.setItem('fslHudPos', JSON.stringify({x: x, y: y}));
+      } catch (err) { /* private mode: the position simply is not remembered */ }
+    });
+    var stop = function (event) {
+      if (!dragging) return;
+      dragging = false;
+      try { grip.releasePointerCapture(event.pointerId); } catch (err) {}
+    };
+    grip.addEventListener('pointerup', stop);
+    grip.addEventListener('pointercancel', stop);
+  }
+
+  // Choosing a preset clears any dragged position, so the radio stays a way
+  // back to a known corner.
+  var applyAnchor = function () { hud.setAttribute('style', CFG.anchor); };
+  if (window.__fslHudPreset !== CFG.position) {
+    window.__fslHudPreset = CFG.position;
+    applyAnchor();
+    try { localStorage.removeItem('fslHudPos'); } catch (err) {}
+  } else {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem('fslHudPos')); } catch (err) {}
+    if (saved && typeof saved.x === 'number') {
+      hud.setAttribute('style', 'left:' + saved.x + 'px; top:' + saved.y + 'px;');
+    } else {
+      applyAnchor();
+    }
+  }
+
+  document.body.classList.toggle('fsl-fullscreen', !!CFG.fullscreen);
+
+  // One timer, replaced rather than stacked when the bridge re-runs.
+  if (window.__fslHudTimer) clearInterval(window.__fslHudTimer);
+  var lastGate = '';
+  var sync = function () {
+    var holder = document.getElementById(CFG.dataId);
+    var hudEl = document.getElementById('fsl-hud');
+    if (!holder || !hudEl) return;
+    var data;
+    try { data = JSON.parse(holder.textContent); } catch (err) { return; }
+    hudEl.hidden = !data.visible;
+    if (!data.visible) return;
+    var valueEl = document.getElementById('fsl-hud-value');
+    var labelEl = document.getElementById('fsl-hud-label');
+    var demoEl = document.getElementById('fsl-hud-demo');
+    if (valueEl && valueEl.textContent !== data.symmetry) valueEl.textContent = data.symmetry;
+    if (labelEl && labelEl.textContent !== data.label) labelEl.textContent = data.label;
+    if (demoEl && demoEl.textContent !== data.demo) demoEl.textContent = data.demo;
+    if (data.gate !== lastGate) {
+      lastGate = data.gate;
+      hudEl.style.borderColor = data.gate;
+      var frame = document.querySelector('.st-key-camera_preview_frame');
+      if (frame) frame.style.borderColor = data.gate;
+    }
+  };
+  sync();
+  window.__fslHudTimer = setInterval(sync, CFG.intervalMs);
+})();
+"""
+
+
+def _hud_bridge_script(*, fullscreen: bool, position: str) -> str:
+    """The loader that installs `_HUD_RUNTIME_JS` into the page.
+
+    Runs inside a `components.v1.html` iframe, which is same-origin with the
+    page, so it can reach `window.parent`. It does as little as possible
+    there: publish the config, then hand the actual runtime to the parent
+    realm as a `<script>`, because anything defined in the iframe stops
+    working the moment Streamlit replaces it on the next rerun.
+
+    Attaching the HUD to the page `<body>` is also what makes it survive
+    fullscreen: on `<body>` no Streamlit container can clip it or become its
+    containing block, so `position: fixed` behaves.
+    """
+    config = json.dumps(
+        {
+            "fullscreen": fullscreen,
+            "position": position,
+            "anchor": _HUD_PLACEMENTS.get(position, ""),
+            "dataId": _HUD_DATA_ELEMENT_ID,
+            "css": _HUD_STYLESHEET,
+            "intervalMs": _HUD_REFRESH_MS,
+        },
+        ensure_ascii=False,
+    )
+    runtime = json.dumps(_HUD_RUNTIME_JS)
+    return f"""
+<script>
+(function () {{
+  var win = window.parent;
+  var doc = win && win.document;
+  if (!doc || !doc.body) return;
+  win.__fslHudConfig = {config};
+  var previous = doc.getElementById('fsl-hud-runtime');
+  if (previous) previous.remove();
+  var runtime = doc.createElement('script');
+  runtime.id = 'fsl-hud-runtime';
+  runtime.textContent = {runtime};
+  doc.head.appendChild(runtime);
+}})();
+</script>
+"""
+
+
+def _render_hud_bridge(*, fullscreen: bool, position: str) -> None:
+    """Install the HUD bridge once per run (never inside a 5 Hz fragment)."""
+    components.html(_hud_bridge_script(fullscreen=fullscreen, position=position), height=0)
 
 
 def _render_headline_panel(
@@ -493,6 +825,14 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
     pipeline.set_midline_enabled(show_midline)
     pipeline.set_demographic_enabled(show_demographics)
 
+    # §5.4/§14.3e: the border colour is an identifier, not a verdict, and the
+    # same information stays available as text in the panel beside the video.
+    st.caption(
+        "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
+        "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
+        "同じ状態は映像の隣のテキストでも確認できます。"
+    )
+
     background_column, status_column = st.columns(2)
     with background_column:
         segmenter_path = configured_segmenter_path()
@@ -548,6 +888,24 @@ def _render_panel_layout_control() -> None:
         horizontal=True,
         help="見出し（対称度・参考性別・参考年齢・状態）の位置だけを変えます。数値は変わりません。",
     )
+    st.radio(
+        "映像上の HUD の位置",
+        options=_HUD_POSITION_OPTIONS,
+        key=HUD_POSITION_STATE_KEY,
+        horizontal=True,
+        help="映像へ重ねる対称度・参考年齢・参考性別の位置です。映像自体は加工しません。",
+    )
+
+
+def _exit_fullscreen() -> None:
+    """Leave fullscreen from the pinned button.
+
+    A callback rather than an inline assignment: Streamlit refuses to modify
+    a widget's session-state key after that widget has been instantiated, and
+    the toggle is created earlier in the same run. `on_click` runs before the
+    next run builds it, so the write lands legally.
+    """
+    st.session_state[FULLSCREEN_STATE_KEY] = False
 
 
 def _render_session_controls(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -592,9 +950,29 @@ def render_camera_section() -> None:
         st.error(str(error))
         return
 
+    fullscreen = st.toggle(
+        "映像を全画面表示",
+        key=FULLSCREEN_STATE_KEY,
+        help=(
+            "映像をブラウザ画面いっぱいに広げます。"
+            "ブラウザの F11 と併用すると完全な全画面になります。"
+        ),
+    )
+    # §5.2's overlay exception: installed once per run, never inside a
+    # fragment, so the 5 Hz update never re-sends CSS.
+    _render_hud_bridge(
+        fullscreen=fullscreen,
+        position=st.session_state.get(HUD_POSITION_STATE_KEY, _HUD_POSITION_OPTIONS[0]),
+    )
+    if fullscreen:
+        # The tabs below are not rendered while fullscreen, so this is the
+        # only way back — it has to exist before anything can cover it.
+        with st.container(key="fsl_exit_fullscreen"):
+            st.button("全画面を終了", key="exit_fullscreen", on_click=_exit_fullscreen)
+
     preview_column, result_column = _split_for_panel_layout()
 
-    with preview_column:
+    with preview_column, st.container(border=True, key="camera_preview_frame"):
         context = webrtc_streamer(
             key=WEBRTC_KEY,
             mode=WebRtcMode.SENDRECV,
@@ -616,6 +994,13 @@ def render_camera_section() -> None:
         with st.expander("表示設定"):
             _render_display_controls(pipeline)
             _render_panel_layout_control()
+        return
+
+    if fullscreen:
+        # Nothing below the video is reachable while it covers the viewport,
+        # so skip it entirely rather than leaving 5 Hz fragments repainting
+        # panels no one can see.
+        st.caption("全画面表示中です。設定・詳細結果は「全画面を終了」で戻ると表示されます。")
         return
 
     # §5.1, AC-LAYOUT-01: everything below the video is full width and one at
