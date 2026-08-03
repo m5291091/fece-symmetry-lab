@@ -1,6 +1,11 @@
 import tomllib
 from pathlib import Path
 
+from face_symmetry_lab.ui.app import (
+    INPUT_MODE_CAMERA,
+    INPUT_MODE_IMAGE,
+    INPUT_MODE_STATE_KEY,
+)
 from face_symmetry_lab.ui.model_setup import (
     DEMOGRAPHIC_ONNX_PATH_ENV_VAR,
     configured_demographic_path,
@@ -87,3 +92,62 @@ def test_the_image_symmetrization_panel_avoids_value_laden_wording() -> None:
 
     for forbidden in ("理想", "正解", "補正後", "あるべき", "完璧", "欠点"):
         assert forbidden not in source
+
+
+# --- FR-004 input selection --------------------------------------------------
+
+
+def _input_selector_app():
+    from streamlit.testing.v1 import AppTest
+
+    return AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.app import _render_input_mode_selector\n"
+        "st.session_state['selected'] = _render_input_mode_selector()\n"
+    )
+
+
+def test_the_input_selector_describes_both_modes_before_one_is_chosen() -> None:
+    """FR-004: what each input does is readable without selecting it first."""
+    at = _input_selector_app()
+    at.run()
+
+    assert not at.exception
+    rendered = " ".join(element.value for element in list(at.markdown) + list(at.caption))
+    assert "Web カメラ" in rendered
+    assert "画像ファイル" in rendered
+    assert "JPEG / PNG" in rendered
+
+
+def test_the_input_selector_defaults_to_camera_and_marks_the_active_mode() -> None:
+    at = _input_selector_app()
+    at.run()
+
+    assert at.session_state["selected"] == INPUT_MODE_CAMERA
+
+
+def test_deselecting_keeps_the_previous_input_active() -> None:
+    """§15.1: one input is always active; a cleared control must not blank the page."""
+    at = _input_selector_app()
+    at.session_state[INPUT_MODE_STATE_KEY] = INPUT_MODE_IMAGE
+    at.run()
+    assert at.session_state["selected"] == INPUT_MODE_IMAGE
+
+    # `st.segmented_control` allows clicking the active option to clear it.
+    at.session_state[INPUT_MODE_STATE_KEY] = None
+    at.run()
+
+    assert not at.exception
+    assert at.session_state["selected"] == INPUT_MODE_IMAGE
+
+
+def test_switching_the_input_releases_the_previous_runtime() -> None:
+    """FR-004: the mode change hook drops the other input's state."""
+    import inspect
+
+    from face_symmetry_lab.ui import app
+
+    source = inspect.getsource(app._switch_input_mode)
+
+    assert "release_session_pipeline" in source
+    assert "release_image_landmarker" in source
