@@ -24,8 +24,8 @@ class ReasonCode(StrEnum):
     POSTURE = "POSTURE"
     DISTANCE = "DISTANCE"
     LOW_QUALITY = "LOW_QUALITY"
-    # §6.3 codes. The five above predate this table and are kept for callers
-    # that only need the coarse category.
+    # §6.3 のコード。上の 5 つはこの表より前からあり、粗い分類だけを必要と
+    # する呼び出し側のために残してある。
     OFF_AXIS_YAW = "OFF_AXIS_YAW"
     OFF_AXIS_PITCH = "OFF_AXIS_PITCH"
     OFF_AXIS_ROLL = "OFF_AXIS_ROLL"
@@ -40,7 +40,7 @@ class ReasonCode(StrEnum):
 
 
 class GenderLabel(StrEnum):
-    """Binary labels emitted by the selected appearance model."""
+    """採用した外見モデルが出力する 2 値ラベル。"""
 
     FEMALE = "female"
     MALE = "male"
@@ -51,17 +51,16 @@ class AnalysisState(BaseModel):
 
     status: Status
     reason: ReasonCode | None = None
-    #: §6.2 keeps blocking reasons and non-blocking warnings apart.
+    #: §6.2 は、阻害理由と阻害しない警告を分けて保つ。
     reason_codes: tuple[ReasonCode, ...] = ()
     warning_codes: tuple[ReasonCode, ...] = ()
 
 
 class SymmetryDistance(BaseModel):
-    """§8.6's normalized RMS distances, in units of the interocular distance.
+    """§8.6 の正規化 RMS 距離。単位は両眼間隔である。
 
-    0 is the floor and there is no upper bound: the values are measurements,
-    not a 0-100 score, and `overall` is the pooled fold rather than a weighted
-    blend of the four parts.
+    下限は 0 で、上限は無い。これらは 0〜100 のスコアではなく測定値であり、
+    `overall` は 4 部位の重み付き混合ではなく、まとめて折りたたんだ値である。
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -74,7 +73,7 @@ class SymmetryDistance(BaseModel):
 
 
 class DemographicEstimate(BaseModel):
-    """Reference outputs from the 18-75 age/appearance model."""
+    """18〜75 歳を対象とする年齢・外見モデルの参考出力。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

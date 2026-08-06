@@ -16,24 +16,24 @@ from face_symmetry_lab.ui.model_setup import demographic_asset, demographic_asse
 APP_ROOT = Path(__file__).parents[2]
 SCRIPTS_DIR = APP_ROOT / "scripts"
 
-#: The shipped ONNX (cv2.dnn) must track a second independent ONNX runtime
-#: (onnxruntime) far more tightly than either tracks OpenVINO. This bounds
-#: "far more tightly" generously (an order of magnitude) so the test is a
-#: robust guard against a real conversion regression, not a tight numeric
-#: gate like OD-07's OpenVINO parity target.
+#: 同梱 ONNX（cv2.dnn）は、独立した 2 つ目の ONNX runtime（onnxruntime）と、
+#: どちらが OpenVINO と一致する度合いよりもはるかに強く一致していなければ
+#: ならない。ここでは「はるかに強く」を桁 1 つ分と大きく見積もる。これにより
+#: このテストは、OD-07 の OpenVINO parity 目標のような厳密な数値ゲートではなく、
+#: 実際の変換回帰に対する頑健なガードになる。
 MAX_CV_ORT_AGE_DIFF_YEARS = 0.01
 MAX_CV_ORT_GENDER_DIFF = 1e-4
 
 
 @pytest.mark.model
 def test_shipped_onnx_agrees_with_a_second_independent_onnx_runtime() -> None:
-    """OD-07 due diligence: rule out a conversion bug as the parity source.
+    """OD-07 の due diligence: parity の原因が変換の bug でないことを確かめる。
 
-    If ``cv2.dnn`` (the app's runtime) and ``onnxruntime`` (an independent
-    ONNX engine) executing the exact same graph disagree by roughly as much
-    as either disagrees with OpenVINO, that would point at a bug in
-    ``scripts/convert_demographic_model.py`` rather than an OpenVINO-CPU
-    execution trait. See ``scripts/verify_onnx_runtime_agreement.py``.
+    まったく同じグラフを実行する ``cv2.dnn``（アプリの runtime）と
+    ``onnxruntime``（独立した ONNX エンジン）が、どちらかが OpenVINO と食い違う
+    のとおおむね同じだけ互いに食い違うなら、それは OpenVINO CPU の実行特性では
+    なく ``scripts/convert_demographic_model.py`` の bug を示す。
+    ``scripts/verify_onnx_runtime_agreement.py`` を参照。
     """
     if (
         importlib.util.find_spec("openvino") is None

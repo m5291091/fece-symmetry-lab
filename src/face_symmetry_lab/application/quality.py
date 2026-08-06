@@ -1,8 +1,7 @@
-"""Quality gate and OK/HOLD hysteresis (§6.2, §6.4, §8.2).
+"""品質ゲートと OK/HOLD のヒステリシス（§6.2, §6.4, §8.2）。
 
-The gate decides whether a frame may produce a score. It never scores, and it
-keeps blocking reasons (`reason_codes`) apart from non-blocking notes
-(`warning_codes`).
+ゲートは、そのフレームがスコアを生んでよいかどうかだけを決める。採点は行わず、
+阻害理由（`reason_codes`）と、阻害しない注記（`warning_codes`）を分けて保つ。
 """
 
 from __future__ import annotations
@@ -17,12 +16,12 @@ MAX_ANGLE_DEG: float = 45.0
 
 
 class QualityConfigError(ValueError):
-    """Invalid gate thresholds."""
+    """ゲートの閾値が不正である。"""
 
 
 @dataclass(frozen=True, slots=True)
 class QualityThresholds:
-    """§15.2 Advanced settings. Inner admits, outer releases."""
+    """§15.2 の Advanced 設定。inner で受け入れ、outer で解除する。"""
 
     yaw_inner_deg: float = 15.0
     yaw_outer_deg: float = 17.0
@@ -30,12 +29,10 @@ class QualityThresholds:
     pitch_outer_deg: float = 17.0
     roll_inner_deg: float = 25.0
     roll_outer_deg: float = 28.0
-    #: §8.2 item 4, OD-05: a PC webcam frames a face far smaller than a phone
-    #: selfie at a comfortable sitting distance. Empirically, a relaxed
-    #: sitting posture with the upper body visible measures ratios as low as
-    #: ~0.02; 0.12, then 0.05, both still forced users to lean in
-    #: uncomfortably close. Still an initial candidate pending real-device
-    #: evaluation (OD-05).
+    #: §8.2 の 4 番、OD-05: 楽な着席距離では、PC の webcam はスマートフォンの
+    #: 自撮りよりはるかに小さく顔を写す。実測では、上半身が入る自然な着席姿勢で
+    #: 比が 0.02 程度まで下がる。0.12、次いで 0.05 を試したが、どちらも利用者に
+    #: 不快なほど顔を近づけさせた。実機評価待ちの暫定値である（OD-05）。
     face_area_min: float = 0.02
     face_area_max: float = 0.55
     valid_frames_to_ok: int = 5
@@ -66,7 +63,7 @@ def evaluate_frame(
     *,
     strict: bool,
 ) -> tuple[ReasonCode, ...]:
-    """Return the blocking reasons for one frame. Empty means the frame passes."""
+    """フレーム 1 枚の阻害理由を返す。空ならそのフレームは通過する。"""
     pose = frame.pose
     if pose is None:
         return (ReasonCode.LOW_CONFIDENCE,)
@@ -95,7 +92,7 @@ def evaluate_frame(
 
 
 class QualityGate:
-    """Session-scoped OK/HOLD state machine with hysteresis (§6.4)."""
+    """セッション単位の OK/HOLD 状態機械。ヒステリシス付き（§6.4）。"""
 
     def __init__(self, thresholds: QualityThresholds | None = None) -> None:
         self._thresholds = validate_thresholds(thresholds or QualityThresholds())
@@ -115,13 +112,13 @@ class QualityGate:
         self._status = Status.HOLD
 
     def update(self, frame: LandmarkFrame) -> AnalysisState:
-        """Advance the state machine by one analysed frame."""
+        """解析済みフレーム 1 枚分だけ状態機械を進める。"""
         if frame.face_count == 0:
             return self._settle(Status.NO_FACE, (ReasonCode.NO_FACE,))
         if frame.face_count > 1:
             return self._settle(Status.MULTI_FACE, (ReasonCode.MULTIPLE_FACES,))
 
-        # Leaving OK uses the outer thresholds; entering OK uses the inner ones.
+        # OK から出るときは outer 閾値、OK へ入るときは inner 閾値を使う。
         strict = self._status is not Status.OK
         reasons = evaluate_frame(frame, self._thresholds, strict=strict)
         if reasons:

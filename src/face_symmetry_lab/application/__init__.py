@@ -1,1 +1,1 @@
-"""Application use cases and validated input boundaries."""
+"""アプリケーションの use case と、検証済みの入力境界。"""

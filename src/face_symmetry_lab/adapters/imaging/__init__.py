@@ -1,1 +1,1 @@
-"""Image transformation adapters."""
+"""画像変換 adapter。"""

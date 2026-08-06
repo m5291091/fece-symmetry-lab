@@ -12,12 +12,12 @@ def test_a_fresh_value_is_returned_until_the_ttl_elapses() -> None:
 
 
 def test_an_expired_value_is_dropped_rather_than_returned_once_more() -> None:
-    """§1.2(17): a stale overlay must never be redrawn onto a later face."""
+    """§1.2(17): 古いオーバーレイを、後の顔へ描き直してはならない。"""
     cache: TtlCache[str] = TtlCache()
     cache.store("geometry", at=10.0)
 
     assert cache.read(now=10.26, ttl_seconds=0.25) is None
-    # Dropped, not merely hidden: a wider TTL cannot resurrect it.
+    # 隠すのではなく破棄する。TTL を広げても復活させられない。
     assert cache.read(now=10.26, ttl_seconds=100.0) is None
 
 
@@ -36,7 +36,7 @@ def test_storing_again_restarts_the_ttl() -> None:
 
 
 def test_clear_drops_a_value_that_is_still_within_its_ttl() -> None:
-    """Detection failure, multi-face, and reset must take effect immediately."""
+    """検出失敗・複数顔・リセットは、いずれも即座に反映されなければならない。"""
     cache: TtlCache[str] = TtlCache()
     cache.store("geometry", at=10.0)
 
@@ -46,7 +46,7 @@ def test_clear_drops_a_value_that_is_still_within_its_ttl() -> None:
 
 
 def test_concurrent_store_and_read_never_observe_a_torn_slot() -> None:
-    """Written on the WebRTC receive thread, read by the throttled path."""
+    """WebRTC の受信スレッドが書き、間引き経路が読む。"""
     cache: TtlCache[tuple[str, float]] = TtlCache()
     observed: list[tuple[str, float] | None] = []
     stop = threading.Event()

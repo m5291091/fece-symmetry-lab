@@ -1,21 +1,21 @@
-"""Symmetrized landmark positions and their deviations (§8.6.2, FR-034).
+"""対称化したランドマーク位置と、そのズレ（§8.6.2, FR-034）。
 
-Folding a face across its midline gives, for every versioned correspondence
-`(l, r)`, one position both sides would occupy if the two halves matched:
+顔を正中線で折り返すと、版付きの対応 `(l, r)` ごとに、左右が一致していた場合
+に両側が占めるはずの位置が 1 つ求まる。
 
     mid_l = (left_l + mirror(right_r)) / 2
     mid_r = mirror(mid_l)
 
-A midline point is the same formula applied to itself, `(p + mirror(p)) / 2`,
-which is exactly its orthogonal projection onto the fitted line — so one rule
-covers both cases. Landmarks with no defined correspondence (the majority of
-the 478) are left at their measured position rather than guessed at.
+正中点は同じ式を自分自身へ適用したもの `(p + mirror(p)) / 2` であり、これは
+推定した直線への直交射影そのものである。したがって 1 つの規則で両方の場合を
+覆える。対応が定義されていないランドマーク（478 点の大半）は、推測せずに実測
+位置のまま残す。
 
-This introduces no new metric. The distance from a measured point to its
-symmetrized position is exactly half `||left_i - mirror(right_i)||` from §8.5,
-so this module is a way of *showing* the existing measurement, not a second
-one. Nothing here ranks, scores, or corrects a face: "symmetrized" names a
-geometric construction, never a target or an improvement (§5.3, §10.7).
+ここで新しい指標を導入することはない。実測点から対称化位置までの距離は、§8.5
+の `||left_i - mirror(right_i)||` のちょうど半分である。つまりこのモジュールは
+既存の測定値を *見せる* 手段であって、2 つ目の測定ではない。ここには順位付けも
+採点も補正も無い。「対称化」は幾何的な構成を指す語であり、目標でも改善でもない
+（§5.3, §10.7）。
 """
 
 from __future__ import annotations
@@ -36,41 +36,41 @@ from face_symmetry_lab.domain.metrics import MetricConfig
 
 
 class SymmetrizationError(ValueError):
-    """The input cannot be symmetrized at all."""
+    """入力をそもそも対称化できない。"""
 
 
 @dataclass(frozen=True, slots=True)
 class SymmetrizationResult:
-    """Measured and symmetrized positions for one face, in source coordinates."""
+    """顔 1 つ分の実測位置と対称化位置。座標系は入力と同じ。"""
 
-    #: The input points, unchanged, so a caller draws both from one result.
+    #: 入力の点をそのまま保持する。呼び出し側が 1 つの結果から両方を描ける。
     measured: NDArray[np.float64]
-    #: Same shape as `measured`. Indices outside `symmetrized_indices` are
-    #: carried over untouched, never interpolated.
+    #: `measured` と同じ形。`symmetrized_indices` に含まれない index はそのまま
+    #: 引き継ぎ、補間は行わない。
     symmetrized: NDArray[np.float64]
-    #: Which indices actually moved: the usable pairs plus the midline points.
+    #: 実際に動いた index。使用できたペアと正中点の集合である。
     symmetrized_indices: tuple[int, ...]
-    #: index -> distance between measured and symmetrized, in units of the
-    #: interocular distance (§8.3), so it is comparable with §8.5's distances.
+    #: index -> 実測位置と対称化位置の距離。単位は両眼間隔（§8.3）なので、
+    #: §8.5 の距離と直接比較できる。
     deviations: dict[int, float]
-    #: The fitted midline, in the normalized frame it was fitted in.
+    #: 推定した正中線。推定を行った正規化フレームの座標で持つ。
     midline: Midline
-    #: Interocular distance in source pixels — §8.3's normalization scale.
-    #: §8.6.4's displacement guard needs the deviations back in pixels.
+    #: 入力画素での両眼間隔。§8.3 の正規化スケールである。§8.6.4 の変位ガードが
+    #: ズレを画素へ戻すために必要とする。
     interocular_px: float
     metric_version: str
     landmark_map_version: str
 
     @property
     def mean_deviation(self) -> float | None:
-        """Mean normalized deviation, or None when nothing was symmetrized."""
+        """正規化ズレの平均。対称化した点が無いときは None。"""
         if not self.deviations:
             return None
         return float(np.mean(list(self.deviations.values())))
 
     @property
     def max_deviation(self) -> float | None:
-        """Largest normalized deviation, or None when nothing was symmetrized."""
+        """正規化ズレの最大値。対称化した点が無いときは None。"""
         if not self.deviations:
             return None
         return float(max(self.deviations.values()))
@@ -80,7 +80,7 @@ def symmetrize_landmarks(
     points: NDArray[np.float64],
     config: MetricConfig,
 ) -> SymmetrizationResult:
-    """Build the symmetrized counterpart of one face's landmarks."""
+    """顔 1 つ分のランドマークに対応する、対称化された点群を構築する。"""
     try:
         transform = normalization_transform(
             points,
@@ -106,15 +106,15 @@ def symmetrize_landmarks(
         rights = np.fromiter((right for _, right in usable), dtype=np.int64, count=len(usable))
         midpoints = (normalized[lefts] + mirrored[rights]) / 2.0
         symmetrized[lefts] = midpoints
-        # The right side is the left side's mirror by construction, which is
-        # what makes the result exactly symmetric about the fitted line.
+        # 右側は構成上つねに左側の鏡像である。これにより結果が推定した直線に
+        # 対して厳密に対称になる。
         symmetrized[rights] = reflect_across_midline(midpoints, midline)
         changed.extend(int(index) for index in lefts)
         changed.extend(int(index) for index in rights)
 
     if midline_indices:
         selected = np.asarray(midline_indices, dtype=np.int64)
-        # `(p + mirror(p)) / 2` is the orthogonal projection onto the line.
+        # `(p + mirror(p)) / 2` は、その直線への直交射影である。
         symmetrized[selected] = (normalized[selected] + mirrored[selected]) / 2.0
         changed.extend(int(index) for index in selected)
 

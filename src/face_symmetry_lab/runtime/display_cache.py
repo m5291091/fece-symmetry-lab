@@ -1,15 +1,15 @@
-"""A single-slot value that a display path may reuse until it goes stale.
+"""表示経路が、古くなるまで再利用してよい 1 枠だけの値。
 
-§1.2(17): a frame that cadence control left un-analysed may keep redrawing
-the last geometry and reuse the last background mask, but only while both
-are still plausibly about the same face. That is one question asked twice,
-so both use this slot rather than open-coding "value plus when it was
-stored" — and its TTL rules — in two places.
+§1.2(17): cadence 制御が解析しなかったフレームは、直前の幾何を描き直し、
+直前の背景 mask を再利用してよい。ただし、それらが同じ顔についてのものだと
+まだ考えられる間に限る。これは同じ問いを 2 回しているだけなので、「値と保存
+した時刻」およびその TTL の規則を 2 箇所へ書き下ろすのではなく、両方がこの
+枠を使う。
 
-Thread-safe: written from the WebRTC receive thread that runs the analysis
-and read from the same thread's throttled path, with ``store``, ``read``
-and ``clear`` each atomic. Holds no domain knowledge and imports nothing
-from the pipeline, so it is testable without a frame or a landmarker.
+スレッドセーフである。解析を行う WebRTC の受信スレッドが書き、同じスレッドの
+間引き経路が読む。``store``・``read``・``clear`` はそれぞれ atomic である。
+domain の知識を持たず pipeline から何も import しないので、フレームも
+landmarker も無しでテストできる。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import threading
 
 
 class TtlCache[T]:
-    """The latest stored value, readable only while younger than a TTL."""
+    """最後に保存した値。TTL より新しい間だけ読める。"""
 
     __slots__ = ("_lock", "_stored_at", "_value")
 
@@ -28,17 +28,16 @@ class TtlCache[T]:
         self._stored_at: float | None = None
 
     def store(self, value: T, *, at: float) -> None:
-        """Replace the slot, restarting the TTL from ``at``."""
+        """枠を置き換え、TTL を ``at`` から数え直す。"""
         with self._lock:
             self._value = value
             self._stored_at = at
 
     def read(self, *, now: float, ttl_seconds: float) -> T | None:
-        """Return the value while it is fresh, dropping it once it is not.
+        """値が新しい間はそれを返し、古くなったら破棄する。
 
-        Expiry clears the slot rather than merely hiding it, so a later read
-        with a wider TTL can never resurrect geometry belonging to a face
-        that has since left the frame.
+        期限切れは枠を隠すのではなく消去する。そのため、後からより広い TTL で
+        読んでも、すでにフレームから外れた顔の幾何が復活することはない。
         """
         with self._lock:
             value = self._value
@@ -50,7 +49,7 @@ class TtlCache[T]:
             return value
 
     def clear(self) -> None:
-        """Drop the value immediately, TTL or not (detection loss, reset)."""
+        """TTL に関わらず値を直ちに破棄する（検出喪失、リセット時）。"""
         with self._lock:
             self._value = None
             self._stored_at = None

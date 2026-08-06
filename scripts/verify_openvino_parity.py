@@ -6,21 +6,18 @@
 #   "openvino==2026.2.1",
 # ]
 # ///
-"""Fixed-input parity between the official OpenVINO IR and the shipped ONNX.
+"""公式 OpenVINO IR と同梱 ONNX の、固定入力に対する parity を測る。
 
-This development-only tool answers OD-07's "runtime parity" clause: it feeds a
-deterministic, synthetic tensor set through the manifest-pinned OpenVINO IR
-(reference) and the manifest-pinned derived ONNX read with
-``cv2.dnn.readNetFromONNX`` (candidate, the exact code path
-``opencv_demographic_estimator`` uses), then reports the largest age and
-gender-probability gaps between them.
+開発時専用のツールで、OD-07 の「runtime parity」条項に答える。決定的な合成
+tensor 群を、manifest で固定した OpenVINO IR（参照）と、``cv2.dnn.readNetFromONNX``
+で読み込んだ manifest 固定の派生 ONNX（候補。``opencv_demographic_estimator``
+が使うのとまったく同じ経路）へ通し、年齢と性別確率の最大差を報告する。
 
-``openvino`` must never join the application's runtime lock (ADR-0003, §5,
-§10.6), so this script pins its own dependencies via PEP 723 and is meant to
-run through ``uv run scripts/verify_openvino_parity.py``, which resolves an
-isolated environment separate from ``uv sync``. Run it in whatever development
-environment can install ``openvino`` for your platform; nothing here touches
-``pyproject.toml`` or ``uv.lock``.
+``openvino`` をアプリの runtime lock へ加えてはならない（ADR-0003, §5, §10.6）。
+そのため本 script は PEP 723 で自前の依存を固定し、``uv sync`` とは別の隔離環境を
+解決する ``uv run scripts/verify_openvino_parity.py`` 経由での実行を想定している。
+``openvino`` を導入できる開発環境で実行すればよく、ここから ``pyproject.toml`` や
+``uv.lock`` に触れることはない。
 """
 
 from __future__ import annotations
@@ -44,16 +41,16 @@ DERIVED_NAME = "demographic_age_gender_onnx"
 OUTPUT_NAMES = ["fc3_a", "prob"]
 INPUT_SHAPE = (1, 3, 62, 62)
 
-#: Model card "Release gate" §1 target (docs/model-cards/openvino-age-gender-retail-0013.md).
+#: model card の「Release gate」§1 の目標値（docs/model-cards/openvino-age-gender-retail-0013.md）。
 DEFAULT_AGE_GATE_YEARS = 0.1
 DEFAULT_GENDER_GATE_PROB = 1e-4
 
-#: §21.4 prefers synthetic, redistributable fixtures over real face crops.
+#: §21.4 は、実際の顔の切り出しよりも、再配布可能な合成 fixture を優先する。
 FIXED_SEED = 20260801
 
 
 class ParityError(RuntimeError):
-    """The pinned assets, manifest, or a runtime could not be verified."""
+    """固定 asset・manifest・runtime のいずれかを検証できなかった。"""
 
 
 def _sha256(path: Path) -> str:
@@ -82,11 +79,11 @@ def _manifest_entries(manifest_path: Path) -> tuple[dict[str, Any], dict[str, An
 
 
 def fixed_input_samples() -> list[tuple[str, np.ndarray]]:
-    """A deterministic tensor set: saturation edges plus seeded interiors.
+    """決定的な tensor 群。飽和端の値と、seed 付きの内部値からなる。
 
-    Every sample is reproducible bit-for-bit across machines given the pinned
-    numpy version above, so a parity run is comparable across two development
-    environments without shipping any photograph.
+    上で固定した numpy の版があれば、どの標本も機械をまたいでビット単位で再現
+    できる。そのため写真を一切配布せずに、2 つの開発環境の parity 実行結果を
+    比較できる。
     """
     samples: list[tuple[str, np.ndarray]] = [
         ("min_saturation_0", np.zeros(INPUT_SHAPE, dtype=np.float32)),
@@ -99,7 +96,7 @@ def fixed_input_samples() -> list[tuple[str, np.ndarray]]:
         tensor = rng.uniform(40.0, 220.0, size=INPUT_SHAPE).astype(np.float32)
         samples.append((f"uniform_random_{index}", tensor))
 
-    # A BGR spatial ramp within a plausible skin-tone range (§8.6.1 crops).
+    # 肌色としてありうる範囲に収めた BGR の空間傾斜（§8.6.1 の切り出し）。
     columns = np.linspace(60.0, 140.0, INPUT_SHAPE[3], dtype=np.float32)
     rows = np.linspace(90.0, 180.0, INPUT_SHAPE[2], dtype=np.float32)
     blue = np.tile(columns[None, :], (INPUT_SHAPE[2], 1))

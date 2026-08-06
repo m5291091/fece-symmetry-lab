@@ -34,7 +34,7 @@ def _mesh(target=None, **overrides):
     )
 
 
-# --- border anchors ----------------------------------------------------------
+# --- 外周アンカー ------------------------------------------------------------
 
 
 def test_the_border_anchors_are_the_corners_and_edge_midpoints() -> None:
@@ -60,11 +60,11 @@ def test_a_degenerate_image_size_is_refused(width: int, height: int) -> None:
         border_anchors(width, height)
 
 
-# --- mesh assembly -----------------------------------------------------------
+# --- メッシュの組み立て ------------------------------------------------------
 
 
 def test_the_mesh_appends_pinned_anchors_after_the_landmarks() -> None:
-    """§8.6.4: the border is identical in both sets, so it cannot move."""
+    """§8.6.4: 外周は両方の集合で同一なので、動きようがない。"""
     mesh = _mesh()
 
     assert mesh.landmark_count == len(_POINTS)
@@ -91,7 +91,7 @@ def test_the_mesh_reports_the_largest_displacement() -> None:
 
 
 def test_points_outside_the_frame_are_clamped_rather_than_refused() -> None:
-    """A landmark a pixel outside the edge is an artefact, not a failure."""
+    """端から 1 画素外にあるランドマークは副産物であって、失敗ではない。"""
     source = _POINTS.copy()
     source[0] = [-15.0, -22.0]
     target = source.copy()
@@ -113,7 +113,7 @@ def test_the_input_arrays_are_never_mutated() -> None:
     assert np.array_equal(source, original)
 
 
-# --- the displacement guard --------------------------------------------------
+# --- 変位ガード --------------------------------------------------------------
 
 
 def test_a_displacement_inside_the_guard_is_accepted() -> None:
@@ -124,7 +124,7 @@ def test_a_displacement_inside_the_guard_is_accepted() -> None:
 
 
 def test_a_displacement_beyond_the_guard_refuses_the_whole_warp() -> None:
-    """§8.6.4: past this the piecewise map folds over itself, so refuse."""
+    """§8.6.4: これを超えると区分写像が自分自身へ折り重なるので、拒否する。"""
     target = _POINTS.copy()
     target[4, 0] += MAX_WARP_DISPLACEMENT_RATIO * 120.0 * 1.5
 
@@ -133,7 +133,7 @@ def test_a_displacement_beyond_the_guard_refuses_the_whole_warp() -> None:
 
 
 def test_the_guard_scales_with_the_face_rather_than_the_image() -> None:
-    """The same pixel displacement is fine on a big face and not on a small one."""
+    """同じ画素変位でも、大きな顔なら問題なく、小さな顔なら問題になる。"""
     target = _POINTS.copy()
     target[4, 0] += 20.0
 
@@ -176,7 +176,7 @@ def test_a_wrongly_shaped_array_is_refused() -> None:
         )
 
 
-# --- triangle degeneracy -----------------------------------------------------
+# --- 三角形の退化 ------------------------------------------------------------
 
 
 def test_a_triangle_area_is_the_usual_half_cross_product() -> None:

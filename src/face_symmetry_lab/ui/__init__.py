@@ -1,1 +1,1 @@
-"""Streamlit presentation layer."""
+"""Streamlit の表示層。"""

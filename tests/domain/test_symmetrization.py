@@ -17,8 +17,8 @@ from face_symmetry_lab.domain.symmetrization import (
 from face_symmetry_lab.domain.symmetry import compute_symmetry
 from tests.domain.test_symmetry import SYNTHETIC_FACE
 
-#: Indices 0-24 are paired or midline; 25/26 stay out of every part below so
-#: the "no correspondence defined" rule has something to leave alone.
+#: index 0〜24 はペアか正中である。25/26 は下のどの部位にも属さないままにし、
+#: 「対応が定義されていない」規則が手を触れない対象を持てるようにする。
 UNPAIRED_INDICES = (25, 26)
 
 
@@ -49,11 +49,11 @@ def _skewed(offset: float = 6.0):
     return points
 
 
-# --- the transform's inverse -------------------------------------------------
+# --- 変換の逆変換 ------------------------------------------------------------
 
 
 def test_the_normalization_transform_round_trips_to_the_source_coordinates() -> None:
-    """AC-SYMM-01: the inverse is exact, not an approximation."""
+    """AC-SYMM-01: 逆変換は近似ではなく厳密である。"""
     transform = normalization_transform(
         SYNTHETIC_FACE, left_eye_corners=(0, 1), right_eye_corners=(2, 3)
     )
@@ -89,7 +89,7 @@ def test_a_rolled_and_scaled_face_still_round_trips() -> None:
     assert np.allclose(restored, points, atol=1e-6)
 
 
-# --- the symmetrized construction -------------------------------------------
+# --- 対称化の構成 ------------------------------------------------------------
 
 
 def test_a_symmetric_face_is_already_its_own_symmetrization() -> None:
@@ -100,7 +100,7 @@ def test_a_symmetric_face_is_already_its_own_symmetrization() -> None:
 
 
 def test_a_paired_point_moves_to_the_midpoint_of_itself_and_its_mirror() -> None:
-    """§8.6.2's rule, checked against the geometry primitives it is built on."""
+    """§8.6.2 の規則を、その土台である幾何プリミティブと突き合わせて確認する。"""
     points = _skewed()
     config = _config()
     normalized = normalize_landmarks(points, left_eye_corners=(0, 1), right_eye_corners=(2, 3))
@@ -128,7 +128,7 @@ def test_the_right_side_is_the_mirror_of_the_symmetrized_left_side() -> None:
 
 
 def test_a_midline_point_lands_on_the_fitted_line() -> None:
-    """§8.6.2: `(p + mirror(p)) / 2` is the orthogonal projection."""
+    """§8.6.2: `(p + mirror(p)) / 2` は直交射影である。"""
     points = _skewed()
     config = _config()
     result = symmetrize_landmarks(points, config)
@@ -155,7 +155,7 @@ def test_the_whole_symmetrized_set_is_symmetric_about_the_midline() -> None:
 
 
 def test_points_without_a_defined_correspondence_keep_their_measured_position() -> None:
-    """§8.6.2 refuses to guess a correspondence that the map does not define."""
+    """§8.6.2 は、対応表が定義していない対応を推測しない。"""
     points = _skewed()
 
     result = symmetrize_landmarks(points, _config())
@@ -176,7 +176,7 @@ def test_the_symmetrized_indices_cover_exactly_the_pairs_and_the_midline() -> No
 
 
 def test_the_deviation_is_half_the_paired_distance_the_metric_reports() -> None:
-    """§8.6.2 introduces no new metric: it is §8.5's distance, halved."""
+    """§8.6.2 は新しい指標を導入しない。§8.5 の距離を半分にしたものである。"""
     points = _skewed()
     config = _config()
 
@@ -191,13 +191,13 @@ def test_the_deviation_is_half_the_paired_distance_the_metric_reports() -> None:
 
 
 def test_the_deviations_track_the_measured_distance_without_replacing_it() -> None:
-    """A larger left/right difference shows up as a larger visual deviation."""
+    """左右差が大きいほど、見た目のズレも大きく現れる。"""
     small = symmetrize_landmarks(_skewed(2.0), _config())
     large = symmetrize_landmarks(_skewed(9.0), _config())
 
     assert small.max_deviation is not None and large.max_deviation is not None
     assert large.max_deviation > small.max_deviation
-    # The metric it visualizes moves the same way, and stays the metric.
+    # 可視化の対象である指標も同じ向きに動き、指標であり続ける。
     small_overall = compute_symmetry(_skewed(2.0), _config()).overall
     large_overall = compute_symmetry(_skewed(9.0), _config()).overall
     assert small_overall is not None and large_overall is not None
@@ -214,7 +214,7 @@ def test_the_result_carries_the_versions_needed_to_reproduce_it() -> None:
 def test_a_short_landmark_set_symmetrizes_only_the_usable_pairs() -> None:
     result = symmetrize_landmarks(SYNTHETIC_FACE[:20], _config())
 
-    assert 20 not in result.symmetrized_indices  # its partner is out of range
+    assert 20 not in result.symmetrized_indices  # 対になる相手が範囲外である
     assert 19 not in result.symmetrized_indices
     assert 7 in result.symmetrized_indices
 

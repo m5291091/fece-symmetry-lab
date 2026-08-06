@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Derive the left/right landmark correspondence map (maintainer tool).
+"""左右ランドマークの対応表を導出する（メンテナ向けツール）。
 
-The map is not hand-written. It is derived from the Face Landmarker's own mesh
-topology and frozen into ``configs/metrics/symmetry-2d-v1.json``:
+この表は手書きではない。Face Landmarker 自身のメッシュ位相から導出し、
+``configs/metrics/symmetry-2d-v1.json`` へ凍結する。
 
-1. Detect landmarks on a symmetric synthetic face, in several renderings.
-2. Mirror the 3D point cloud about the face's mean x axis.
-3. Keep a pair only when the mirrored nearest neighbour is *mutual* and agrees
-   across every rendering. Points matching themselves become midline points.
-4. Group the survivors into contour / eyes / nose / mouth from the MediaPipe
-   connection sets.
+1. 対称な合成顔に対し、複数の描画条件でランドマークを検出する。
+2. 3D 点群を、顔の平均 x 軸について鏡映する。
+3. 鏡映後の最近傍が *相互* に一致し、かつすべての描画条件で一致するペアだけを
+   残す。自分自身と一致する点は正中点とする。
+4. 残った対応を、MediaPipe の接続集合から輪郭 / 目 / 鼻 / 口へ分類する。
 
-Anything that does not survive is left out rather than guessed, so the frozen
-map contains only verifiable correspondences.
+残らなかったものは推測せずに除外する。そのため凍結された表には、検証できる
+対応だけが含まれる。
 
     uv run python scripts/derive_landmark_map.py --check
     uv run python scripts/derive_landmark_map.py --write
@@ -112,7 +111,7 @@ def derive_map(model_path: Path) -> dict[str, Any]:
         RunningMode,
     )
 
-    assert mp  # imported for the side effect of a clear failure when absent
+    assert mp  # 未導入のときに明確な失敗を起こす、という副作用のために import する
 
     options = FaceLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=str(model_path)),

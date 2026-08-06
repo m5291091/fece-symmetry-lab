@@ -3,21 +3,20 @@
     d_p   = sqrt(mean_{i in pairs(p)}(||left_i - mirror(right_i)||^2))
     d_all = sqrt(mean_{i in every part's pairs pooled}(same))
 
-Both are normalized RMS distances in units of the interocular distance, which
-§8.3 scales to 1. There is no `100 × exp(-k_p × d_p)` readability transform and
-no `Σ(w_p × score_p)` blend any more: the sensitivity coefficients were never
-frozen against a fixed evaluation set and the part weights had no empirical
-basis, so both arbitrary parameters were removed rather than left to shape a
-displayed number.
+いずれも両眼間隔を単位とする正規化 RMS 距離であり、§8.3 がその間隔を 1 にする。
+`100 × exp(-k_p × d_p)` という可読化変換も、`Σ(w_p × score_p)` という混合も
+もう存在しない。感度係数は固定評価セットに対して凍結されたことが一度も無く、
+部位の重みには経験的な根拠が無かった。表示される数値を形作らせたままにせず、
+どちらの恣意的なパラメータも取り除いた。
 
-`d_all` is not composed from `d_p`. It folds one pooled set of correspondences
-once, so every point carries exactly one vote and no part-importance judgement
-enters the total. The per-part values are a parallel, purely diagnostic output
-("where is the deviation concentrated?") and never feed the overall one.
+`d_all` は `d_p` から合成しない。まとめた 1 つの対応集合を 1 回だけ折りたたむ
+ため、どの点もちょうど 1 票ずつ持ち、部位の重要度という判断が総合値へ入らない。
+部位別の値は並列に得られる純粋な診断出力（「ズレはどこに集中しているか」）で
+あり、総合値へは決して寄与しない。
 
-A part with too few usable pairs is missing, never zero. A missing part does
-*not* make the overall value missing — the two are independent outputs, and the
-pooled fold stays well defined on whatever pairs remain (§8.5, §8.6).
+使用できるペアが足りない部位は欠測であって 0 ではない。ある部位が欠測でも総合値
+は欠測に *ならない*。両者は独立した出力であり、まとめた折りたたみは残っている
+ペアの上で定義され続ける（§8.5, §8.6）。
 """
 
 from __future__ import annotations
@@ -38,12 +37,12 @@ from face_symmetry_lab.domain.models import SymmetryDistance
 
 
 class SymmetryError(ValueError):
-    """The input cannot produce a symmetry distance at all."""
+    """入力からそもそも左右差距離を求められない。"""
 
 
 @dataclass(frozen=True, slots=True)
 class SymmetryResult:
-    """Per-part normalized RMS distances plus the independent pooled total."""
+    """部位別の正規化 RMS 距離と、それとは独立にまとめて求めた総合値。"""
 
     distances: dict[str, float | None]
     overall: float | None
@@ -60,7 +59,7 @@ class SymmetryResult:
         )
 
     def to_distance(self) -> SymmetryDistance | None:
-        """Convert to the shared DTO, or None when any value is missing."""
+        """共有 DTO へ変換する。欠測値が 1 つでもあれば None を返す。"""
         if not self.is_complete:
             return None
         return SymmetryDistance(
@@ -78,7 +77,7 @@ def _pair_distance(
     pairs: tuple[tuple[int, int], ...],
     available: int,
 ) -> tuple[float, int]:
-    """RMS distance over the usable pairs, and how many there were."""
+    """使用できたペアに対する RMS 距離と、その本数を返す。"""
     usable = [(left, right) for left, right in pairs if left < available and right < available]
     if not usable:
         return 0.0, 0
@@ -92,7 +91,7 @@ def compute_symmetry(
     points: NDArray[np.float64],
     config: MetricConfig,
 ) -> SymmetryResult:
-    """Measure the left/right difference of one normalized face."""
+    """正規化した顔 1 つ分の左右差を測る。"""
     try:
         normalized = normalize_landmarks(
             points,
@@ -113,8 +112,8 @@ def compute_symmetry(
         distance, used = _pair_distance(normalized, mirrored, part.pairs, available)
         distances[name] = distance if used >= part.min_pairs else None
 
-    # §8.6: folded once over the pooled pairs, not assembled from the four
-    # values above, so this stays defined even when a part has gone missing.
+    # §8.6: まとめたペアの上で 1 回だけ折りたたむ。上の 4 つの値から組み立て
+    # ないので、ある部位が欠測になっても総合値は定義され続ける。
     pooled, pooled_used = _pair_distance(normalized, mirrored, config.all_pairs, available)
     overall = pooled if pooled_used >= config.overall_min_pairs else None
 

@@ -33,20 +33,20 @@ def test_no_prior_face_means_search_the_full_frame() -> None:
 
 
 def test_a_small_bbox_is_expanded_by_the_margin_and_floored_at_min_window() -> None:
-    # width=height=0.05 is small enough that the 0.6 margin still lands
-    # below the 0.18 floor, so the floor should win.
+    # 幅=高さ=0.05 は十分小さく、余白 0.6 を掛けても下限 0.18 を下回る。
+    # したがって下限が優先されるはずである。
     bbox = BoundingBox(0.475, 0.475, 0.525, 0.525)
     window = next_zoom_window(bbox, policy=TrackingZoomPolicy())
 
     assert window.width == pytest.approx(0.18)
     assert window.height == pytest.approx(0.18)
-    # Centered on the bbox's own center.
+    # bbox 自身の中心を基準に配置する。
     assert window.x_min == pytest.approx(0.5 - 0.09)
     assert window.y_min == pytest.approx(0.5 - 0.09)
 
 
 def test_a_large_bbox_uses_the_margin_expansion_not_the_floor() -> None:
-    bbox = BoundingBox(0.3, 0.3, 0.5, 0.5)  # width=height=0.2
+    bbox = BoundingBox(0.3, 0.3, 0.5, 0.5)  # 幅=高さ=0.2
     window = next_zoom_window(bbox, policy=TrackingZoomPolicy(margin_ratio=0.5))
 
     assert window.width == pytest.approx(0.3)  # 0.2 * 1.5
@@ -54,7 +54,7 @@ def test_a_large_bbox_uses_the_margin_expansion_not_the_floor() -> None:
 
 
 def test_the_window_clamps_to_the_frame_edge_instead_of_going_out_of_bounds() -> None:
-    bbox = BoundingBox(0.0, 0.0, 0.1, 0.1)  # hugging the top-left corner
+    bbox = BoundingBox(0.0, 0.0, 0.1, 0.1)  # 左上の隅に張り付いている
     window = next_zoom_window(bbox, policy=TrackingZoomPolicy(margin_ratio=0.6))
 
     assert window.x_min == pytest.approx(0.0)
@@ -79,7 +79,7 @@ def test_bounding_box_of_computes_the_tight_rectangle() -> None:
 
 
 def test_remap_point_projects_crop_local_fractions_into_frame_fractions() -> None:
-    window = BoundingBox(0.25, 0.25, 0.75, 0.75)  # centered quarter-frame crop
+    window = BoundingBox(0.25, 0.25, 0.75, 0.75)  # フレーム 1/4 の中央切り出し
 
     assert remap_point((0.0, 0.0), window) == pytest.approx((0.25, 0.25))
     assert remap_point((1.0, 1.0), window) == pytest.approx((0.75, 0.75))
@@ -98,7 +98,7 @@ def test_remap_points_preserves_order_and_count() -> None:
 def test_resize_scale_for_upscales_a_small_crop_up_to_the_target() -> None:
     scale = resize_scale_for(120, 120, policy=TrackingZoomPolicy(target_px=480, max_scale=4.0))
 
-    assert scale == pytest.approx(4.0)  # 480/120 == 4.0, within the cap
+    assert scale == pytest.approx(4.0)  # 480/120 == 4.0 で、上限の内側
 
 
 def test_resize_scale_for_never_downscales_a_crop_already_larger_than_target() -> None:

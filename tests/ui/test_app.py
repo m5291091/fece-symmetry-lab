@@ -43,7 +43,7 @@ def test_streamlit_uses_the_dark_product_theme() -> None:
 
 
 def test_the_image_symmetrization_panel_reports_an_unusable_frame() -> None:
-    """FR-034: a frame that cannot be folded explains itself, never crashes."""
+    """FR-034: 折り返せないフレームは、落ちるのではなく理由を説明する。"""
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_string(
@@ -79,11 +79,11 @@ def test_the_image_symmetrization_panel_reports_an_unusable_frame() -> None:
     at.run()
 
     assert not at.exception
-    assert at.info  # explained, not silently blank
+    assert at.info  # 黙って空白にせず、理由を説明する
 
 
 def test_the_image_symmetrization_panel_avoids_value_laden_wording() -> None:
-    """§5.3/§10.7: a symmetrized face is a construction, not an ideal."""
+    """§5.3/§10.7: 対称化した顔は構成物であって、規範ではない。"""
     import inspect
 
     from face_symmetry_lab.ui import app
@@ -94,7 +94,7 @@ def test_the_image_symmetrization_panel_avoids_value_laden_wording() -> None:
         assert forbidden not in source
 
 
-# --- FR-004 input selection --------------------------------------------------
+# --- FR-004 入力方法の選択 --------------------------------------------------
 
 
 def _input_selector_app():
@@ -108,7 +108,7 @@ def _input_selector_app():
 
 
 def test_the_input_selector_describes_both_modes_before_one_is_chosen() -> None:
-    """FR-004: what each input does is readable without selecting it first."""
+    """FR-004: 各入力が何をするかは、選ぶ前に読める。"""
     at = _input_selector_app()
     at.run()
 
@@ -127,13 +127,13 @@ def test_the_input_selector_defaults_to_camera_and_marks_the_active_mode() -> No
 
 
 def test_deselecting_keeps_the_previous_input_active() -> None:
-    """§15.1: one input is always active; a cleared control must not blank the page."""
+    """§15.1: 常にどれかの入力が有効である。選択解除がページを空にしてはならない。"""
     at = _input_selector_app()
     at.session_state[INPUT_MODE_STATE_KEY] = INPUT_MODE_IMAGE
     at.run()
     assert at.session_state["selected"] == INPUT_MODE_IMAGE
 
-    # `st.segmented_control` allows clicking the active option to clear it.
+    # `st.segmented_control` は選択中の項目を押すと解除できる。
     at.session_state[INPUT_MODE_STATE_KEY] = None
     at.run()
 
@@ -142,7 +142,7 @@ def test_deselecting_keeps_the_previous_input_active() -> None:
 
 
 def test_switching_the_input_releases_the_previous_runtime() -> None:
-    """FR-004: the mode change hook drops the other input's state."""
+    """FR-004: モード変更の hook が、もう一方の入力の状態を破棄する。"""
     import inspect
 
     from face_symmetry_lab.ui import app

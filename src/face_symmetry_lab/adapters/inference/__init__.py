@@ -1,1 +1,1 @@
-"""Inference adapters."""
+"""推論 adapter。"""

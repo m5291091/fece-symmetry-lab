@@ -20,14 +20,13 @@ from face_symmetry_lab.ui.model_setup import demographic_asset, demographic_asse
 APP_ROOT = Path(__file__).parents[2]
 CONVERTER = APP_ROOT / "scripts" / "convert_demographic_model.py"
 
-#: A minimal, fully synthetic OpenVINO IR v11 pair reproducing the
-#: `age-gender-recognition-retail-0013` graph's input/output contract
-#: (`data` 1x3x62x62 in, `prob`/`fc3_a` out) with two branches. The first
-#: branch's compute node is deliberately named "prob" — like the real
-#: model's SoftMax — and its `Result` sink uses OpenVINO's common
-#: `<name>/sink_port_0` auto-naming, so stripping that suffix collides with
-#: the compute node's own name. No proprietary weights are involved (§21.4
-#: prefers synthetic fixtures over real face/model assets).
+#: `age-gender-recognition-retail-0013` の入出力契約（入力 `data` 1x3x62x62、
+#: 出力 `prob`/`fc3_a`）を 2 分岐で再現した、完全に合成の最小 OpenVINO IR v11 の
+#: 組。1 つ目の分岐の計算 node は、実モデルの SoftMax と同じく意図的に "prob" と
+#: 名付けてある。その `Result` sink は OpenVINO で一般的な `<name>/sink_port_0`
+#: の自動命名を使うため、この接尾辞を取り除くと計算 node 自身の名前と衝突する。
+#: 権利のある重みは一切含まない（§21.4 は実際の顔・モデル asset よりも合成
+#: fixture を優先する）。
 _SYNTHETIC_IR_XML = """<?xml version="1.0"?>
 <net name="synthetic_naming_collision" version="11">
   <layers>
@@ -82,14 +81,14 @@ _SYNTHETIC_IR_XML = """<?xml version="1.0"?>
 
 
 def _write_synthetic_ir(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """Write the synthetic IR pair plus a manifest that pins them, return paths."""
+    """合成 IR の組と、それらを固定する manifest を書き出し、path を返す。"""
     xml_path = tmp_path / "synthetic.xml"
     bin_path = tmp_path / "synthetic.bin"
     xml_path.write_text(_SYNTHETIC_IR_XML, encoding="utf-8")
     weights = np.concatenate(
         [
-            np.zeros(6, dtype=np.float16),  # w1: shape (2,3,1,1) -> 6 elements
-            np.zeros(3, dtype=np.float16),  # w2: shape (1,3,1,1) -> 3 elements
+            np.zeros(6, dtype=np.float16),  # w1: 形状 (2,3,1,1) -> 6 要素
+            np.zeros(3, dtype=np.float16),  # w2: 形状 (1,3,1,1) -> 3 要素
         ]
     )
     bin_path.write_bytes(weights.tobytes())
@@ -156,12 +155,12 @@ def test_conversion_reproduces_the_manifest_pinned_onnx(tmp_path: Path) -> None:
 
 
 def test_conversion_never_emits_duplicate_onnx_node_names(tmp_path: Path) -> None:
-    """A `<name>/sink_port_0` Result must not collide with a same-named compute node.
+    """`<name>/sink_port_0` の Result が、同名の計算 node と衝突してはならない。
 
-    Duplicate ONNX node names are tolerated by OpenCV's importer but rejected
-    by other strict ONNX runtimes (e.g. onnxruntime refuses to load such a
-    graph), so the generated asset must never contain one regardless of
-    which runtime ends up reading it.
+    ONNX の node 名の重複は OpenCV の importer では許容されるが、他の厳格な
+    ONNX runtime は拒否する（onnxruntime はそうしたグラフの読み込みを拒む）。
+    そのため、どの runtime が読むことになっても、生成物に重複が含まれては
+    ならない。
     """
     if importlib.util.find_spec("onnx") is None:
         pytest.skip("開発時変換packageのonnxが現在の環境にありません。")

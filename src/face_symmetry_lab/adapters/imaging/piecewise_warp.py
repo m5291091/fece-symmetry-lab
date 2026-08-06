@@ -1,19 +1,19 @@
-"""Delaunay + piecewise affine warping with OpenCV (§8.6.4, FR-035).
+"""OpenCV による Delaunay +区分アフィン変形（§8.6.4, FR-035）。
 
-Implements `application.ports.PiecewiseWarper`. This is the only part of the
-symmetrized-image feature that needs a pixel library, which is why it is an
-adapter: `domain.warp_mesh` already decided which points move, which are
-pinned, and whether the displacement is safe at all.
+`application.ports.PiecewiseWarper` を実装する。対称化画像機能のうち画素
+ライブラリを必要とするのはここだけであり、それが adapter である理由である。
+どの点が動き、どの点が固定され、そもそも変位が安全かは `domain.warp_mesh` が
+すでに決めている。
 
-`cv2` comes from `opencv-contrib-python` and nothing else (invariant 9). No
-model is loaded and no file is written: the warp is arithmetic over an array
-the caller owns.
+`cv2` は `opencv-contrib-python` だけに由来する（不変条件 9）。モデルの読み込み
+もファイルの書き出しも行わない。変形は呼び出し側が所有する配列に対する算術で
+ある。
 
-Method, per §8.6.4: triangulate the *target* points so the output tiles
-without gaps or overlaps, then reuse the same index triples on the source and
-transfer each triangle with its own affine map. Triangles the mesh cannot
-support (degenerate, or with vertices that do not resolve back to an index)
-are skipped, leaving the original pixels in place rather than guessing.
+§8.6.4 の手順は次のとおり。まず *変形先* の点を三角形分割し、出力が隙間も重なり
+も無く敷き詰められるようにする。次に同じ index の三つ組を変形元へ適用し、三角形
+ごとに専用のアフィン写像で画素を転送する。メッシュが支えられない三角形（退化
+しているもの、頂点が index へ解決できないもの）は飛ばし、推測せずに元の画素を
+残す。
 """
 
 from __future__ import annotations
@@ -28,24 +28,23 @@ from face_symmetry_lab.domain.warp_mesh import WarpMesh, is_degenerate_triangle
 
 
 class PiecewiseWarpError(ValueError):
-    """The warp could not be performed on this input."""
+    """この入力に対して変形を実行できなかった。"""
 
 
-#: Vertices are matched back to point indices through a rounded-coordinate
-#: lookup, because `cv2.Subdiv2D` returns coordinates rather than the indices
-#: it was given. Rounding to this many decimals absorbs the float32 round-trip
-#: inside Subdiv2D without merging genuinely distinct landmarks.
+#: 頂点は、丸めた座標をキーにした表で点の index へ戻す。`cv2.Subdiv2D` は渡した
+#: index ではなく座標を返すためである。この桁数で丸めると、Subdiv2D 内部の
+#: float32 往復による誤差を吸収しつつ、本当に別々のランドマークを統合せずに済む。
 _VERTEX_DECIMALS = 2
 
 
 class OpenCvPiecewiseWarper:
-    """Warp a face image onto its symmetrized landmark positions."""
+    """顔画像を、その対称化ランドマーク位置へ変形する。"""
 
     def warp(self, rgb_image: NDArray[np.uint8], mesh: WarpMesh) -> NDArray[np.uint8]:
-        """Return a copy of ``rgb_image`` deformed source→target by ``mesh``.
+        """``mesh`` に従って変形元→変形先へ変形した ``rgb_image`` の複製を返す。
 
-        The returned image starts as a copy of the original, so any region no
-        triangle covers keeps its original pixels instead of going black.
+        返す画像は元画像の複製から始める。そのため、どの三角形にも覆われない
+        領域は黒くならず、元の画素を保つ。
         """
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
             raise PiecewiseWarpError("ワーピングには 3 チャンネルの RGB 画像が必要です。")
@@ -63,18 +62,17 @@ class OpenCvPiecewiseWarper:
         return warped
 
     def _triangles(self, mesh: WarpMesh) -> tuple[tuple[int, int, int], ...]:
-        """Delaunay triangles over the target points, as index triples."""
-        # The rectangle is padded by one pixel: Subdiv2D treats its bounds as
-        # half-open and rejects a point sitting exactly on the far edge, which
-        # is precisely where `build_warp_mesh` clamps the border anchors to.
+        """変形先の点に対する Delaunay 三角形を、index の三つ組として返す。"""
+        # 矩形を 1 画素分広げている。Subdiv2D は境界を半開区間として扱い、遠い側
+        # の辺の上にちょうど乗る点を拒否するためである。`build_warp_mesh` が外周
+        # アンカーをクランプする先が、まさにその位置である。
         subdiv = cv2.Subdiv2D((0, 0, mesh.width + 1, mesh.height + 1))
         lookup: dict[tuple[float, float], int] = {}
         for index, point in enumerate(mesh.target):
             key = _vertex_key(point)
             if key in lookup:
-                # A duplicate coordinate cannot be told apart afterwards, so
-                # the first index wins and triangles resolving to it simply
-                # move both points together.
+                # 座標が重複すると後から区別できないので、最初の index を採用
+                # する。そこへ解決される三角形は、単に両方の点を一緒に動かす。
                 continue
             lookup[key] = index
             try:
@@ -90,8 +88,8 @@ class OpenCvPiecewiseWarper:
                 _vertex_key(entry[4:6]),
             )
             resolved = tuple(lookup[corner] for corner in corners if corner in lookup)
-            # Subdiv2D also reports triangles touching its virtual outer
-            # vertices; those have corners that were never inserted.
+            # Subdiv2D は仮想的な外側頂点に接する三角形も報告する。それらは
+            # 一度も挿入していない頂点を含む。
             if len(resolved) == 3:
                 triangles.append((resolved[0], resolved[1], resolved[2]))
         return tuple(triangles)
@@ -107,11 +105,11 @@ def _transfer_triangle(
     source_triangle: NDArray[np.float64],
     target_triangle: NDArray[np.float64],
 ) -> None:
-    """Affine-map one triangle's pixels into ``destination`` in place.
+    """三角形 1 つ分の画素をアフィン写像し、``destination`` へ直接書き込む。
 
-    Works on the two bounding boxes rather than the whole frame, so cost
-    scales with the triangles' size instead of the image's, and blends with a
-    filled mask so only the triangle itself is written.
+    フレーム全体ではなく 2 つの外接矩形の上で処理するので、費用は画像の大きさ
+    ではなく三角形の大きさに比例する。塗り潰した mask で合成するため、書き込ま
+    れるのは三角形の内側だけである。
     """
     source_box = cv2.boundingRect(np.asarray([source_triangle], dtype=np.float32))
     target_box = cv2.boundingRect(np.asarray([target_triangle], dtype=np.float32))

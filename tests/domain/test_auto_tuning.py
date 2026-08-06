@@ -19,8 +19,8 @@ from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 
 def test_a_frame_already_at_target_luminance_recommends_a_gain_of_one() -> None:
-    """§14.3b: measured is always the raw frame now (never post-correction),
-    so the recommendation is an absolute target gain, not a relative update."""
+    """§14.3b: 計測対象は常に生フレームであり（補正後ではない）、したがって
+    推奨値は相対的な更新ではなく、絶対的な目標 gain である。"""
     gain = recommend_brightness_gain(TARGET_MEAN_LUMINANCE)
 
     assert gain == pytest.approx(1.0)
@@ -78,8 +78,8 @@ def test_a_large_face_recommends_a_smaller_target_and_margin() -> None:
 
 def test_the_recommended_policy_always_satisfies_frs_026_bounds() -> None:
     for ratio in (0.001, 0.01, 0.12, 0.55, 1.0):
-        # TrackingZoomPolicy.__post_init__ already raises on out-of-range
-        # values, so successful construction is the contract.
+        # TrackingZoomPolicy.__post_init__ が範囲外の値に対してすでに例外を
+        # 送出するので、構築が成功することそのものが契約である。
         recommend_zoom_policy(ratio)
 
 

@@ -63,16 +63,16 @@ ESTIMATOR_STATE_KEY = "demographic_estimator"
 ESTIMATOR_PATH_KEY = "demographic_estimator_paths"
 RESULT_STATE_KEY = "demographic_estimate"
 INPUT_MODE_STATE_KEY = "input_mode"
-#: The last *valid* selection. `st.segmented_control` reports `None` when the
-#: active option is clicked again, and §15.1 requires an input to always be
-#: active, so the resolved mode is remembered separately from the widget.
+#: 最後に *有効だった* 選択。`st.segmented_control` は選択中の項目をもう一度
+#: 押すと `None` を報告するが、§15.1 は常にどれかの入力が有効であることを求める。
+#: そのため解決済みのモードを widget とは別に覚えておく。
 ACTIVE_INPUT_MODE_KEY = "active_input_mode"
 INPUT_MODE_CAMERA = "Camera"
 INPUT_MODE_IMAGE = "Image"
 
-#: FR-004: label, icon, and what the mode actually does, so the choice can be
-#: read before it is made. Keyed by the same values the session state holds,
-#: so the stored preference survives a wording change.
+#: FR-004: ラベル・アイコン・そのモードが実際に何をするか。選ぶ前に読めるように
+#: するためである。セッション状態が持つ値と同じキーを使うので、文言を変えても
+#: 保存済みの設定は生き残る。
 _INPUT_MODE_CARDS: Final[dict[str, tuple[str, str, str]]] = {
     INPUT_MODE_CAMERA: (
         "Web カメラ",
@@ -135,7 +135,7 @@ def _clear_session_result() -> None:
 
 
 def _session_image_landmarker(model_path: Path) -> MediaPipeImageLandmarker:
-    """Keep one IMAGE-mode landmarker per session, separate from the video one."""
+    """Image モードの landmarker をセッションに 1 つ保つ。映像側とは分ける。"""
     fingerprint = str(model_path.resolve())
     if (
         st.session_state.get(IMAGE_LANDMARKER_PATH_KEY) != fingerprint
@@ -154,7 +154,7 @@ def _session_image_landmarker(model_path: Path) -> MediaPipeImageLandmarker:
 
 
 def release_image_landmarker() -> None:
-    """Release the still-image landmarker (FR-004, §10.4)."""
+    """静止画用の landmarker を解放する（FR-004, §10.4）。"""
     landmarker = st.session_state.pop(IMAGE_LANDMARKER_STATE_KEY, None)
     st.session_state.pop(IMAGE_LANDMARKER_PATH_KEY, None)
     if isinstance(landmarker, MediaPipeImageLandmarker):
@@ -188,8 +188,8 @@ def _render_image_export(recorder: SessionRecorder) -> None:
             "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
             "共有先と利用目的を確認してから保存してください。"
         ),
-        # A single photo is always exactly one record, so a count would add
-        # nothing here.
+        # 1 枚の写真は常にちょうど 1 件の記録になるので、件数を出しても
+        # 情報が増えない。
         key_prefix="download_image",
     )
 
@@ -201,10 +201,10 @@ def _analyze_uploaded_image(
     model_path: Path,
     show_midline: bool,
 ) -> tuple[SessionRecorder, StillImageAnalysis]:
-    """Detect, score, and record one uploaded photo (stateless, §8.7).
+    """アップロードされた写真 1 枚を検出・採点・記録する（状態を持たない、§8.7）。
 
-    Draws nothing: the caller owns layout, so a failure here can never take
-    an unrelated panel down with it.
+    描画は一切しない。レイアウトは呼び出し側が所有するため、ここでの失敗が
+    無関係なパネルを道連れにすることはない。
     """
     config = load_metric_config()
     landmarker = _session_image_landmarker(model_path)
@@ -232,11 +232,11 @@ def _render_image_demographic_controls(
     *,
     recorder: SessionRecorder | None,
 ) -> None:
-    """On-demand age/gender trigger for the still-image flow (§10.8).
+    """静止画フローの、要求時にだけ走る年齢・性別推定の操作子（§10.8）。
 
-    Kept beside the photo, next to the headline numbers it fills in
-    (§5.1). The runtime caption and full detail panel live in
-    `_render_image_demographic_detail`, always full width below.
+    写真の隣、これが埋める見出し数値のそばに置く（§5.1）。runtime の注記と
+    詳細パネルは `_render_image_demographic_detail` にあり、常に下側へ画面幅
+    いっぱいで表示される。
     """
     demographic_model = resolve_ready_demographic()
     analyze_column, reset_column = st.columns(2)
@@ -258,8 +258,8 @@ def _render_image_demographic_controls(
             if recorder is not None:
                 recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
         except Exception as error:
-            # Invariant 12: an age/gender failure must not stop the symmetry
-            # side, so nothing beyond this panel may see the exception.
+            # 不変条件 12: 年齢・性別の失敗が左右差側を止めてはならない。
+            # そのため例外をこのパネルの外へ出さない。
             _clear_session_result()
             message = (
                 str(error)
@@ -273,14 +273,14 @@ def _render_image_symmetrization(
     rgb: np.ndarray,
     analysis: StillImageAnalysis,
 ) -> None:
-    """FR-034: the same one-shot fold as Camera, on the uploaded photo.
+    """FR-034: Camera と同じ一発の折り返しを、アップロードされた写真へ適用する。
 
-    An upload is already a still frame, so there is nothing to capture — the
-    view is computed straight from the photo on screen (§14.3g).
+    アップロードはすでに静止したフレームなので取り込む対象が無く、画面上の
+    写真からそのまま表示を計算する（§14.3g）。
     """
     st.markdown("#### 左右対称にそろえた位置との比較")
-    # §8.6.4 rebuilds every pixel, and this panel re-renders on each rerun, so
-    # the warp stays opt-in rather than being paid for on every interaction.
+    # §8.6.4 は全画素を作り直し、このパネルは再実行のたびに描き直される。
+    # そのため変形は任意指定のままにし、操作のたびに費用を払わせない。
     warp = st.checkbox(
         "左右対称にそろえた画像も生成する（幾何変形・処理が重くなります）",
         key="image_symmetrization_warp",
@@ -322,11 +322,10 @@ def _render_image_symmetrization(
 
 
 def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
-    """Full age/gender reference panel — always full width below (§5.1).
+    """年齢・性別の参考値パネル全体。常に下側へ画面幅いっぱいで表示する（§5.1）。
 
-    FR-024 keeps this independent of the symmetry side: it renders even when
-    landmark detection failed, explaining what is missing instead of silently
-    disappearing.
+    FR-024 はこれを左右差側から独立させている。ランドマーク検出が失敗した
+    ときも描画し、黙って消えるのではなく何が欠けているかを説明する。
     """
     st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
@@ -393,9 +392,8 @@ def _render_image_section() -> None:
     if analysis is not None and analysis.outcome.symmetry is not None:
         overall = analysis.outcome.symmetry.overall
 
-    # §5.1: photo and headline (score/gender/age + status) side by side, so
-    # nothing the user needs at a glance lives further down the page. Camera
-    # and Image share this layout.
+    # §5.1: 写真と見出し（スコア・性別・年齢+状態）を横に並べ、ひと目で必要な
+    # ものがページの下方に隠れないようにする。Camera と Image で同じ配置を使う。
     preview_column, status_column = st.columns([7, 5], gap="large")
     with preview_column:
         if analysis is None:
@@ -410,8 +408,8 @@ def _render_image_section() -> None:
             render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
         _render_image_demographic_controls(age_input, recorder=recorder)
 
-    # §5.1, AC-LAYOUT-01: detail results always render full width below the
-    # photo and headline, mirroring the Camera layout.
+    # §5.1, AC-LAYOUT-01: 詳細結果は常に写真と見出しの下へ画面幅いっぱいで
+    # 描画する。Camera 側の配置と対称にするためである。
     st.markdown("#### 詳細結果")
     with st.container(border=True):
         if analysis is not None:
@@ -419,7 +417,7 @@ def _render_image_section() -> None:
                 f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
                 f"ランドマーク点数 {analysis.landmarks.landmark_count}"
             )
-            # Still images are stateless, so the raw value is shown directly (§8.7).
+            # 静止画は状態を持たないため、生の値をそのまま表示する（§8.7）。
             render_score_details(analysis.outcome, show_smoothed=False)
             st.divider()
             _render_image_symmetrization(rgb, analysis)
@@ -431,18 +429,17 @@ def _render_image_section() -> None:
 
 
 def _render_input_mode_selector() -> str:
-    """FR-004: pick the input, with each option explained before choosing.
+    """FR-004: 入力方法を選ぶ。各選択肢は選ぶ前に説明を読めるようにする。
 
-    `st.segmented_control` allows deselecting the active option, which would
-    leave the page with no input at all; §15.1 requires one to always be
-    active, so a `None` reading falls back to the previous mode rather than
-    rendering an empty screen. Selection stays a native widget so keyboard
-    operation is unchanged (AC-A11Y-01).
+    `st.segmented_control` は選択中の項目を解除でき、そのままではページに入力
+    が 1 つも無い状態になる。§15.1 は常にどれかが有効であることを求めるため、
+    `None` を読んだときは空の画面を描かずに直前のモードへ戻す。選択自体は
+    ネイティブ widget のままなので、キーボード操作は変わらない（AC-A11Y-01）。
     """
     st.markdown("#### 入力方法")
-    # Read from a key of our own, not the widget's: once the widget exists,
-    # its key holds `None` for "deselected", which is exactly the value the
-    # fallback has to survive.
+    # widget のキーではなく自前のキーから読む。widget が生成された後、その
+    # キーは「解除」を意味する `None` を保持することがあり、それこそが
+    # fallback が乗り越えなければならない値だからである。
     previous = st.session_state.get(ACTIVE_INPUT_MODE_KEY, INPUT_MODE_CAMERA)
     selected = st.segmented_control(
         "入力方法",
@@ -470,18 +467,17 @@ def _render_input_mode_selector() -> str:
 
 
 def _switch_input_mode() -> None:
-    """FR-004: drop the previous input's runtime state when the mode changes."""
+    """FR-004: モードが変わったら、直前の入力の runtime 状態を破棄する。"""
     release_session_pipeline()
     release_image_landmarker()
     _clear_session_result()
 
 
 def _render_about_footer() -> None:
-    """Summary + link to the About page (§4.1, §5.1).
+    """概要と About ページへのリンク（§4.1, §5.1）。
 
-    The full methodology, error sources, prohibited uses, and model
-    versions live on the About page instead of here, so this page stays
-    focused on consent → input selection → analysis.
+    算出方法の全体、誤差要因、禁止用途、モデルの版は、ここではなく About
+    ページに置く。このページを「同意 → 入力選択 → 分析」に集中させるためである。
     """
     st.divider()
     st.subheader("Face Symmetry Lab について")
@@ -502,12 +498,12 @@ def _render_about_footer() -> None:
 
 
 def render_app() -> None:
-    """The Analyze page: consent → input selection → analysis (§5.1)."""
+    """Analyze ページ: 同意 → 入力選択 → 分析（§5.1）。"""
     st.title("Face Symmetry Lab")
     st.caption("LOCAL PROCESSING · NO IMAGE STORAGE · RESEARCH USE")
 
-    # Collapsed once already agreed to (from the prior run's widget state), so
-    # returning users are not forced to scroll past it on every rerun.
+    # すでに同意済みなら（直前の実行の widget 状態から判断して）畳んでおく。
+    # 再訪した利用者が毎回この節をスクロールで通り過ぎずに済むようにする。
     already_consented = all(
         st.session_state.get(key, False)
         for key in (CONSENT_PRIVACY_KEY, CONSENT_RESEARCH_KEY, CONSENT_RIGHTS_KEY)
@@ -544,10 +540,10 @@ def render_app() -> None:
     _render_about_footer()
 
 
-#: Streamlit `st.navigation` multipage entry points (§4.1). Constructed at
-#: import time — `st.Page` does not require a running script context — so
-#: `render_app` can reference `ABOUT_PAGE` for its `st.page_link` regardless
-#: of how the module is entered.
+#: Streamlit `st.navigation` の multipage 入口（§4.1）。import 時に構築する。
+#: `st.Page` は実行中のスクリプトコンテキストを必要としないため、モジュールの
+#: 入り方に関わらず `render_app` が `st.page_link` から `ABOUT_PAGE` を参照
+#: できる。
 ANALYZE_PAGE = st.Page(render_app, title="Analyze", icon="🪞", default=True)
 ABOUT_PAGE = st.Page(render_about_page, title="使い方・算出方法", icon="📘")
 

@@ -64,7 +64,7 @@ def test_record_uses_the_breaking_distance_schema() -> None:
 
 
 def test_the_schema_no_longer_carries_the_zero_to_hundred_score_columns() -> None:
-    """§8.6/§9.2: v3.0.0 dropped `score_*` rather than aliasing it to a distance."""
+    """§8.6/§9.2: v3.0.0 は `score_*` を距離の別名にせず、削除した。"""
     for removed in (
         "score_contour_raw",
         "score_eyes_raw",
@@ -82,7 +82,7 @@ def test_a_negative_distance_is_rejected() -> None:
 
 
 def test_a_distance_above_one_hundred_is_accepted() -> None:
-    """Distances are unbounded above; only the old 0-100 score had a ceiling."""
+    """距離に上限は無い。上限を持っていたのは旧 0〜100 のスコアだけである。"""
     record = _record(distance_overall_raw=120.0)
 
     assert record.distance_overall_raw == pytest.approx(120.0)

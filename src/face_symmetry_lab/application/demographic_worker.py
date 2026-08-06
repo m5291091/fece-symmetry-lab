@@ -1,14 +1,13 @@
-"""Off-critical-path age/gender inference (§14.3, FR-022〜024).
+"""クリティカルパス外の年齢・性別推論（§14.3, FR-022〜024）。
 
-Age/gender inference runs on its own background thread, decoupled from the
-landmark analysis cadence via ``interval_ms``. At most one inference is ever
-in flight (capacity 1): a submission that arrives too early or while busy is
-dropped rather than queued, so the frame callback never blocks and stale
-crops never accumulate. (`runtime.frame_scheduler.FrameScheduler` enforces
-the same rule for landmark analysis, but its context-manager API cannot span
-the two threads this hand-off crosses.) A result computed for a segment that
-was reset before it finished is discarded on completion, so it never leaks
-into a later comparison segment.
+年齢・性別の推論は専用のバックグラウンドスレッドで動き、``interval_ms`` に
+よってランドマーク解析の周期から切り離される。同時に走る推論は最大 1 件
+（容量 1）である。早すぎる投入や処理中の投入はキューへ積まず捨てるので、
+フレームのコールバックが塞がることも、古い切り出しが溜まることもない。
+（`runtime.frame_scheduler.FrameScheduler` はランドマーク解析に同じ規則を課すが、
+その context manager API はこの受け渡しがまたぐ 2 つのスレッドをまたげない。）
+完了前にリセットされた区間のために計算された結果は、完了時に破棄する。後続の
+比較区間へ漏れ出さないようにするためである。
 """
 
 from __future__ import annotations
@@ -23,12 +22,12 @@ from numpy.typing import NDArray
 from face_symmetry_lab.application.ports import DemographicEstimator
 from face_symmetry_lab.domain.models import DemographicEstimate
 
-#: §15.2 `age_interval_ms` default. Not user-editable in this milestone.
+#: §15.2 の `age_interval_ms` の既定値。このマイルストーンでは利用者が編集できない。
 DEFAULT_DEMOGRAPHIC_INTERVAL_MS = 1_000
 
 
 class DemographicWorker:
-    """Capacity-1 background age/gender estimator, gated by its own cadence."""
+    """容量 1 の背景年齢・性別推定器。自身の周期で投入を制御する。"""
 
     def __init__(
         self,
@@ -51,27 +50,28 @@ class DemographicWorker:
         self._latest_version = 0
 
     def is_due(self) -> bool:
-        """Report whether a ``submit`` right now would actually start work.
+        """いま ``submit`` したら実際に処理が始まるかどうかを返す。
 
-        Lets the caller skip building a crop it would only throw away: the
-        frame cadence is far faster than ``interval_ms``, so most offers are
-        refused. This is advisory — ``submit`` re-checks under the lock.
+        捨てられるだけの切り出しを作る手間を、呼び出し側が省けるようにする。
+        フレームの周期は ``interval_ms`` よりはるかに速く、投入の大半は拒否
+        されるためである。これは助言的な判定であり、``submit`` は lock の内側で
+        改めて確認する。
         """
         with self._state_lock:
             return not self._closed and not self._busy and self._clock() >= self._next_submit_at
 
     def submit(self, rgb_crop: NDArray[np.uint8]) -> threading.Thread | None:
-        """Start a background inference if idle and due; otherwise no-op."""
+        """待機中かつ実行時刻に達していれば背景推論を開始する。そうでなければ何もしない。"""
         with self._state_lock:
             if self._closed or self._busy or self._clock() < self._next_submit_at:
                 return None
-            # Claimed under the same lock as the due check, so two callers can
-            # never both pass it. Released by `_run`'s `finally`.
+            # 実行時刻の判定と同じ lock の内側で確保するので、2 つの呼び出しが
+            # 同時に通過することはない。解放は `_run` の `finally` が行う。
             self._busy = True
             self._next_submit_at = self._clock() + self._interval_seconds
             generation = self._generation
-        # Detach from the caller's buffer: the pipeline may mutate or reuse
-        # the source frame before this background thread reads it.
+        # 呼び出し側のバッファから切り離す。この背景スレッドが読む前に、pipeline
+        # が元フレームを書き換えたり使い回したりする可能性があるためである。
         crop = np.array(rgb_crop, copy=True)
         thread = threading.Thread(target=self._run, args=(crop, generation), daemon=True)
         try:
@@ -85,8 +85,8 @@ class DemographicWorker:
         try:
             estimate: DemographicEstimate | None = self._estimator.estimate(crop)
         except Exception:
-            # FR-024: a failed inference must never affect symmetry analysis;
-            # the previous good result (if any) simply keeps being reused.
+            # FR-024: 推論の失敗が左右差の解析へ影響してはならない。直前の正常な
+            # 結果（あれば）がそのまま再利用され続けるだけである。
             estimate = None
         finally:
             self._release()
@@ -103,18 +103,17 @@ class DemographicWorker:
             self._busy = False
 
     def latest(self) -> tuple[DemographicEstimate, int] | None:
-        """Return the current best estimate and a version token, if any."""
+        """現時点で最良の推定と版トークンを返す。無ければ None。"""
         with self._state_lock:
             if self._latest is None:
                 return None
             return self._latest, self._latest_version
 
     def set_interval_ms(self, interval_ms: int) -> None:
-        """Change the sampling cadence (§15.2 `age_interval_ms`).
+        """標本化の周期を変更する（§15.2 `age_interval_ms`）。
 
-        Takes effect immediately: the next submission is allowed right away,
-        and the new interval governs every submission after that. An
-        in-flight inference is unaffected.
+        即座に反映される。次の投入は直ちに許可され、それ以降の投入は新しい間隔に
+        従う。実行中の推論には影響しない。
         """
         if interval_ms < 0:
             raise ValueError("interval_ms は 0 以上である必要があります。")
@@ -123,7 +122,7 @@ class DemographicWorker:
             self._next_submit_at = self._clock()
 
     def reset(self) -> None:
-        """Start a new segment: drop the cached result and any in-flight one."""
+        """新しい区間を開始する。キャッシュ済みの結果と実行中のものを破棄する。"""
         with self._state_lock:
             self._generation += 1
             self._latest = None
@@ -131,7 +130,7 @@ class DemographicWorker:
             self._next_submit_at = self._clock()
 
     def close(self) -> None:
-        """Stop accepting submissions and drop the cached result."""
+        """投入の受け付けを止め、キャッシュ済みの結果を破棄する。"""
         with self._state_lock:
             self._closed = True
             self._generation += 1

@@ -70,7 +70,7 @@ def test_a_single_mask_is_returned_squeezed_to_two_dimensions(tmp_path: Path) ->
 
     assert mask.shape == (32, 32)
     assert np.all(mask == pytest.approx(0.7))
-    # A construction-time warm-up call (timestamp -1) precedes real frames.
+    # 実フレームの前に、構築時の暖機呼び出し（timestamp -1）が入る。
     assert detector.timestamps == [-1, 0]
 
 

@@ -1,21 +1,19 @@
-"""Pure geometry for the symmetrized-image warp (§8.6.4, FR-035).
+"""対称化画像の変形のための純粋な幾何（§8.6.4, FR-035）。
 
-Everything here is the part of piecewise warping that can be reasoned about
-without touching a pixel: which points take part, which stay pinned, and when
-the whole operation is too distorted to be worth performing. The Delaunay
-triangulation and the per-triangle pixel transfer need `cv2` and therefore
-live in `adapters.imaging` behind `application.ports.PiecewiseWarper`.
+ここにあるのは、区分変形のうち画素に触れずに判断できる部分である。どの点が
+参加し、どの点を固定し、いつ歪みが大きすぎて実行する価値が無いか、を決める。
+Delaunay 三角形分割と三角形ごとの画素転送は `cv2` を必要とするため、
+`application.ports.PiecewiseWarper` の背後の `adapters.imaging` に置く。
 
-The mesh pins the image border. Landmarks cover the face but not the ears,
-hair, neck, or background, so without fixed anchors those regions would either
-fall outside the triangulation entirely (leaving holes) or be dragged by
-whichever face triangle happened to reach them. Corners plus edge midpoints
-give the triangulation a frame to tile against, and everything between an
-anchor and a moved landmark interpolates smoothly.
+メッシュは画像の外周を固定する。ランドマークは顔を覆うが、耳・髪・首・背景は
+覆わない。固定アンカーが無いと、それらの領域は三角形分割から完全に外れて穴に
+なるか、たまたま届いた顔の三角形に引きずられるかのどちらかになる。四隅と辺の
+中点を置くことで分割が敷き詰める枠ができ、アンカーと動いたランドマークの間は
+滑らかに補間される。
 
-Nothing here is a calibrated metric parameter. `MAX_WARP_DISPLACEMENT_RATIO`
-is a breakdown guard in the same family as the brightness clamp: it decides
-when to refuse, not what a face scores.
+ここには較正された指標パラメータは 1 つも無い。`MAX_WARP_DISPLACEMENT_RATIO`
+は明るさのクランプと同種の破綻ガードであり、いつ拒否するかを決めるだけで、
+顔の点数を決めるものではない。
 """
 
 from __future__ import annotations
@@ -26,58 +24,57 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
-#: §8.6.4: refuse the warp when any point would travel further than this
-#: fraction of the interocular distance. Real asymmetry sits far below it
-#: (§8.6 distances are typically a few percent), so this only ever fires on
-#: a detection breakdown — where warping would produce an image that is not
-#: a person rather than a symmetrized one.
+#: §8.6.4: いずれかの点が両眼間隔のこの割合を超えて移動する場合は変形を拒否
+#: する。実際の非対称はこれよりはるかに小さい（§8.6 の距離は通常は数パーセント）
+#: ので、これが働くのは検出が破綻したときだけである。その状態で変形すると、
+#: 対称化された画像ではなく人物ですらない画像ができてしまう。
 MAX_WARP_DISPLACEMENT_RATIO: Final[float] = 0.25
 
-#: A triangle thinner than this (in px²) cannot define a stable affine map.
+#: これ（px²）より細い三角形は、安定したアフィン写像を定義できない。
 MIN_TRIANGLE_AREA_PX: Final[float] = 1e-3
 
-#: Corners plus edge midpoints (§8.6.4).
+#: 四隅と辺の中点（§8.6.4）。
 BORDER_ANCHOR_COUNT: Final[int] = 8
 
 
 class WarpMeshError(ValueError):
-    """The requested warp cannot be built or would not be safe to perform."""
+    """要求された変形を構築できない、または実行が安全でない。"""
 
 
 @dataclass(frozen=True, slots=True)
 class WarpMesh:
-    """Matched source/target point sets, border anchors included.
+    """対応付けられた変形元・変形先の点集合。外周アンカーを含む。
 
-    `source[i]` is warped to `target[i]`. The last `BORDER_ANCHOR_COUNT`
-    entries are the pinned image border, identical in both, so a consumer
-    triangulating `target` covers the whole frame.
+    `source[i]` が `target[i]` へ変形される。末尾 `BORDER_ANCHOR_COUNT` 件は
+    固定された画像外周であり、両者で同一である。そのため `target` を三角形分割
+    する利用側はフレーム全体を覆える。
     """
 
     source: NDArray[np.float64]
     target: NDArray[np.float64]
     width: int
     height: int
-    #: How many leading entries came from landmarks rather than the border.
+    #: 先頭から何件が外周ではなくランドマーク由来か。
     landmark_count: int
 
     @property
     def anchor_indices(self) -> tuple[int, ...]:
-        """Indices of the pinned border points."""
+        """固定された外周点の index。"""
         return tuple(range(self.landmark_count, len(self.source)))
 
     @property
     def max_displacement_px(self) -> float:
-        """Largest distance any point travels, in pixels."""
+        """いずれかの点が移動する最大距離（画素）。"""
         if len(self.source) == 0:
             return 0.0
         return float(np.max(np.linalg.norm(self.target - self.source, axis=1)))
 
 
 def border_anchors(width: int, height: int) -> NDArray[np.float64]:
-    """The four corners and four edge midpoints of an image.
+    """画像の四隅と 4 辺の中点。
 
-    Returned in source coordinates; the caller uses the same array for the
-    target, which is what pins them (§8.6.4).
+    変形元の座標系で返す。呼び出し側は同じ配列を変形先にも使い、それによって
+    これらの点が固定される（§8.6.4）。
     """
     if width <= 0 or height <= 0:
         raise WarpMeshError("画像サイズは正の値である必要があります。")
@@ -101,7 +98,7 @@ def border_anchors(width: int, height: int) -> NDArray[np.float64]:
 
 
 def triangle_area(points: NDArray[np.float64]) -> float:
-    """Absolute area of one triangle given as a (3, 2) array."""
+    """(3, 2) 配列で与えられた三角形 1 つの面積の絶対値。"""
     array = np.asarray(points, dtype=np.float64)
     if array.shape != (3, 2):
         raise WarpMeshError("三角形は (3, 2) の配列である必要があります。")
@@ -111,7 +108,7 @@ def triangle_area(points: NDArray[np.float64]) -> float:
 
 
 def is_degenerate_triangle(points: NDArray[np.float64]) -> bool:
-    """Whether a triangle is too thin to define a stable affine transform."""
+    """三角形が細すぎて安定したアフィン変換を定義できないかどうか。"""
     return triangle_area(points) < MIN_TRIANGLE_AREA_PX
 
 
@@ -124,15 +121,15 @@ def build_warp_mesh(
     interocular_px: float,
     max_displacement_ratio: float = MAX_WARP_DISPLACEMENT_RATIO,
 ) -> WarpMesh:
-    """Pair up the measured and symmetrized points and pin the image border.
+    """実測点と対称化点を対応付け、画像の外周を固定する。
 
-    Both sets are clamped into the frame, because a triangulation cannot
-    accept a vertex outside its bounding rectangle and a landmark sitting a
-    pixel outside the edge is a detection artefact, not a reason to fail.
+    両方の集合をフレーム内へクランプする。三角形分割は外接矩形の外側の頂点を
+    受け付けられず、また端から 1 画素外にあるランドマークは検出の副産物で
+    あって失敗の理由ではないためである。
 
-    Raises `WarpMeshError` when the displacement guard trips: past that point
-    the piecewise map folds over itself and the output stops being a face at
-    all, so refusing is the honest answer rather than showing the wreckage.
+    変位ガードが働いたときは `WarpMeshError` を送出する。その先では区分写像が
+    自分自身へ折り重なり、出力はもはや顔ではなくなる。壊れた結果を見せるより、
+    拒否する方が誠実である。
     """
     source_array = _as_points(source, "変形元")
     target_array = _as_points(target, "変形先")

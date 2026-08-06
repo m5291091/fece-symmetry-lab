@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Prepare the pinned model assets (FR-002, §10.6, §19).
+"""固定されたモデル asset を準備する（FR-002, §10.6, §19）。
 
-Nothing is downloaded unless the manifest is explicitly accepted, either
-interactively or with ``--accept-manifest``. Every install verifies size and
-sha256 before the file is put in place.
+manifest を明示的に承諾しない限り、対話でも ``--accept-manifest`` でも、何も
+取得しない。どの install もファイルを配置する前にサイズと sha256 を検証する。
 
-    uv run python scripts/bootstrap_models.py            # show manifest and ask
-    uv run python scripts/bootstrap_models.py --verify   # check installed files
+    uv run python scripts/bootstrap_models.py            # manifest を表示して確認する
+    uv run python scripts/bootstrap_models.py --verify   # 配置済みファイルを検査する
     uv run python scripts/bootstrap_models.py --accept-manifest
 """
 

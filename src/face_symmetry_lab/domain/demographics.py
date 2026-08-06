@@ -1,4 +1,4 @@
-"""Validated domain mapping for the 18-75 age/gender model."""
+"""18〜75 歳の年齢・性別モデルに対する、検証付きの domain 変換。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def build_demographic_estimate(
     model_sha256: str,
     observed_at: datetime,
 ) -> DemographicEstimate:
-    """Validate raw model outputs without clipping unsupported ages."""
+    """モデルの生出力を検証する。対象外の年齢を切り詰めることはしない。"""
     age = float(estimated_age_years)
     probabilities = tuple(float(value) for value in gender_probabilities)
     if not isfinite(age) or not 18 <= age <= 75:

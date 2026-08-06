@@ -1,9 +1,9 @@
-"""MediaPipe Face Landmarker adapter for realtime video.
+"""リアルタイム映像向けの MediaPipe Face Landmarker adapter。
 
-The adapter owns the MediaPipe boundary only: it converts an RGB array into a
-MediaPipe image, runs ``detect_for_video`` with a strictly increasing
-timestamp, and returns an immutable :class:`LandmarkFrame`. It never scores,
-never picks a face when several are present, and never fetches a model.
+この adapter が担うのは MediaPipe との境界だけである。RGB 配列を MediaPipe の
+画像へ変換し、狭義単調増加する timestamp とともに ``detect_for_video`` を実行し、
+不変の :class:`LandmarkFrame` を返す。採点は行わず、複数の顔がある場合にどれか
+を選ぶこともせず、モデルを取得することもない。
 """
 
 from __future__ import annotations
@@ -24,16 +24,16 @@ from face_symmetry_lab.domain.landmarks import (
 )
 from face_symmetry_lab.domain.pose import FacePose, PoseError, pose_from_matrix
 
-#: Detecting two faces is enough to report MULTI_FACE without ranking them.
+#: 顔を 2 つ検出できれば、順位を付けずに MULTI_FACE を報告するのに十分である。
 MAX_TRACKED_FACES = 2
 
 
 class LandmarkDetectionError(RuntimeError):
-    """Recoverable failure at the landmark model boundary."""
+    """ランドマークモデル境界で発生した、回復可能な失敗。"""
 
 
 class FrameOrderError(LandmarkDetectionError):
-    """A frame arrived with a non-increasing timestamp (§14.4)."""
+    """timestamp が増加していないフレームが届いた（§14.4）。"""
 
 
 class _Detector(Protocol):
@@ -82,7 +82,7 @@ def _default_detector_factory(model_path: Path) -> Any:
 
 
 def _default_image_detector_factory(model_path: Path) -> Any:
-    # §14.3: still images need their own IMAGE-mode instance.
+    # §14.3: 静止画には IMAGE モードの専用インスタンスが必要である。
     return _create_detector(model_path, "IMAGE")
 
 
@@ -101,19 +101,19 @@ def _file_sha256(path: Path) -> str:
 
 
 def _extract_pose(result: Any) -> FacePose | None:
-    """Read the head pose, or None when the matrix is unusable (§8.2.1)."""
+    """頭部姿勢を読む。行列が使用不能なときは None を返す（§8.2.1）。"""
     matrices = list(getattr(result, "facial_transformation_matrixes", []) or [])
     if len(matrices) != 1:
         return None
     try:
         return pose_from_matrix(np.asarray(matrices[0], dtype=np.float64))
     except PoseError:
-        # A missing pose becomes LOW_CONFIDENCE at the gate, not a dead frame.
+        # 姿勢が取れない場合はゲートで LOW_CONFIDENCE になるだけで、フレームは死なない。
         return None
 
 
 def _to_landmark_frame(result: Any, frame_id: int, width: int, height: int) -> LandmarkFrame:
-    """Convert a MediaPipe result without ever ranking or picking a face."""
+    """MediaPipe の結果を変換する。顔の順位付けも選択も一切行わない。"""
     faces = list(getattr(result, "face_landmarks", []) or [])
     points: tuple[tuple[float, float], ...] = ()
     pose: FacePose | None = None
@@ -135,7 +135,7 @@ def _to_landmark_frame(result: Any, frame_id: int, width: int, height: int) -> L
 
 
 class _LandmarkerBase:
-    """Shared model identity and lifecycle for both running modes."""
+    """両方の実行モードで共有する、モデルの同一性とライフサイクル。"""
 
     def __init__(
         self,
@@ -175,7 +175,7 @@ class _LandmarkerBase:
 
 
 class MediaPipeFaceLandmarker(_LandmarkerBase):
-    """Local Face Landmarker adapter running in ``RunningMode.VIDEO``."""
+    """``RunningMode.VIDEO`` で動作するローカル Face Landmarker adapter。"""
 
     def __init__(
         self,
@@ -215,10 +215,10 @@ class MediaPipeFaceLandmarker(_LandmarkerBase):
 
 
 class MediaPipeImageLandmarker(_LandmarkerBase):
-    """Local Face Landmarker adapter running in ``RunningMode.IMAGE``.
+    """``RunningMode.IMAGE`` で動作するローカル Face Landmarker adapter。
 
-    Still images are stateless: no timestamp, no tracking history, and a
-    separate instance from the video landmarker (§14.3).
+    静止画は状態を持たない。timestamp も追跡履歴も無く、映像用の landmarker
+    とは別のインスタンスである（§14.3）。
     """
 
     def __init__(

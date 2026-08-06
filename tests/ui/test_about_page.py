@@ -16,7 +16,7 @@ def test_about_page_renders_without_raising() -> None:
 
 
 def test_about_page_explains_score_methodology() -> None:
-    """§4.1, FR-014: the page users are pointed to for "how is this scored"."""
+    """§4.1, FR-014: 「どう算出しているか」を知りたい利用者を案内するページ。"""
     at = _run()
 
     headers = [element.value for element in at.header]
@@ -29,7 +29,7 @@ def test_about_page_explains_score_methodology() -> None:
 
 
 def test_about_page_states_prohibited_uses() -> None:
-    """§10.7: prohibited-use guardrails must be documented on the About page."""
+    """§10.7: 禁止用途のガードレールは About ページに明記されねばならない。"""
     at = _run()
 
     headers = [element.value for element in at.header]

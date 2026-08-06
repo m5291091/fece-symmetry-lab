@@ -46,7 +46,7 @@ def test_each_tracking_state_renders_at_its_assigned_severity(
     status: TrackingStatus,
     severity: str,
 ) -> None:
-    """§5.2 fixes the colour per state, so Camera and Image cannot disagree."""
+    """§5.2 が状態ごとの色を固定するので、Camera と Image が食い違うことはない。"""
     at = _run(f"render_tracking_status(TrackingStatus.{status.name}, MESSAGES)")
 
     expected = status.name.lower().replace("_", " ")
@@ -55,7 +55,7 @@ def test_each_tracking_state_renders_at_its_assigned_severity(
 
 
 def test_missing_headline_values_render_as_a_dash_rather_than_a_number() -> None:
-    """NFR-013: absent is shown as absent, never as a stale or zeroed value."""
+    """NFR-013: 欠測は欠測として示し、古い値や 0 として見せない。"""
     at = _run("render_headline_metrics(overall=None, estimate=None)")
 
     assert not at.exception
@@ -63,9 +63,9 @@ def test_missing_headline_values_render_as_a_dash_rather_than_a_number() -> None
 
 
 def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None:
-    """§5.3/§6.3: the panel and the live banner read one table, so a reason
-    code is worded once — and `test_guidance.py`'s full-coverage check keeps
-    this panel from silently rendering nothing for a newly added code."""
+    """§5.3/§6.3: パネルとライブのバナーは同じ表を読むので、理由コードの文言は
+    1 度だけ書かれる。さらに `test_guidance.py` の全網羅チェックにより、新しく
+    追加したコードに対してこのパネルが黙って何も描かない事態を防げる。"""
     at = AppTest.from_string(
         "from face_symmetry_lab.application.analyzer import AnalysisOutcome\n"
         "from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status\n"
@@ -95,7 +95,7 @@ def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None
     assert REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW] in rendered
 
 
-# --- §8.6.3 symmetry-percentage display -------------------------------------
+# --- §8.6.3 対称度パーセントの表示 ------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -113,7 +113,7 @@ def test_a_distance_is_shown_as_its_complement(distance: float, expected: str) -
 
 
 def test_the_symmetry_and_deviation_readings_always_sum_to_one_hundred() -> None:
-    """AC-DISPLAY-02: the two directions are the same measurement."""
+    """AC-DISPLAY-02: 2 つの向きは同じ測定値である。"""
     for distance in (0.0, 0.004, 0.0215, 0.31, 0.999):
         symmetry = float(format_symmetry(distance).rstrip("%"))
         deviation = float(format_distance(distance).rstrip("%"))
@@ -121,18 +121,18 @@ def test_the_symmetry_and_deviation_readings_always_sum_to_one_hundred() -> None
 
 
 def test_a_deviation_beyond_the_interocular_distance_floors_at_zero() -> None:
-    """§8.6.3 clamps the *display* only; `d` itself stays unbounded."""
+    """§8.6.3 がクランプするのは *表示* だけで、`d` 自体は上限を持たない。"""
     assert format_symmetry(4.0) == "0.00%"
     assert format_distance(4.0) == "400.00%"
 
 
 def test_a_missing_distance_has_no_symmetry_reading() -> None:
-    """NFR-013: missing must not read as a perfectly symmetric 100%."""
+    """NFR-013: 欠測が「完全に対称な 100%」と読めてはならない。"""
     assert format_symmetry(None) == "—"
 
 
 def test_the_headline_leads_with_symmetry_and_still_states_the_deviation() -> None:
-    """§5.3: both directions are on screen, so 100% cannot pass as a target."""
+    """§5.3: 両方の向きを画面に出すので、100% が目標として通ることはない。"""
     at = AppTest.from_string(
         "from face_symmetry_lab.ui.scores import render_headline_metrics\n"
         "render_headline_metrics(overall=0.0215, estimate=None)\n"
@@ -157,17 +157,17 @@ def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
         assert forbidden not in SCORE_HEADING
         assert forbidden not in DISTANCE_UNIT_CAPTION
 
-    # The caption has to keep saying what 100% is, or the reorientation
-    # silently becomes a target the user tries to reach.
+    # 注記は 100% が何であるかを述べ続けなければならない。さもないと、向きを
+    # 変えただけのものが、利用者の目指す目標へ黙って変わってしまう。
     assert "上限" in DISTANCE_UNIT_CAPTION
     assert "目標値ではありません" in DISTANCE_UNIT_CAPTION
 
 
-# --- FR-035 symmetrized image framing ----------------------------------------
+# --- FR-035 対称化画像の枠付け ----------------------------------------------
 
 
 def _warp_view(*, warped, reason=None):
-    """A `SymmetrizationView` stub carrying only what the renderer reads."""
+    """描画側が読む項目だけを持つ `SymmetrizationView` のスタブ。"""
     from dataclasses import dataclass
     from typing import Any
 
@@ -180,7 +180,7 @@ def _warp_view(*, warped, reason=None):
 
 
 def test_the_warped_image_is_not_rendered_unless_it_was_requested() -> None:
-    """§8.6.4 is opt-in; an unrequested warp says nothing at all."""
+    """§8.6.4 は任意指定である。要求されていない変形については何も述べない。"""
     at = AppTest.from_string(
         "import numpy as np, streamlit as st\n"
         "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
@@ -195,7 +195,7 @@ def test_the_warped_image_is_not_rendered_unless_it_was_requested() -> None:
 
 
 def test_a_refused_warp_explains_itself_instead_of_rendering_nothing() -> None:
-    """AC-SYMM-02: fail-soft, with the reason on screen."""
+    """AC-SYMM-02: 理由を画面に出したうえで fail-soft する。"""
     at = AppTest.from_string(
         "import streamlit as st\n"
         "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
@@ -212,7 +212,7 @@ def test_a_refused_warp_explains_itself_instead_of_rendering_nothing() -> None:
 
 
 def test_the_warped_image_is_labelled_as_a_manipulated_image() -> None:
-    """§5.3/§10.7: a symmetrized photo must never pass as an untouched one."""
+    """§5.3/§10.7: 対称化した写真が、無加工の写真として通ってはならない。"""
     at = AppTest.from_string(
         "import numpy as np\n"
         "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
@@ -232,25 +232,25 @@ def test_the_warped_image_is_labelled_as_a_manipulated_image() -> None:
 
 
 def test_the_warped_image_wording_avoids_a_value_judgement() -> None:
-    """§10.7: not an ideal, not a correction, not a before/after.
+    """§10.7: 規範でも、補正でも、before/after でもない。
 
-    Asserted on the user-visible strings rather than the function source, so
-    a docstring naming the banned framing in order to forbid it cannot fail
-    this check.
+    関数のソースではなく利用者に見える文字列に対して検証する。禁止する枠付けを
+    禁じるために名指しする docstring が、このチェックを落とさないようにする
+    ためである。
     """
     shown = SYMMETRIZED_IMAGE_CAPTION + SYMMETRIZED_IMAGE_NOTICE + SYMMETRIZED_IMAGE_LIMITS
 
     for forbidden in ("理想", "正解", "補正後", "美化", "before", "after"):
         assert forbidden not in shown
-    # And it has to keep saying what the image actually is.
+    # そして、その画像が実際に何であるかを述べ続けなければならない。
     assert "加工画像" in shown
 
 
-# --- §14.3e quality-gate colours ---------------------------------------------
+# --- §14.3e 品質ゲートの色 --------------------------------------------------
 
 
 def test_every_gate_status_has_a_colour() -> None:
-    """A status added to the gate must not fall through to a KeyError."""
+    """ゲートへ状態を追加したときに、KeyError へ落ちてはならない。"""
     for status in Status:
         assert gate_color(AnalysisState(status=status)) == GATE_COLORS[status]
 
@@ -261,12 +261,12 @@ def test_gate_colours_are_valid_hex() -> None:
 
 
 def test_a_missing_state_reads_as_the_neutral_colour() -> None:
-    """An idle preview must not borrow the "conditions met" colour."""
+    """待機中の表示が「条件を満たしている」色を借りてはならない。"""
     assert gate_color(None) == GATE_COLORS[Status.ERROR]
 
 
 def test_the_blocking_states_are_visually_distinct_from_ok() -> None:
-    """§5.4: colour is one channel, but it still has to differentiate."""
+    """§5.4: 色は 1 つの伝達手段にすぎないが、それでも区別できなければならない。"""
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.HOLD]
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.NO_FACE]
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.ERROR]

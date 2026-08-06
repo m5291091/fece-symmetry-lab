@@ -1,11 +1,10 @@
-"""Result presentation shared by the camera and still-image sections.
+"""Camera と静止画の両セクションが共有する結果表示。
 
-Wording follows §5.3: the metric is introduced as an experimental left/right
-difference *distance*, `HOLD` becomes an actionable instruction, and no value
-judgement is attached to a large or small number. §8.6 removed the 0-100
-transform, so every value here is a normalized distance shown as a percentage
-of the interocular distance — smaller simply means the paired points sit
-closer together, never "better".
+文言は §5.3 に従う。指標は実験的な左右差 *距離* として導入し、`HOLD` は次に
+取るべき操作へ言い換え、値の大小に価値判断を結び付けない。§8.6 で 0〜100 の
+変換を廃止したため、ここに出る値はすべて両眼間隔に対する正規化距離を百分率で
+示したものである。小さいという事実は対応点どうしが近いことだけを意味し、
+決して「良い」を意味しない。
 """
 
 from __future__ import annotations
@@ -29,8 +28,8 @@ from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
 SCORE_HEADING = "対称度（実験値・両眼距離比）"
 
-#: §5.2: distances are ratios of the interocular distance, so a percentage
-#: with two decimals is the readable form without inventing precision.
+#: §5.2: 距離は両眼間隔に対する比なので、小数 2 桁の百分率が、精度を偽らずに
+#: 読める形になる。
 DISTANCE_UNIT_CAPTION = (
     "対称度は、両眼の間隔を 100% としたときの左右対応点のずれを 100% から引いた値です。"
     "100% は対応点距離がすべて 0 になる数学上の上限で、目標値ではありません。"
@@ -38,18 +37,18 @@ DISTANCE_UNIT_CAPTION = (
 )
 
 
-#: §8.6.2's per-point offsets are half the §8.5 pair distance, so they are not
-#: the quantity §8.6.3 reorients. They stay stated as deviations, with their
-#: own caption rather than the symmetry one.
+#: §8.6.2 の点ごとのずれは §8.5 のペア距離の半分であり、§8.6.3 が向きを変える
+#: 量とは別物である。そのため対称度ではなく「ズレ」として述べ、専用の注記を
+#: 添える。
 DEVIATION_UNIT_CAPTION = (
     "ズレは、両眼の間隔を 100% としたときの、実測点と左右対称にそろえた位置との距離です。"
     "小さいほど両者が近いことだけを意味し、良し悪しを表しません。"
 )
 
 
-#: §5.3/§10.7: the user-visible framing of FR-035's warped image. Kept as
-#: constants so the wording can be asserted on directly — this is the output
-#: most easily mistaken for a "corrected" photograph.
+#: §5.3/§10.7: FR-035 の変形画像を利用者へ提示するときの枠付け。文言を直接
+#: 検証できるよう定数に切り出している。これは「補正済みの写真」と最も
+#: 取り違えられやすい出力である。
 SYMMETRIZED_IMAGE_CAPTION = "左右対称にそろえた画像（ランドマークを基準に画素を変形した加工画像）"
 SYMMETRIZED_IMAGE_NOTICE = (
     "対応点を左右対称の位置へ移動させ、その間の画素を三角形ごとに変形した合成画像です。"
@@ -63,21 +62,19 @@ SYMMETRIZED_IMAGE_LIMITS = (
 
 
 def format_distance(value: float | None) -> str:
-    """Render a normalized distance as a percentage, or `—` when missing."""
+    """正規化距離を百分率で表示する。欠測時は `—` を返す。"""
     return "—" if value is None else f"{value * 100.0:.2f}%"
 
 
 def format_symmetry(value: float | None) -> str:
-    """Render a normalized distance as §8.6.3's symmetry percentage.
+    """正規化距離を §8.6.3 の対称度パーセントとして表示する。
 
-    `100% - ずれ%`: linear, invertible, and carrying no coefficient, so it
-    reorients the same measurement rather than scoring it. The metric, the
-    export columns and `metric_version` are all untouched by this — only the
-    direction the number is read in.
+    `100% - ずれ%` は線形かつ可逆で、係数を持たない。したがって同じ測定値の
+    読む向きを変えるだけであり、採点ではない。指標そのもの、エクスポートの
+    列、`metric_version` はいずれもこれによって変わらない。
 
-    Clamped at 0% for the degenerate case where the deviation exceeds the
-    interocular distance itself; `d` keeps its unbounded value everywhere
-    else (§8.6.3).
+    ずれが両眼間隔そのものを超える退化ケースのために 0% で下限を設ける。
+    それ以外の場所では `d` は上限のない値のままである（§8.6.3）。
     """
     if value is None:
         return "—"
@@ -96,11 +93,11 @@ GENDER_LABELS: Final[dict[GenderLabel, str]] = {
     GenderLabel.MALE: "男性",
 }
 
-#: §14.3e: one colour per quality-gate state, for the video frame border and
-#: the HUD outline. These are **state identifiers, not grades**: green says
-#: "the measurement conditions are met", never "this is a good face". §5.4
-#: forbids carrying meaning by colour alone, so every caller keeps the
-#: existing `render_tracking_status` / `guidance_message` text alongside.
+#: §14.3e: 品質ゲートの状態ごとの色。映像の枠線と HUD の輪郭に使う。これらは
+#: **状態の識別子であって評価ではない**。緑は「計測条件を満たしている」という
+#: 意味であって、「良い顔である」ではない。§5.4 は色だけで意味を伝えることを
+#: 禁じているため、どの呼び出し側も `render_tracking_status` /
+#: `guidance_message` のテキストを併記し続ける。
 GATE_COLORS: Final[dict[Status, str]] = {
     Status.OK: "#2E9E5B",
     Status.HOLD: "#D9A21B",
@@ -109,16 +106,16 @@ GATE_COLORS: Final[dict[Status, str]] = {
     Status.ERROR: "#6B6B6B",
 }
 
-#: Shown before any analysis exists, and for a status the table somehow misses
-#: — the neutral grey of `Status.ERROR` rather than a colour implying a verdict.
+#: 解析がまだ 1 つも無いとき、および表が取りこぼした状態のときに使う。判定を
+#: 匂わせる色ではなく、`Status.ERROR` の中立的な灰色を選ぶ。
 _UNKNOWN_GATE_COLOR: Final[str] = GATE_COLORS[Status.ERROR]
 
 
 def gate_color(state: AnalysisState | None) -> str:
-    """The §14.3e display colour for one gate state.
+    """ゲート状態 1 つに対する §14.3e の表示色。
 
-    ``None`` (no analysis yet this session) reads as the neutral grey, so an
-    idle preview never borrows the "conditions met" colour.
+    ``None``（このセッションでまだ解析が無い）は中立的な灰色として読む。
+    待機中の表示が「条件を満たしている」色を借りることがないようにする。
     """
     if state is None:
         return _UNKNOWN_GATE_COLOR
@@ -135,12 +132,12 @@ _STATUS_HEADLINE: Final[dict[Status, str]] = {
 
 
 def render_guidance(outcome: AnalysisOutcome) -> None:
-    """Show what to fix before a score can be produced (Guide before score).
+    """スコアを出す前に何を直せばよいかを示す（スコアより先に案内する）。
 
-    §5.3's actionable wording comes from `ui.guidance.REASON_GUIDANCE`, the
-    same §6.3 table the live banner reads, so the detail panel and the banner
-    never describe one condition two ways — and a reason code added to the
-    quality gate cannot silently render as nothing here.
+    §5.3 の操作可能な文言は `ui.guidance.REASON_GUIDANCE` から得る。ライブの
+    バナーが読むのと同じ §6.3 の表なので、詳細パネルとバナーが 1 つの条件を
+    二通りに説明することはない。品質ゲートへ理由コードを追加したときに、
+    ここで黙って何も表示されなくなることも防げる。
     """
     st.write(_STATUS_HEADLINE.get(outcome.state.status, ""))
     for code in outcome.state.reason_codes:
@@ -153,12 +150,12 @@ def render_tracking_status(
     status: TrackingStatus,
     messages: Mapping[TrackingStatus, str],
 ) -> None:
-    """Show one tracking message at the severity §5.2 assigns to its state.
+    """追跡メッセージを 1 つ、§5.2 がその状態へ割り当てた severity で表示する。
 
-    Camera and Image word the same states differently (a still photo cannot
-    be asked to "hold still"), so the caller owns ``messages`` — but the
-    colour each state maps to is a product rule, not a per-section choice,
-    and lives here so the two sections cannot drift apart.
+    Camera と Image は同じ状態を別の言葉で表す（静止画に「動かないで」とは
+    言えない）ため、``messages`` は呼び出し側が所有する。ただし状態と色の
+    対応はセクションごとの選択ではなくプロダクトの規則なので、ここに置いて
+    両セクションが食い違わないようにする。
     """
     message = messages[status]
     if status is TrackingStatus.ERROR:
@@ -191,20 +188,20 @@ def render_headline_metrics(
     overall: float | None,
     estimate: DemographicEstimate | None,
 ) -> None:
-    """FR-013/FR-014: overall distance, gender and age, right beside the media.
+    """FR-013/FR-014: 全体の距離・参考性別・参考年齢を、映像や写真のすぐ隣に出す。
 
-    Shared by Camera and Image so both use the same headline layout (§5.1).
-    ``estimate`` is taken whole rather than as pre-split gender/age fields:
-    §10.8 keeps the two demographic values one observation, and both call
-    sites had otherwise been unpacking it identically. Missing values show
-    `—` rather than a stale or zeroed number (NFR-013).
+    Camera と Image が共有し、両者が同じ見出し配置を使う（§5.1）。
+    ``estimate`` は性別・年齢へ分解済みの引数ではなく、まとめて受け取る。
+    §10.8 は 2 つの値を 1 つの観測として扱っており、どちらの呼び出し側も
+    同じ形で展開していたためである。欠測は古い値や 0 ではなく `—` を出す
+    （NFR-013）。
     """
     score_column, gender_column, age_column = st.columns(3)
     score_column.metric(
         "全体の対称度",
         format_symmetry(overall),
-        # §5.3: the deviation is always shown alongside, so the number can be
-        # read in either direction and "100%" cannot pass as a target reached.
+        # §5.3: ずれを必ず併記する。数値をどちらの向きからも読めるようにし、
+        # 「100%」が達成された目標のように受け取られないようにするためである。
         help=(
             "100% から、左右対応点のずれ（両眼間隔比）を引いた値です。"
             "100% は数学上の上限で目標値ではありません。"
@@ -222,11 +219,11 @@ def render_headline_metrics(
 
 
 def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
-    """Render everything about the 左右差 besides the headline total.
+    """見出しの総合値を除く、左右差に関するすべてを描画する。
 
-    The headline total is `render_headline_metrics`, shown beside the media;
-    this renders the part breakdown, pose, and skin quality that belong in
-    the full-width detail section below it (§5.1, FR-013, AC-LAYOUT-01).
+    見出しの総合値は `render_headline_metrics` が担い、映像や写真の隣に出る。
+    こちらは部位別の内訳・姿勢・肌表面参考値を描画する。いずれもその下の
+    画面幅いっぱいの詳細セクションに属する（§5.1, FR-013, AC-LAYOUT-01）。
     """
     st.subheader(SCORE_HEADING)
     st.info(
@@ -246,8 +243,9 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
             f"（ずれ {format_distance(symmetry.overall)}）"
         )
 
-    # §8.6: a diagnostic breakdown of where the deviation sits. These do not
-    # add up to the headline value, which is folded once over the pooled pairs.
+    # §8.6: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
+    # 見出しの値にはならない。見出しは全対応ペアをまとめて 1 回だけ
+    # 折りたたんで求めるためである。
     st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
     columns = st.columns(len(PART_NAMES))
     for column, name in zip(columns, PART_NAMES, strict=True):
@@ -298,16 +296,15 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
 
 
 def render_symmetrized_image(view: SymmetrizationView, *, requested: bool) -> None:
-    """FR-035: the warped image, framed as the manipulation it is.
+    """FR-035: 変形画像を、加工であるという枠付けのまま表示する。
 
-    Shared by Camera and Image so the one place this wording matters cannot
-    drift between them. §5.3/§10.7: a symmetrized photo is the output most
-    likely to be mistaken for a "corrected" or "better" face, so it is
-    labelled as a geometric deformation and never shown as a before/after.
+    Camera と Image が共有する。この文言が効く唯一の場所を、両者の間で
+    食い違わせないためである。§5.3/§10.7: 対称化した写真は「補正済み」や
+    「より良い」顔と最も取り違えられやすい出力なので、幾何変形であることを
+    明示し、before/after としては決して見せない。
 
-    Fails soft: when the warp was requested but the displacement guard or the
-    imaging step refused, the reason is shown and the point overlay above
-    stands on its own (AC-SYMM-02).
+    fail-soft である。変形を要求されたが変位ガードや画像化の段階が拒否した
+    場合は理由を示し、上の点オーバーレイだけで成立させる（AC-SYMM-02）。
     """
     if not requested:
         return
@@ -324,12 +321,12 @@ def render_demographic_estimate(
     *,
     show_distribution: bool = True,
 ) -> None:
-    """Render the §10.8 age/gender reference panel (Image and Camera share this).
+    """§10.8 の年齢・性別参考パネルを描画する（Image と Camera で共有）。
 
-    `show_distribution` draws the two-class probability chart. The live camera
-    panel leaves it off: it repaints at 5 Hz while this value changes at most
-    once a second, and the chart costs far more than every other element here
-    combined. The same numbers stay available as text either way.
+    `show_distribution` は 2 クラスの確率グラフを描く。ライブのカメラパネルは
+    これを切る。パネルは 5 Hz で再描画されるのに対し、この値は最大でも 1 秒に
+    1 度しか変わらず、グラフの費用がここの他の要素すべての合計より大きい
+    ためである。どちらの場合も同じ数値はテキストとして参照できる。
     """
     st.subheader("モデル推定の参考年齢・参考性別")
     age_column, gender_column = st.columns(2)

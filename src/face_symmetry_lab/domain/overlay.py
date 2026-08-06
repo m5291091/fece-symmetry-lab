@@ -1,7 +1,7 @@
-"""Pure NumPy landmark painting.
+"""NumPy だけで行う、純粋なランドマーク描画。
 
-Drawing lives here rather than in an adapter because it is arithmetic on an
-array: no OpenCV, MediaPipe, or Streamlit import is involved.
+描画を adapter ではなくここに置く理由は、これが配列に対する算術だからである。
+OpenCV も MediaPipe も Streamlit も import しない。
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ DEFAULT_POINT_RADIUS = 1
 DEFAULT_MIDLINE_COLOR: tuple[int, int, int] = (236, 72, 153)
 DEFAULT_MIDLINE_THICKNESS = 5
 
-#: §8.6.2/§5.2: the symmetrized points and the deviation segments read as a
-#: second, equally weighted layer. Neither colour may signal "correct" — amber
-#: is §5.2's "look here", not a verdict on either position.
+#: §8.6.2/§5.2: 対称化した点とズレの線分は、同じ重みを持つ 2 つ目の層として
+#: 読ませる。どちらの色も「正しい」を示してはならない。琥珀色は §5.2 の
+#: 「ここを見よ」であって、いずれかの位置に対する判定ではない。
 DEFAULT_SYMMETRIZED_COLOR: tuple[int, int, int] = (250, 204, 21)
 DEFAULT_DEVIATION_COLOR: tuple[int, int, int] = (148, 163, 184)
 
@@ -36,7 +36,7 @@ def draw_landmark_points(
     color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
     radius: int = DEFAULT_POINT_RADIUS,
 ) -> NDArray[np.uint8]:
-    """Return a copy of ``rgb_image`` with the frame's landmarks painted on it."""
+    """フレームのランドマークを描き込んだ ``rgb_image`` の複製を返す。"""
     if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
         raise LandmarkError("オーバーレイには 3 チャンネルの RGB 画像が必要です。")
     if radius < 0:
@@ -67,7 +67,7 @@ def draw_face_midline(
     color: tuple[int, int, int] = DEFAULT_MIDLINE_COLOR,
     thickness: int = DEFAULT_MIDLINE_THICKNESS,
 ) -> NDArray[np.uint8]:
-    """Draw the TLS midline only across the detected face extent."""
+    """TLS 正中線を、検出した顔の範囲内にだけ描く。"""
     if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
         raise LandmarkError("オーバーレイには 3 チャンネルの RGB 画像が必要です。")
     if thickness < 1:
@@ -97,11 +97,11 @@ def _paint_segment(
     color: tuple[int, int, int],
     thickness: int,
 ) -> None:
-    """Rasterize one thick segment in place, clamped to the image bounds.
+    """太さのある線分 1 本を、画像範囲へクランプしつつ直接描画する。
 
-    Steps are chosen from the longer axis so the line has no gaps, and every
-    coordinate is clipped rather than dropped: a landmark just off-frame still
-    paints at the edge instead of vanishing.
+    刻み幅は長い方の軸から選ぶので線に隙間ができない。座標は捨てずにすべて
+    クリップする。フレームのすぐ外にあるランドマークも、消えるのではなく端に
+    描かれる。
     """
     steps = max(1, round(float(np.max(np.abs(end - start))))) + 1
     xs = np.rint(np.linspace(start[0], end[0], steps)).astype(np.int64)
@@ -124,7 +124,7 @@ def _paint_points(
     color: tuple[int, int, int],
     radius: int,
 ) -> None:
-    """Paint a square dot per point in place, clamped to the image bounds."""
+    """点ごとに正方形の点を、画像範囲へクランプしつつ直接描画する。"""
     if len(points) == 0:
         return
     height, width = painted.shape[:2]
@@ -149,13 +149,13 @@ def draw_symmetry_deviation(
     deviation_color: tuple[int, int, int] = DEFAULT_DEVIATION_COLOR,
     radius: int = DEFAULT_POINT_RADIUS,
 ) -> NDArray[np.uint8]:
-    """§8.6.2: draw measured and symmetrized points with a segment between them.
+    """§8.6.2: 実測点と対称化点を、その間を結ぶ線分とともに描く。
 
-    Only ``indices`` are drawn — the landmarks with no defined correspondence
-    were never symmetrized, and painting them would imply otherwise. Segments
-    go down first so the two point layers stay legible on top of them; the
-    layers use different colours and identical weight, since neither position
-    is the "right" one (§5.2).
+    描くのは ``indices`` だけである。対応が定義されていないランドマークは
+    対称化されておらず、描くとそうでないかのように見えてしまう。線分を先に
+    描くことで、その上に来る 2 つの点の層が読みやすいままになる。両層は色を
+    変えつつ重みは同一にする。どちらの位置も「正しい」方ではないためである
+    （§5.2）。
     """
     if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
         raise LandmarkError("オーバーレイには 3 チャンネルの RGB 画像が必要です。")

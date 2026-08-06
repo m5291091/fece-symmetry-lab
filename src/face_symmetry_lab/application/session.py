@@ -1,4 +1,4 @@
-"""Session-scoped numeric history and reproducibility metadata (§9, §14.2)."""
+"""セッション単位の数値履歴と、再現性のためのメタデータ（§9, §14.2）。"""
 
 from __future__ import annotations
 
@@ -38,13 +38,12 @@ def build_config_settings(
     tau_seconds: float,
     analysis_interval_ms: int | None = None,
 ) -> dict[str, JsonValue]:
-    """Return the normalized settings whose digest defines comparability."""
+    """比較可能性を定義する digest の元になる、正規化済み設定を返す。"""
     settings: dict[str, JsonValue] = {
         "metric_version": config.metric_version,
         "landmark_map_version": config.landmark_map_version,
-        # §8.6 left the bundle with no coefficient, so the pair counts that
-        # decide how the pooled overall distance is composed are what makes
-        # two segments comparable.
+        # §8.6 は bundle に係数を残さなかった。そのため、まとめた総合距離の
+        # 組み立て方を決めるペア数こそが、2 つの区間を比較可能にする要素である。
         "part_pair_counts": cast(
             dict[str, JsonValue],
             {name: len(part.pairs) for name, part in config.parts.items()},
@@ -69,7 +68,7 @@ def build_config_settings(
 
 
 def config_fingerprint(settings: Mapping[str, object]) -> str:
-    """Hash canonical JSON so key order and formatting cannot change identity."""
+    """正準形 JSON をハッシュ化し、キー順や書式が同一性を変えないようにする。"""
     canonical = json.dumps(
         dict(settings),
         ensure_ascii=False,
@@ -81,7 +80,7 @@ def config_fingerprint(settings: Mapping[str, object]) -> str:
 
 
 class SessionRecorder:
-    """Thread-safe bounded history shared by a session's callback and UI."""
+    """セッションのコールバックと UI が共有する、スレッドセーフな有界履歴。"""
 
     def __init__(
         self,
@@ -147,8 +146,8 @@ class SessionRecorder:
         symmetry = outcome.symmetry
         pose = outcome.pose
         skin = outcome.skin_quality
-        # §8.6.1: a skin result may exist without a usable white-balance
-        # correction, so the two are absent independently.
+        # §8.6.1: 使用可能な white balance 補正が無くても肌の結果は存在しうる
+        # ため、両者は互いに独立して欠測になる。
         correction = skin.correction if skin is not None else None
         with self._lock:
             record = ExportRecord(
@@ -238,7 +237,7 @@ class SessionRecorder:
         *,
         observed_elapsed_ms: int,
     ) -> ExportRecord | None:
-        """Attach an independently produced age/gender result to the latest record."""
+        """独立に生成された年齢・性別の結果を、最新の記録へ添付する。"""
         with self._lock:
             if not self._records:
                 return None
@@ -310,15 +309,14 @@ class SessionRecorder:
         analysis_interval_ms: int | None = None,
         history_capacity: int | None = None,
     ) -> None:
-        """Clear history and begin a new comparison segment.
+        """履歴を消去し、新しい比較区間を開始する。
 
-        Passing a changed threshold/tau/interval recomputes the config
-        fingerprint too, so the new segment's exported records are correctly
-        distinguished from the one before it (§15.2). The metric bundle is
-        not among them: §8.6 left it with no tunable coefficient, so it is
-        pinned for the session. ``history_capacity`` rebuilds the bounded
-        buffer at the new size; the segment is being cleared either way, so
-        no record is dropped to make room.
+        閾値・tau・間隔を変更して渡すと config fingerprint も再計算されるため、
+        新しい区間のエクスポート記録は直前の区間と正しく区別される（§15.2）。
+        指標 bundle はこれらに含まれない。§8.6 が調整可能な係数を残さなかった
+        ので、セッション中は固定である。``history_capacity`` は有界バッファを
+        新しい大きさで作り直す。いずれにせよ区間は消去されるため、場所を空ける
+        ために記録が捨てられることはない。
         """
         with self._lock:
             if thresholds is not None:
@@ -349,12 +347,12 @@ class SessionRecorder:
             self._config_revision += 1
 
     def resize_history_capacity(self, capacity: int) -> None:
-        """Grow/shrink the bounded history buffer without starting a new segment.
+        """新しい区間を開始せずに、有界履歴バッファを拡大・縮小する。
 
-        Unlike ``reset(history_capacity=...)``, existing records (up to the
-        new capacity, oldest dropped first) are preserved and segment/config
-        identity is untouched: `history_capacity` does not affect scoring
-        (§15.2), so cadence auto-tuning (§14.3d, FR-030) can resize it live.
+        ``reset(history_capacity=...)`` と違い、既存の記録は（新しい容量まで、
+        古いものから捨てつつ）保持され、区間と config の同一性はそのままである。
+        `history_capacity` は採点に影響しない（§15.2）ため、cadence の自動調整
+        （§14.3d, FR-030）が動作中にサイズを変更できる。
         """
         if capacity < 1:
             raise ValueError("history_capacity は 1 以上である必要があります。")

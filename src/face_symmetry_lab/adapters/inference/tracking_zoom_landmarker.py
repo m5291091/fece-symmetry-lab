@@ -1,17 +1,15 @@
-"""Wraps a video `LandmarkProvider` with tracking-zoom crop/enlarge (§14.3a).
+"""映像用 `LandmarkProvider` を、追跡ズームの切り出し・拡大で包む（§14.3a）。
 
-A PC webcam frames a face far smaller than a phone selfie does. This adapter
-crops around the previously detected face, enlarges the crop, and hands that
-to the wrapped provider instead of the raw frame, so the detector gets more
-effective resolution on the face regardless of how far the user sits. It
-never changes what the wrapped provider does; it only changes what image it
-sees and re-projects the result back into full-frame coordinates, so
-downstream quality gates, scoring, and overlays are unaffected.
+PC の webcam はスマートフォンの自撮りよりはるかに小さく顔を写す。この adapter
+は直前に検出した顔の周りを切り出して拡大し、生フレームの代わりに包んだ provider
+へ渡す。これにより、利用者がどれだけ離れて座っていても検出器は顔に対してより
+高い実効解像度を得る。包んだ provider の動作自体は変えない。変えるのはそれが
+見る画像だけであり、結果は全フレーム座標へ射影し直すので、下流の品質ゲート・
+採点・オーバーレイは影響を受けない。
 
-It periodically forces a full-frame detection (`recheck_interval_ms`) even
-while locked onto a face, because a face outside the current crop would
-otherwise never be seen — silently keeping a second face invisible would
-violate the single-face policy (FR-008).
+顔をとらえている間も、定期的に全フレーム検出を強制する（`recheck_interval_ms`）。
+そうしないと現在の切り出しの外にいる顔が永久に見えないままになるためである。
+2 人目の顔を黙って見えなくすることは、単一顔の方針（FR-008）に反する。
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ from face_symmetry_lab.domain.tracking_zoom import (
 
 
 class TrackingZoomLandmarker:
-    """A `LandmarkProvider` that crops and enlarges around the last face."""
+    """直前の顔の周りを切り出して拡大する `LandmarkProvider`。"""
 
     def __init__(
         self,
@@ -87,15 +85,15 @@ class TrackingZoomLandmarker:
 
     @property
     def policy(self) -> TrackingZoomPolicy:
-        """The currently active zoom policy (§15.2, §14.3c auto-tuning readback)."""
+        """現在有効なズーム方針（§15.2、§14.3c の自動調整の読み戻し）。"""
         return self._policy
 
     def update_policy(self, policy: TrackingZoomPolicy) -> None:
-        """Swap the zoom policy (§15.2 Advanced settings).
+        """ズーム方針を差し替える（§15.2 の Advanced 設定）。
 
-        Keeps the last tracked bbox: a policy change does not mean the
-        person moved, so the new margin/window applies to it immediately
-        instead of forcing a full-frame re-search.
+        直前に追跡した bbox は保持する。方針が変わったことは人が動いたことを
+        意味しないので、全フレーム再探索を強制せず、新しい余白と窓をその bbox
+        へ直ちに適用する。
         """
         self._policy = policy
 

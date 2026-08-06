@@ -1,8 +1,8 @@
-"""Pose contract tests (§8.2.1).
+"""姿勢の契約テスト（§8.2.1）。
 
-The app convention is intrinsic Y-X-Z on a right-handed camera frame with
-+X right, +Y up, +Z toward the camera: `yaw > 0` turns the nose toward the
-right of the non-mirrored image, `pitch > 0` lifts it, `roll > 0` is clockwise.
+このアプリの規約は、+X が右、+Y が上、+Z がカメラ方向の右手系カメラ座標に
+おける intrinsic Y-X-Z である。`yaw > 0` は鏡像でない画像の右へ鼻を向け、
+`pitch > 0` は鼻を上げ、`roll > 0` は時計回りである。
 """
 
 import math

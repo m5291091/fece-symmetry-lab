@@ -19,12 +19,12 @@ SCRIPTS_DIR = APP_ROOT / "scripts"
 
 @pytest.mark.model
 def test_openvino_reference_and_shipped_onnx_stay_within_the_od07_gate() -> None:
-    """OD-07: fixed-input parity between the OpenVINO IR and the derived ONNX.
+    """OD-07: OpenVINO IR と派生 ONNX の、固定入力に対する parity。
 
-    ``openvino`` never joins the app's dependency group (ADR-0003), so this
-    test only runs when a development environment explicitly installs it
-    alongside the app (see ``scripts/verify_openvino_parity.py``); everywhere
-    else it skips. This mirrors ``test_demographic_conversion.py``.
+    ``openvino`` はアプリの依存グループへ決して加えない（ADR-0003）。そのため
+    このテストは、開発環境がアプリと並べて明示的に導入したときにだけ実行され
+    （``scripts/verify_openvino_parity.py`` を参照）、それ以外では skip する。
+    ``test_demographic_conversion.py`` と同じ方針である。
     """
     if importlib.util.find_spec("openvino") is None:
         pytest.skip(

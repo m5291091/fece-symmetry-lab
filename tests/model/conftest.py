@@ -1,8 +1,8 @@
-"""Synthetic fixtures for real-model smoke tests.
+"""実モデル smoke test のための合成 fixture。
 
-§21.4 prefers synthetic, redistributable fixtures. The face below is drawn
-programmatically, so no real person's image is stored in this repository and
-the input is identical on every machine.
+§21.4 は再配布可能な合成 fixture を優先する。以下の顔はプログラムで描画するので、
+実在の人物の画像がこの repository に保存されることはなく、入力はどの機械でも
+同一である。
 """
 
 import numpy as np
@@ -42,13 +42,13 @@ def _draw_synthetic_face() -> Image.Image:
 
 @pytest.fixture(scope="session")
 def synthetic_face_rgb() -> NDArray[np.uint8]:
-    """A drawn, single-face RGB image the Face Landmarker reliably detects."""
+    """Face Landmarker が確実に検出できる、描画された単一顔の RGB 画像。"""
     return np.asarray(_draw_synthetic_face(), dtype=np.uint8)
 
 
 @pytest.fixture(scope="session")
 def synthetic_two_face_rgb(synthetic_face_rgb: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Two drawn faces side by side, to exercise the MULTI_FACE path."""
+    """MULTI_FACE の経路を通すための、横に並べた 2 つの描画顔。"""
     face = Image.fromarray(synthetic_face_rgb).resize((360, 360))
     canvas = Image.new("RGB", (820, 420), (235, 230, 225))
     canvas.paste(face, (20, 30))

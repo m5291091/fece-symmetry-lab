@@ -7,28 +7,25 @@
 #   "onnxruntime==1.20.1",
 # ]
 # ///
-"""OD-07 due diligence: is the parity gap a conversion bug or a backend trait?
+"""OD-07 の due diligence: parity の差は変換の bug か、backend の特性か。
 
-``verify_openvino_parity.py`` measures how far the shipped ONNX (executed by
-``cv2.dnn``, the app's actual runtime) drifts from the OpenVINO reference,
-and that gap exceeds the model card's target gate (docs/model-cards/
-openvino-age-gender-retail-0013.md). This script adds a third, independent
-ONNX runtime (``onnxruntime``) to the same fixed inputs so the gap's likely
-source can be localized without guessing:
+``verify_openvino_parity.py`` は、同梱 ONNX（アプリの実 runtime である
+``cv2.dnn`` で実行）が OpenVINO 参照からどれだけずれるかを測る。その差は model
+card の目標ゲート（docs/model-cards/openvino-age-gender-retail-0013.md）を
+超えている。本 script は同じ固定入力に対して 3 つ目の独立した ONNX runtime
+（``onnxruntime``）を加え、差の出どころを推測せずに絞り込めるようにする。
 
-- If ``onnxruntime`` also disagrees with OpenVINO by roughly the same
-  amount, the ONNX graph itself is faithful to the source IR, and the drift
-  is an OpenVINO-CPU-specific numerical trait (e.g. how it handles the
-  original FP16 IR) that a conversion-recipe change is unlikely to close.
-- If ``onnxruntime`` instead agrees closely with OpenVINO while ``cv2.dnn``
-  is the outlier, that points at an OpenCV-specific execution difference
-  worth investigating further in the conversion recipe or in how the app
-  invokes ``cv2.dnn``.
+- ``onnxruntime`` も OpenVINO とおおむね同じだけ食い違うなら、ONNX グラフ自体は
+  元の IR に忠実であり、ずれは OpenVINO CPU 固有の数値的特性（元の FP16 IR の
+  扱い方など）である。変換手順を変えても埋まる見込みは薄い。
+- 逆に ``onnxruntime`` が OpenVINO とよく一致し ``cv2.dnn`` だけが外れるなら、
+  OpenCV 固有の実行差を示している。変換手順、またはアプリが ``cv2.dnn`` を
+  呼び出す方法を、さらに調べる価値がある。
 
-Like ``verify_openvino_parity.py``, this is development-only: ``openvino``
-and ``onnxruntime`` must never join the app's runtime lock (ADR-0003, §5,
-§10.6). Run via ``uv run scripts/verify_onnx_runtime_agreement.py``, which
-resolves its own isolated environment separate from ``uv sync``.
+``verify_openvino_parity.py`` と同様、これは開発時専用である。``openvino`` と
+``onnxruntime`` をアプリの runtime lock へ加えてはならない（ADR-0003, §5, §10.6）。
+``uv sync`` とは別の隔離環境を解決する
+``uv run scripts/verify_onnx_runtime_agreement.py`` 経由で実行する。
 """
 
 from __future__ import annotations
@@ -54,7 +51,7 @@ OUTPUT_NAMES = ["fc3_a", "prob"]
 
 
 class RuntimeAgreementError(RuntimeError):
-    """The pinned assets, manifest, or a runtime could not be verified."""
+    """固定 asset・manifest・runtime のいずれかを検証できなかった。"""
 
 
 def _sha256(path: Path) -> str:

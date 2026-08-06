@@ -1,27 +1,27 @@
-"""Time-based exponential smoothing (§8.7).
+"""時間ベースの指数平滑化（§8.7）。
 
     alpha_t = 1 - exp(-delta_t / tau)
     ema_t   = alpha_t * raw_t + (1 - alpha_t) * ema_(t-1)
 
-A fixed alpha would change its time constant whenever the frame rate moves, so
-the weight is derived from the elapsed monotonic time instead.
+alpha を固定するとフレームレートが動くたびに時定数が変わってしまう。そのため
+重みは、経過した単調時刻から導く。
 """
 
 from __future__ import annotations
 
 from math import exp, isfinite
 
-#: §8.8 resets the filter when analysis stalls for this long.
+#: §8.8: 解析がこの時間だけ滞ったら、フィルタをリセットする。
 DEFAULT_MAX_GAP_SECONDS: float = 2.0
 DEFAULT_TAU_SECONDS: float = 0.4
 
 
 class SmoothingError(ValueError):
-    """Invalid smoothing input or configuration."""
+    """平滑化の入力または設定が不正である。"""
 
 
 class TimeBasedEma:
-    """Session-scoped smoother for the displayed overall score."""
+    """表示する総合値のための、セッション単位の平滑化器。"""
 
     def __init__(
         self,
@@ -44,7 +44,7 @@ class TimeBasedEma:
 
     @property
     def tau_seconds(self) -> float:
-        """The currently active time constant (§14.3d auto-tuning readback)."""
+        """現在有効な時定数（§14.3d の自動調整の読み戻し）。"""
         return self._tau
 
     def reset(self) -> None:
@@ -52,7 +52,7 @@ class TimeBasedEma:
         self._at = None
 
     def update(self, raw: float, *, at: float) -> float:
-        """Fold one raw score in and return the smoothed value."""
+        """生値を 1 つ取り込み、平滑化した値を返す。"""
         if not isfinite(raw):
             raise SmoothingError("平滑化の入力は有限値である必要があります。")
         if not isfinite(at):

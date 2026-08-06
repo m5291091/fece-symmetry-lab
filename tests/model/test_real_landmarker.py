@@ -1,12 +1,12 @@
-"""Real-model smoke tests (§21.1 "Model smoke").
+"""実モデルの smoke test（§21.1「Model smoke」）。
 
-These run against the actual `face_landmarker.task` asset installed by
-`scripts/bootstrap_models.py`. They skip when the asset is absent so that a
-clean checkout still passes, and they never download anything themselves.
+`scripts/bootstrap_models.py` が配置した実際の `face_landmarker.task` asset に
+対して実行する。asset が無いときは skip するので、まっさらな checkout でも
+テストは通る。また、自身が何かを取得することは決してない。
 
-Set `FACE_SYMMETRY_LAB_SMOKE_IMAGE` to a locally held, consented face photo to
-also exercise a real detection. Such images are face-derived data and must not
-be committed to this repository (§21.4).
+`FACE_SYMMETRY_LAB_SMOKE_IMAGE` に、手元にある同意済みの顔写真を指定すると、
+実際の検出も併せて確認できる。そうした画像は顔由来データであり、この repository
+へ commit してはならない（§21.4）。
 """
 
 import math
@@ -181,7 +181,7 @@ def test_real_photo_produces_a_full_landmark_set() -> None:
 def test_the_synthetic_face_produces_a_symmetry_distance(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
-    """End-to-end: real model -> pose -> quality gate -> distance."""
+    """端から端まで: 実モデル -> 姿勢 -> 品質ゲート -> 距離。"""
     from face_symmetry_lab.adapters.io.metric_config import load_metric_config
     from face_symmetry_lab.application.still_image import analyze_still_image
 
@@ -208,7 +208,7 @@ def test_the_synthetic_face_produces_a_symmetry_distance(
 def test_a_drawn_symmetric_face_measures_less_deviation_than_a_skewed_one(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
-    """A deliberately asymmetric render must not measure below the symmetric one."""
+    """意図的に非対称に描いたものが、対称なものより小さく測られてはならない。"""
     from PIL import Image
 
     from face_symmetry_lab.adapters.io.metric_config import load_metric_config
@@ -243,15 +243,13 @@ def test_a_drawn_symmetric_face_measures_less_deviation_than_a_skewed_one(
 def test_image_and_video_running_modes_measure_an_identical_frame_the_same(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
-    """§14.3: IMAGE and VIDEO use separate detector instances.
+    """§14.3: IMAGE と VIDEO は別々の検出器インスタンスを使う。
 
-    A user-reported gap between the still-image value and the live camera
-    value raised the question of whether the two MediaPipe running modes
-    themselves diverge. Feeding VIDEO mode the same unchanging frame
-    repeatedly (so its internal tracker settles) and comparing against IMAGE
-    mode isolates that one variable from camera noise, motion, and capture
-    conditions, which still-image uploads and live video otherwise never
-    share.
+    静止画の値とライブカメラの値の差が利用者から報告され、MediaPipe の 2 つの
+    実行モード自体が食い違うのかという疑問が生じた。VIDEO モードへ同じ不変の
+    フレームを繰り返し与えて内部トラッカーを落ち着かせ、IMAGE モードと比較する
+    ことで、この 1 つの変数を、カメラのノイズ・動き・撮影条件から切り離せる。
+    静止画のアップロードとライブ映像は、それら以外を共有しないためである。
     """
     from face_symmetry_lab.adapters.io.metric_config import load_metric_config
     from face_symmetry_lab.application.analyzer import FrameAnalyzer
@@ -290,21 +288,21 @@ def test_image_and_video_running_modes_measure_an_identical_frame_the_same(
     )
     assert still.outcome.overall_distance_raw is not None
     assert settled.overall_distance_raw is not None
-    # Measured identical on this fixture; the tolerance is a fraction of the
-    # interocular distance, absorbing future non-determinism in MediaPipe's
-    # tracker without hiding a real regression.
+    # この fixture では一致することを実測済み。許容差は両眼間隔に対する比で
+    # あり、MediaPipe のトラッカーが将来非決定的になっても吸収しつつ、実際の
+    # 回帰は隠さない。
     assert abs(still.outcome.overall_distance_raw - settled.overall_distance_raw) <= 0.01
 
 
 def test_tracking_zoom_keeps_detecting_a_small_in_frame_face_across_frames(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
-    """FR-026: a PC-webcam-sized face must stay trackable frame over frame.
+    """FR-026: PC の webcam 相当の大きさの顔が、フレームをまたいで追跡され続ける。
 
-    Places the synthetic face at ~35% of a larger canvas (well under the
-    face_area_min=0.02 gate on its own bbox), matching a normal seated PC
-    framing, and confirms the wrapped provider keeps a single-face lock and
-    produces sane remapped coordinates using the real Face Landmarker.
+    合成顔をより大きなキャンバスの約 35% の位置に置き（その bbox 単独では
+    face_area_min=0.02 のゲートを十分下回る）、通常の着席時の PC の画角を再現
+    する。そのうえで、包んだ provider が実際の Face Landmarker を使って単一顔の
+    追跡を保ち、妥当に写し戻された座標を出すことを確認する。
     """
     from PIL import Image
 

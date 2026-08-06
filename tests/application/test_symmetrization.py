@@ -9,24 +9,24 @@ from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 WIDTH = 200
 HEIGHT = 200
 
-#: A symmetric face in normalized frame coordinates (see tests/domain).
+#: 正規化フレーム座標での対称な顔（tests/domain を参照）。
 _POINTS = (
-    (0.35, 0.40),  # 0 left eye outer
-    (0.45, 0.40),  # 1 left eye inner
-    (0.55, 0.40),  # 2 right eye inner
-    (0.65, 0.40),  # 3 right eye outer
-    (0.50, 0.30),  # 4 midline
-    (0.50, 0.50),  # 5 midline
-    (0.50, 0.62),  # 6 midline
-    (0.30, 0.55),  # 7 contour
+    (0.35, 0.40),  # 0 左目 外側
+    (0.45, 0.40),  # 1 左目 内側
+    (0.55, 0.40),  # 2 右目 内側
+    (0.65, 0.40),  # 3 右目 外側
+    (0.50, 0.30),  # 4 正中
+    (0.50, 0.50),  # 5 正中
+    (0.50, 0.62),  # 6 正中
+    (0.30, 0.55),  # 7 輪郭
     (0.70, 0.55),  # 8
     (0.31, 0.45),  # 9
     (0.69, 0.45),  # 10
     (0.33, 0.35),  # 11
     (0.67, 0.35),  # 12
-    (0.47, 0.50),  # 13 nose
+    (0.47, 0.50),  # 13 鼻
     (0.53, 0.50),  # 14
-    (0.44, 0.58),  # 15 mouth
+    (0.44, 0.58),  # 15 口
     (0.56, 0.58),  # 16
 )
 
@@ -87,7 +87,7 @@ def test_a_skewed_face_reports_a_deviation_and_paints_the_overlay() -> None:
 
 
 def test_the_source_image_is_never_modified() -> None:
-    """§14.3g is a read-only view over the captured frame."""
+    """§14.3g は、取り込んだフレームに対する読み取り専用の表示である。"""
     image = _image()
     original = image.copy()
 
@@ -97,7 +97,7 @@ def test_the_source_image_is_never_modified() -> None:
 
 
 def test_the_call_is_stateless_and_repeatable() -> None:
-    """No EMA, no history: the same input always gives the same answer."""
+    """EMA も履歴も無いので、同じ入力からは常に同じ答えが出る。"""
     frame = _frame(_skewed())
     config = _config()
 
@@ -114,14 +114,14 @@ def test_the_symmetrized_positions_are_in_pixel_coordinates() -> None:
     measured = view.result.measured
     assert measured[:, 0].max() <= WIDTH
     assert measured[:, 1].max() <= HEIGHT
-    # A near-symmetric face symmetrizes to positions inside the same frame.
+    # ほぼ対称な顔は、同じフレーム内の位置へ対称化される。
     symmetrized = view.result.symmetrized[list(view.result.symmetrized_indices)]
     assert symmetrized[:, 0].min() >= 0.0
     assert symmetrized[:, 1].min() >= 0.0
 
 
 def test_a_multi_face_frame_is_refused() -> None:
-    """FR-008: one midline cannot stand for two faces."""
+    """FR-008: 1 本の正中線が 2 つの顔を代表することはできない。"""
     with pytest.raises(SymmetrizationError, match="単一顔"):
         symmetrize_frame(_image(), _frame(face_count=2), config=_config())
 
@@ -140,11 +140,11 @@ def test_a_degenerate_face_is_refused_rather_than_drawn() -> None:
         symmetrize_frame(_image(), _frame(tuple(collapsed)), config=_config())
 
 
-# --- §8.6.4 pixel warping (FR-035) -------------------------------------------
+# --- §8.6.4 画素の変形（FR-035）---------------------------------------------
 
 
 class RecordingWarper:
-    """A `PiecewiseWarper` that reports what it was handed."""
+    """渡されたものをそのまま報告する `PiecewiseWarper`。"""
 
     def __init__(self, *, error: Exception | None = None) -> None:
         self.meshes: list[object] = []
@@ -160,7 +160,7 @@ class RecordingWarper:
 
 
 def test_no_warper_means_no_warped_image_and_no_complaint() -> None:
-    """§8.6.4 is opt-in: phase 1 must not pay for it or mention it."""
+    """§8.6.4 は任意指定である。第 1 段階はその費用も言及も負ってはならない。"""
     view = symmetrize_frame(_image(), _frame(_skewed()), config=_config())
 
     assert view.warped is None
@@ -168,7 +168,7 @@ def test_no_warper_means_no_warped_image_and_no_complaint() -> None:
 
 
 def test_a_warper_receives_the_symmetrized_points_as_its_target() -> None:
-    """The warp adds no geometry: it reuses what §8.6.2 already computed."""
+    """変形は幾何を追加しない。§8.6.2 がすでに計算したものを再利用する。"""
     warper = RecordingWarper()
 
     view = symmetrize_frame(_image(), _frame(_skewed()), config=_config(), warper=warper)
@@ -181,7 +181,7 @@ def test_a_warper_receives_the_symmetrized_points_as_its_target() -> None:
 
 
 def test_the_overlay_survives_a_warp_failure() -> None:
-    """AC-SYMM-02: an imaging failure must not take the point view down."""
+    """AC-SYMM-02: 画像化の失敗が、点の表示まで道連れにしてはならない。"""
     warper = RecordingWarper(error=RuntimeError("boom"))
 
     view = symmetrize_frame(_image(), _frame(_skewed()), config=_config(), warper=warper)
@@ -194,9 +194,9 @@ def test_the_overlay_survives_a_warp_failure() -> None:
 
 
 def test_an_over_displaced_face_refuses_the_image_but_keeps_the_points() -> None:
-    """AC-SYMM-02: the displacement guard fails soft, with a reason."""
+    """AC-SYMM-02: 変位ガードは理由を添えて fail-soft する。"""
     wrecked = list(_POINTS)
-    wrecked[15] = (0.02, 0.95)  # a mouth point thrown across the frame
+    wrecked[15] = (0.02, 0.95)  # 口の点をフレームの反対側へ飛ばす
     warper = RecordingWarper()
 
     view = symmetrize_frame(_image(), _frame(tuple(wrecked)), config=_config(), warper=warper)
@@ -204,7 +204,7 @@ def test_an_over_displaced_face_refuses_the_image_but_keeps_the_points() -> None
     assert view.warped is None
     assert view.warp_unavailable_reason is not None
     assert "変形量" in view.warp_unavailable_reason
-    assert warper.meshes == []  # refused before any pixel work
+    assert warper.meshes == []  # 画素処理に入る前に拒否される
     assert view.max_deviation is not None
 
 

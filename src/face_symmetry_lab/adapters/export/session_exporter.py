@@ -1,4 +1,4 @@
-"""CSV and JSON serialization for the shared export schema (§9.3, §9.4)."""
+"""共通エクスポートスキーマの CSV・JSON 直列化（§9.3, §9.4）。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from face_symmetry_lab.domain.export import ExportRecord, SessionExport
 
 
 class SessionExportError(ValueError):
-    """A session has no numeric records to export."""
+    """そのセッションにエクスポートできる数値記録が無い。"""
 
 
 def _round_floats(value: Any) -> Any:
@@ -30,7 +30,7 @@ def _require_records(bundle: SessionExport) -> None:
 
 
 def json_bytes(bundle: SessionExport) -> bytes:
-    """Serialize a manifest and records without non-standard numeric tokens."""
+    """manifest と records を、規格外の数値表記を出さずに直列化する。"""
     _require_records(bundle)
     payload = _round_floats(bundle.model_dump(mode="json"))
     return json.dumps(
@@ -53,7 +53,7 @@ def _csv_value(value: Any) -> Any:
 
 
 def csv_bytes(bundle: SessionExport) -> bytes:
-    """Serialize the same records as CSV, with arrays separated by semicolons."""
+    """同じ records を CSV として直列化する。配列はセミコロンで区切る。"""
     _require_records(bundle)
     stream = io.StringIO(newline="")
     fieldnames = list(ExportRecord.model_fields)

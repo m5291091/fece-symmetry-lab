@@ -1,8 +1,8 @@
-"""Immutable landmark DTOs and the pure conversions the overlay needs.
+"""不変なランドマーク DTO と、オーバーレイが必要とする純粋な変換。
 
-This module holds tracking data only. It deliberately does not express
-`analysis_status`, symmetry scores, or quality gates: landmark presence alone
-says nothing about whether a frame is fit for measurement.
+このモジュールは追跡データだけを持つ。`analysis_status`、左右差スコア、品質
+ゲートを意図的に表現しない。ランドマークが存在するという事実だけでは、その
+フレームが計測に適しているかどうかを何も語らないためである。
 """
 
 from __future__ import annotations
@@ -16,17 +16,17 @@ from numpy.typing import NDArray
 
 from face_symmetry_lab.domain.pose import FacePose
 
-#: Face Landmarker returns 478 points; the frame contract does not require it,
-#: so downstream code can also work with reduced fixtures.
+#: Face Landmarker は 478 点を返す。フレームの契約はこれを必須としないので、
+#: 下流のコードは点数を減らした fixture でも動作できる。
 FACE_LANDMARK_COUNT = 478
 
 
 class LandmarkError(ValueError):
-    """Invalid landmark data at the domain boundary."""
+    """domain 境界におけるランドマークデータが不正である。"""
 
 
 class TrackingStatus(StrEnum):
-    """How many faces a frame carried. Not the analysis status of §6.2."""
+    """そのフレームが何人の顔を含んでいたか。§6.2 の解析状態とは別物である。"""
 
     NO_FACE = "NO_FACE"
     SINGLE_FACE = "SINGLE_FACE"
@@ -36,7 +36,7 @@ class TrackingStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class LandmarkFrame:
-    """One detection result, tied to the frame it was computed from."""
+    """検出結果 1 件。計算元となったフレームに結び付いている。"""
 
     frame_id: int
     face_count: int
@@ -47,7 +47,7 @@ class LandmarkFrame:
 
     @property
     def face_area_ratio(self) -> float | None:
-        """Bounding-box area of the landmarks, as a fraction of the frame."""
+        """ランドマークの外接矩形面積。フレーム全体に対する割合で返す。"""
         if not self.has_single_face or not self.points:
             return None
         xs = [x for x, _ in self.points]
@@ -76,7 +76,7 @@ def build_landmark_frame(
     width: int = 0,
     height: int = 0,
 ) -> LandmarkFrame:
-    """Validate a detection result before it can reach the overlay or the UI."""
+    """検出結果を、オーバーレイや UI へ届く前に検証する。"""
     if frame_id < 0:
         raise LandmarkError("frame_id は 0 以上である必要があります。")
     if face_count < 0:
@@ -103,7 +103,7 @@ def build_landmark_frame(
 
 
 def to_pixel_array(frame: LandmarkFrame) -> NDArray[np.float64]:
-    """Landmarks in pixel coordinates, for metrics that must not be aspect-warped."""
+    """画素座標のランドマーク。縦横比で歪めてはならない指標のために使う。"""
     if frame.width <= 0 or frame.height <= 0:
         raise LandmarkError("画素座標に戻すには画像サイズが必要です。")
     if not frame.has_single_face:
@@ -120,7 +120,7 @@ def to_pixel_points(
     width: int,
     height: int,
 ) -> tuple[tuple[int, int], ...]:
-    """Convert normalized landmarks to pixel coordinates, clamped to the image."""
+    """正規化ランドマークを画素座標へ変換し、画像内へクランプする。"""
     if width <= 0 or height <= 0:
         raise LandmarkError("画像サイズは正の値である必要があります。")
     if not frame.has_single_face:

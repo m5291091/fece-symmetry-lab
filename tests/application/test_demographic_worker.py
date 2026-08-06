@@ -25,7 +25,7 @@ def _crop() -> NDArray[np.uint8]:
 
 
 class ScriptedEstimator:
-    """Returns scripted results/errors in call order; records received crops."""
+    """あらかじめ用意した結果・例外を呼び出し順に返し、受け取った切り出しを記録する。"""
 
     def __init__(self, results: list[DemographicEstimate | Exception]) -> None:
         self._results = list(results)
@@ -40,7 +40,7 @@ class ScriptedEstimator:
 
 
 class BlockingEstimator:
-    """Blocks inside estimate() until released, to test capacity-1 gating."""
+    """容量 1 の制御を検証するため、解放されるまで estimate() 内で待機する。"""
 
     def __init__(self, result: DemographicEstimate) -> None:
         self._result = result
@@ -190,7 +190,7 @@ def test_is_due_tracks_the_cadence_without_consuming_it() -> None:
     worker = DemographicWorker(estimator=estimator, interval_ms=1000, clock=clock)
 
     assert worker.is_due() is True
-    assert worker.is_due() is True  # advisory only: asking never claims the slot
+    assert worker.is_due() is True  # 助言的な判定にすぎず、問い合わせが枠を確保することはない
 
     thread = worker.submit(_crop())
     assert thread is not None
@@ -224,14 +224,14 @@ def test_is_due_is_false_after_close() -> None:
 
 
 def test_set_interval_ms_changes_the_cadence_for_the_next_submission() -> None:
-    """§15.2 `age_interval_ms`: editable independently of the analysis cadence."""
+    """§15.2 の `age_interval_ms`: 解析周期とは独立に変更できる。"""
     clock = ManualClock()
     estimator = ScriptedEstimator([_estimate()])
     worker = DemographicWorker(estimator=estimator, interval_ms=1000, clock=clock)
     thread = worker.submit(_crop())
     assert thread is not None
     thread.join(timeout=2)
-    assert worker.is_due() is False  # next slot is 1000ms out
+    assert worker.is_due() is False  # 次の枠は 1000ms 先
 
     worker.set_interval_ms(0)
 

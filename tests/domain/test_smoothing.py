@@ -37,7 +37,7 @@ def test_a_longer_gap_weights_the_new_sample_more() -> None:
 
 
 def test_the_time_constant_is_independent_of_frame_rate() -> None:
-    """Two samples at 100ms must land where twenty at 10ms do (§8.7)."""
+    """100ms 間隔の 2 標本は、10ms 間隔の 20 標本と同じ値に着地する（§8.7）。"""
     coarse = TimeBasedEma(tau_seconds=0.4)
     coarse.update(0.0, at=0.0)
     for step in (0.1, 0.2):

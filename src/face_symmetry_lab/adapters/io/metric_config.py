@@ -1,4 +1,4 @@
-"""Load the frozen metric bundle (§8.6, §16 `configs/metrics/`)."""
+"""凍結された指標 bundle を読み込む（§8.6, §16 `configs/metrics/`）。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _pairs(raw: Any, part: str) -> tuple[tuple[int, int], ...]:
 
 
 def load_metric_config(path: Path = DEFAULT_METRIC_CONFIG_PATH) -> MetricConfig:
-    """Read and validate the pinned metric configuration."""
+    """固定された指標設定を読み込んで検証する。"""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:

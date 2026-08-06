@@ -1,11 +1,10 @@
-"""Pure geometry for realtime tracking-zoom (§14.3a, FR-026).
+"""リアルタイム追跡ズームのための純粋な幾何（§14.3a, FR-026）。
 
-A PC webcam frames a face far smaller than a phone selfie does, so feeding
-the raw frame straight to the landmark detector wastes most of its input
-resolution on background. This module computes, in normalized [0, 1] frame
-fractions only, the crop window to detect on next and how to map the
-result back to full-frame coordinates. No image data or model calls happen
-here, so it stays adapter-free and directly testable.
+PC の webcam はスマートフォンの自撮りよりはるかに小さく顔を写すため、生の
+フレームをそのままランドマーク検出器へ渡すと、入力解像度の大半を背景に費やす
+ことになる。このモジュールは、正規化された [0, 1] のフレーム比だけを使って、
+次に検出を行う切り出し窓と、その結果を全フレーム座標へ戻す方法を計算する。
+画像データにも推論にも触れないので、adapter に依存せず直接テストできる。
 """
 
 from __future__ import annotations
@@ -14,12 +13,12 @@ from dataclasses import dataclass
 
 
 class TrackingZoomError(ValueError):
-    """Invalid tracking-zoom geometry or configuration."""
+    """追跡ズームの幾何または設定が不正である。"""
 
 
 @dataclass(frozen=True, slots=True)
 class BoundingBox:
-    """A face region expressed as fractions of the frame, in ``[0, 1]``."""
+    """フレーム比 ``[0, 1]`` で表した顔の領域。"""
 
     x_min: float
     y_min: float
@@ -41,13 +40,13 @@ class BoundingBox:
         return self.y_max - self.y_min
 
 
-#: The whole frame, used for cold start, lost tracking, and periodic rechecks.
+#: フレーム全体。初回・追跡喪失・定期的な再確認のときに使う。
 FULL_FRAME = BoundingBox(0.0, 0.0, 1.0, 1.0)
 
 
 @dataclass(frozen=True, slots=True)
 class TrackingZoomPolicy:
-    """§15.2 Advanced settings (currently internal defaults, UI unexposed)."""
+    """§15.2 の Advanced 設定（現状は内部既定値で、UI へは公開しない）。"""
 
     margin_ratio: float = 0.6
     min_window_size: float = 0.18
@@ -73,11 +72,11 @@ def next_zoom_window(
     *,
     policy: TrackingZoomPolicy | None = None,
 ) -> BoundingBox:
-    """Decide the crop window to detect on next.
+    """次に検出を行う切り出し窓を決める。
 
-    ``None`` means the previous frame did not settle on exactly one face
-    (cold start, lost tracking, or a periodic multi-face recheck), so the
-    caller must search the full frame again.
+    ``None`` は、直前のフレームで顔がちょうど 1 つに定まらなかったこと（初回、
+    追跡喪失、複数顔の定期再確認）を意味する。その場合、呼び出し側はフレーム
+    全体を改めて探索しなければならない。
     """
     if last_bbox is None:
         return FULL_FRAME
@@ -94,7 +93,7 @@ def next_zoom_window(
 
 
 def bounding_box_of(points: tuple[tuple[float, float], ...]) -> BoundingBox | None:
-    """The tight bbox of a normalized point set, or ``None`` when degenerate."""
+    """正規化された点集合の外接矩形。退化しているときは ``None``。"""
     if not points:
         return None
     xs = [x for x, _ in points]
@@ -107,7 +106,7 @@ def bounding_box_of(points: tuple[tuple[float, float], ...]) -> BoundingBox | No
 
 
 def remap_point(point: tuple[float, float], window: BoundingBox) -> tuple[float, float]:
-    """Map a point normalized to ``window`` back into full-frame fractions."""
+    """``window`` を基準に正規化された点を、全フレーム比へ戻す。"""
     x, y = point
     return (window.x_min + x * window.width, window.y_min + y * window.height)
 
@@ -125,11 +124,11 @@ def resize_scale_for(
     *,
     policy: TrackingZoomPolicy | None = None,
 ) -> float:
-    """A uniform upscale factor so a small crop reaches a workable resolution.
+    """小さな切り出しが実用的な解像度へ届くための、一様な拡大率。
 
-    Never downscales (returns at least 1.0), and never magnifies past
-    ``policy.max_scale`` so a genuinely tiny, noisy face is not blown up into
-    false precision.
+    縮小は決してしない（最低でも 1.0 を返す）。また ``policy.max_scale`` を
+    超えて拡大もしない。本当に小さくノイズの多い顔を引き伸ばして、見かけ上の
+    精度を作り出さないためである。
     """
     if crop_width_px <= 0 or crop_height_px <= 0:
         raise TrackingZoomError("crop の pixel サイズは正の値である必要があります。")

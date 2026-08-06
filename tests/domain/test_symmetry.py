@@ -6,35 +6,35 @@ import pytest
 from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
 from face_symmetry_lab.domain.symmetry import SymmetryError, compute_symmetry
 
-# A synthetic face, exactly symmetric about x = 0.
+# x = 0 について厳密に対称な合成顔。
 SYNTHETIC_FACE = np.array(
     [
-        [-30.0, 0.0],  # 0 left eye outer
-        [-10.0, 0.0],  # 1 left eye inner
-        [10.0, 0.0],  # 2 right eye inner
-        [30.0, 0.0],  # 3 right eye outer
-        [0.0, -20.0],  # 4 midline forehead
-        [0.0, 20.0],  # 5 midline nose tip
-        [0.0, 50.0],  # 6 midline chin
-        [-40.0, 30.0],  # 7 contour
+        [-30.0, 0.0],  # 0 左目 外側
+        [-10.0, 0.0],  # 1 左目 内側
+        [10.0, 0.0],  # 2 右目 内側
+        [30.0, 0.0],  # 3 右目 外側
+        [0.0, -20.0],  # 4 正中 額
+        [0.0, 20.0],  # 5 正中 鼻先
+        [0.0, 50.0],  # 6 正中 顎
+        [-40.0, 30.0],  # 7 輪郭
         [40.0, 30.0],  # 8
         [-45.0, 10.0],  # 9
         [45.0, 10.0],  # 10
         [-35.0, -10.0],  # 11
         [35.0, -10.0],  # 12
-        [-8.0, 25.0],  # 13 nose
+        [-8.0, 25.0],  # 13 鼻
         [8.0, 25.0],  # 14
         [-12.0, 22.0],  # 15
         [12.0, 22.0],  # 16
         [-6.0, 28.0],  # 17
         [6.0, 28.0],  # 18
-        [-15.0, 40.0],  # 19 mouth
+        [-15.0, 40.0],  # 19 口
         [15.0, 40.0],  # 20
         [-8.0, 38.0],  # 21
         [8.0, 38.0],  # 22
         [-5.0, 43.0],  # 23
         [5.0, 43.0],  # 24
-        [-20.0, -5.0],  # 25 brow
+        [-20.0, -5.0],  # 25 眉
         [20.0, -5.0],  # 26
     ],
     dtype=np.float64,
@@ -42,9 +42,9 @@ SYNTHETIC_FACE = np.array(
 
 
 def _config(**overrides):
-    # `min_pairs` deliberately sits below the pair count, as the real bundle's
-    # does (30 of 63): the overall minimum is their sum, so the pooled value
-    # keeps some headroom after a part has already gone missing.
+    # `min_pairs` は意図的にペア数より小さくしてある。実際の bundle も同じで
+    # ある（63 中 30）。総合の最小値はそれらの総和なので、ある部位がすでに
+    # 欠測になった後でも、まとめた値には余裕が残る。
     parts = {
         "contour": PartMap(pairs=((7, 8), (9, 10), (11, 12)), min_pairs=2),
         "eyes": PartMap(pairs=((0, 3), (1, 2), (25, 26)), min_pairs=2),
@@ -123,7 +123,7 @@ def test_distances_are_invariant_to_roll(degrees: float) -> None:
 
 
 def test_distances_are_invariant_to_translation_and_scale() -> None:
-    """§8.3 normalizes the eye distance to 1, so a distance is a ratio, not pixels."""
+    """§8.3 が両眼距離を 1 に正規化するので、距離は画素ではなく比である。"""
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 4.0
     baseline = compute_symmetry(points, _config()).overall
@@ -146,7 +146,7 @@ def test_distances_are_invariant_to_mirroring() -> None:
 
 
 def test_the_overall_distance_pools_every_pair_instead_of_weighting_parts() -> None:
-    """§8.6: one fold over the pooled pairs, so each point counts exactly once."""
+    """§8.6: まとめたペアを 1 回折りたたむので、各点はちょうど 1 回だけ数えられる。"""
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 4.0
     points[7, 1] += 2.0
@@ -154,18 +154,18 @@ def test_the_overall_distance_pools_every_pair_instead_of_weighting_parts() -> N
 
     result = compute_symmetry(points, config)
 
-    # Pooling is equivalent to the count-weighted quadratic mean, which the
-    # equal-count parts here make an equal-weight quadratic mean. That is a
-    # consequence of pooling, not a configurable weight.
+    # まとめる操作は、本数で重み付けした二乗平均平方根と等価である。ここでは
+    # 各部位の本数が等しいので、結果として等重みの二乗平均平方根になる。これは
+    # まとめたことの帰結であって、設定可能な重みではない。
     per_part = [result.distance(name) for name in PART_NAMES]
     expected = math.sqrt(sum(value**2 for value in per_part) / len(per_part))
     assert result.overall == pytest.approx(expected, abs=1e-9)
-    # It is emphatically *not* the arithmetic mean the old Σ(w_p × score_p) used.
+    # これは旧 Σ(w_p × score_p) が使っていた算術平均では *断じてない*。
     assert result.overall != pytest.approx(sum(per_part) / len(per_part), abs=1e-9)
 
 
 def test_pooling_weights_a_part_by_how_many_pairs_it_contributes() -> None:
-    """A part with more pairs moves the pooled value more, by count alone."""
+    """ペアが多い部位ほど、まとめた値を大きく動かす。効くのは本数だけである。"""
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 4.0
     wide_mouth = _config(
@@ -193,13 +193,13 @@ def test_pooling_weights_a_part_by_how_many_pairs_it_contributes() -> None:
 
 
 def test_distances_are_non_negative_and_unbounded_above() -> None:
-    """§8.6: 0 is the floor; there is no 100 to clamp against any more."""
+    """§8.6: 下限は 0 であり、クランプすべき 100 はもう存在しない。"""
     points = SYNTHETIC_FACE.copy()
     points[19, 0] -= 20_000.0
 
     result = compute_symmetry(points, _config())
 
-    # Far past the old 0-100 ceiling, which would have clamped this to 0.
+    # 旧 0〜100 の上限をはるかに超える値。かつてならこれは 0 へクランプされた。
     assert result.distance("mouth") > 100.0
     assert result.overall > 0.0
     assert math.isfinite(result.overall)
@@ -223,7 +223,7 @@ def test_zero_eye_distance_produces_no_distance() -> None:
 
 
 def test_a_part_below_its_minimum_pair_count_is_missing_not_zero() -> None:
-    """A short landmark set makes some pairs unusable; those parts go missing."""
+    """ランドマークが少ないと一部のペアが使えなくなり、その部位は欠測になる。"""
     result = compute_symmetry(SYNTHETIC_FACE[:20], _config())
 
     assert result.distance("mouth") is None
@@ -231,7 +231,7 @@ def test_a_part_below_its_minimum_pair_count_is_missing_not_zero() -> None:
 
 
 def test_a_missing_part_does_not_make_the_overall_distance_missing() -> None:
-    """§8.6: the two are parallel outputs, so one is not composed of the other."""
+    """§8.6: 両者は並列な出力であり、一方が他方から組み立てられることはない。"""
     points = SYNTHETIC_FACE[:20].copy()
     points[7, 1] += 2.0
 
@@ -244,7 +244,7 @@ def test_a_missing_part_does_not_make_the_overall_distance_missing() -> None:
 
 
 def test_the_overall_distance_is_missing_below_its_own_pair_minimum() -> None:
-    """Too few usable pairs overall is missing, never zero (§8.6)."""
+    """全体で使えるペアが少なすぎる場合は欠測であって、0 ではない（§8.6）。"""
     result = compute_symmetry(SYNTHETIC_FACE[:8], _config())
 
     assert result.overall is None

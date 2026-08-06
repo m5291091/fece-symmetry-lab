@@ -1,7 +1,7 @@
-"""Capture-conditioned skin-surface reference metric.
+"""撮影条件で補正した、肌表面の参考指標。
 
-The software correction reduces simple colour casts; it is not a physical
-camera calibration and the output does not represent health or attractiveness.
+ソフトウェア補正は単純な色かぶりを減らすだけであり、物理的なカメラ較正では
+ない。出力は健康さや魅力を表すものでもない。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ MAX_GAIN: Final[float] = 2.0
 
 
 class SkinQualityError(ValueError):
-    """The image or cheek-patch configuration cannot be analysed safely."""
+    """画像または頬 patch の設定を、安全に解析できない。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +85,7 @@ def _apply_correction(
 def correct_camera_image(
     rgb_image: NDArray[np.uint8],
 ) -> tuple[NDArray[np.uint8], CameraCorrection]:
-    """Apply bounded gray-world and robust luminance normalization locally."""
+    """範囲を制限した gray-world と、頑健な輝度正規化を局所的に適用する。"""
     image = _validate_rgb(rgb_image)
     values = np.asarray(image, dtype=np.float64) / 255.0
     channel_means = values.mean(axis=(0, 1))
@@ -128,7 +128,7 @@ def _correct_face_region(
     image: NDArray[np.uint8],
     frame: LandmarkFrame,
 ) -> tuple[NDArray[np.uint8], CameraCorrection]:
-    """Correct only the landmark bounding box so background colour cannot dominate."""
+    """ランドマークの外接矩形だけを補正し、背景色が支配しないようにする。"""
     height, width = image.shape[:2]
     xs = [point[0] for point in frame.points]
     ys = [point[1] for point in frame.points]
@@ -157,7 +157,7 @@ def compute_skin_quality(
     patch_radius: int = 3,
     min_pairs: int = 2,
 ) -> SkinQualityResult:
-    """Return a correction-conditioned, non-medical cheek-surface reference."""
+    """補正を前提とした、医学的でない頬表面の参考値を返す。"""
     image = _validate_rgb(rgb_image)
     if not frame.has_single_face or not frame.points:
         return SkinQualityResult(None, None, None, 0, None)

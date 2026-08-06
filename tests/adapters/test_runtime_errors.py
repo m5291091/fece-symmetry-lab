@@ -5,8 +5,8 @@ from face_symmetry_lab.adapters.inference.runtime_errors import init_failure_det
 
 
 def test_a_missing_shared_library_names_the_packages_to_install() -> None:
-    """The CI failure mode: MediaPipe's native lib links EGL/GLES, and a bare
-    "could not initialize" left nothing to act on."""
+    """CI での失敗のかたち。MediaPipe のネイティブライブラリは EGL/GLES へ
+    リンクしており、単なる「初期化できません」では手の打ちようがなかった。"""
     error = OSError("libGLESv2.so.2: cannot open shared object file: No such file or directory")
 
     detail = init_failure_detail(error)
@@ -21,12 +21,12 @@ def test_any_other_failure_is_reported_verbatim() -> None:
 
 
 def test_a_silent_exception_still_names_its_type() -> None:
-    """An empty message must not produce a dangling sentence."""
+    """空のメッセージが、途中で切れた文を生んではならない。"""
     assert init_failure_detail(RuntimeError()) == "RuntimeError"
 
 
 def test_the_detail_stays_a_single_line() -> None:
-    """§5.3: a cause, not a stack trace."""
+    """§5.3: stack trace ではなく原因を示す。"""
     detail = init_failure_detail(OSError("libEGL.so.1: cannot open shared object file"))
 
     assert "\n" not in detail
@@ -40,7 +40,7 @@ def test_the_detail_stays_a_single_line() -> None:
     ],
 )
 def test_both_mediapipe_adapters_report_the_cause(adapter_module: str) -> None:
-    """Both wrap the same class of startup failure, so both must explain it."""
+    """どちらも同じ種類の起動失敗を包むので、両方がそれを説明せねばならない。"""
     import importlib
     import inspect
 

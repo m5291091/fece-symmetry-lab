@@ -1,8 +1,8 @@
-"""Shared CSV / JSON download panel for both input modes (FR-017, §9).
+"""両方の入力モードが共有する CSV / JSON ダウンロードパネル（FR-017, §9）。
 
-Camera and Image differ only in wording and widget keys; the reproducibility
-caption and the two download buttons are the same contract either way, so
-they live here rather than drifting apart in two places.
+Camera と Image で異なるのは文言と widget のキーだけである。再現性の注記と
+2 つのダウンロードボタンはどちらでも同じ契約なので、2 箇所へ分かれて食い違わ
+ないよう、ここにまとめて置く。
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ def render_export_panel(
     key_prefix: str,
     show_record_count: bool = False,
 ) -> None:
-    """Render the export section, or nothing at all when there is no data.
+    """エクスポート節を描画する。データが無いときは何も描画しない。
 
-    FR-017 only offers an export once at least one result exists, so an
-    empty (or absent) bundle renders nothing — including no heading, so the
-    page never shows a section the user cannot act on.
+    FR-017 は結果が 1 件以上あるときにのみエクスポートを提示する。そのため空の
+    （あるいは存在しない）bundle では見出しを含め何も描かない。利用者が操作
+    できない節をページに出さないためである。
     """
     if bundle is None or not bundle.records:
         return
@@ -37,8 +37,8 @@ def render_export_panel(
     st.divider()
     st.subheader(heading)
     st.warning(warning)
-    # FR-020: the metric version and config fingerprint identify the exact
-    # conditions these numbers were produced under.
+    # FR-020: 指標の版と config fingerprint が、これらの数値が生成された条件を
+    # 正確に特定する。
     revision = bundle.manifest.config_revisions[-1]
     count = f"{len(bundle.records)} 件 · " if show_record_count else ""
     st.caption(

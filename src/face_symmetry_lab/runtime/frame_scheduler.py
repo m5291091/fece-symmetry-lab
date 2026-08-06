@@ -1,8 +1,8 @@
-"""Latest-frame-wins gate for the realtime pipeline (§14.3).
+"""リアルタイム pipeline のための「最新フレーム優先」ゲート（§14.3）。
 
-Capacity is one analysis per session. Frames that arrive while an analysis is
-running are dropped rather than queued, so the WebRTC receive thread is never
-blocked and stale frames never accumulate.
+容量はセッションあたり解析 1 件である。解析の実行中に届いたフレームはキューへ
+積まず捨てる。これにより WebRTC の受信スレッドが塞がることも、古いフレームが
+溜まることもない。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from contextlib import contextmanager
 
 
 class FrameScheduler:
-    """A non-blocking, capacity-1 admission gate."""
+    """非ブロッキングで容量 1 の受け入れゲート。"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -27,7 +27,7 @@ class FrameScheduler:
 
     @contextmanager
     def slot(self) -> Iterator[bool]:
-        """Yield ``True`` when the caller may analyse, ``False`` when it must skip."""
+        """解析してよいときは ``True``、飛ばすべきときは ``False`` を yield する。"""
         acquired = self._lock.acquire(blocking=False)
         if not acquired:
             with self._counter_lock:

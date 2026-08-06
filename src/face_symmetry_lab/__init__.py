@@ -7,7 +7,7 @@ except PackageNotFoundError:
 
 
 def main() -> None:
-    """Launch the loopback-only Streamlit application."""
+    """loopback 限定の Streamlit アプリケーションを起動する。"""
     import sys
     from pathlib import Path
 

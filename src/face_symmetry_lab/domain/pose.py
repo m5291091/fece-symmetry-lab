@@ -1,10 +1,9 @@
-"""Head pose from a facial transformation matrix (§8.2.1).
+"""顔の変換行列から求める頭部姿勢（§8.2.1）。
 
-Convention: right-handed camera frame with +X right, +Y up, +Z toward the
-camera, intrinsic Y-X-Z Euler angles. ``yaw > 0`` turns the nose toward the
-right of the non-mirrored image, ``pitch > 0`` lifts it, ``roll > 0`` is
-clockwise. Scale and shear are removed by a polar decomposition before the
-angles are read, so a matrix carrying scale still yields the same rotation.
+規約は次のとおり。右手系のカメラ座標で +X が右、+Y が上、+Z がカメラ方向、
+オイラー角は intrinsic Y-X-Z。``yaw > 0`` は鏡像でない画像の右へ鼻を向け、
+``pitch > 0`` は鼻を上げ、``roll > 0`` は時計回りである。角度を読む前に極分解で
+スケールとせん断を取り除くので、スケールを含む行列でも同じ回転が得られる。
 """
 
 from __future__ import annotations
@@ -16,17 +15,17 @@ from math import asin, atan2, degrees
 import numpy as np
 from numpy.typing import NDArray
 
-#: Below this |cos(pitch)| the Y and Z axes are degenerate (gimbal lock).
+#: |cos(pitch)| がこれを下回ると Y 軸と Z 軸が退化する（ジンバルロック）。
 GIMBAL_EPSILON: float = 1e-7
 
 
 class PoseError(ValueError):
-    """The matrix cannot be interpreted as a head rotation."""
+    """その行列を頭部の回転として解釈できない。"""
 
 
 @dataclass(frozen=True, slots=True)
 class FacePose:
-    """Head orientation in degrees, in the app convention."""
+    """このアプリの規約による、度数法での頭部の向き。"""
 
     yaw_deg: float
     pitch_deg: float
@@ -50,7 +49,7 @@ def _rotation_part(matrix: NDArray[np.float64] | Sequence[float]) -> NDArray[np.
 
 
 def _orthonormalize(linear: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Nearest rotation matrix via polar decomposition (§8.2.1)."""
+    """極分解によって求めた最も近い回転行列（§8.2.1）。"""
     try:
         left, singular_values, right = np.linalg.svd(linear)
     except np.linalg.LinAlgError as error:
@@ -65,10 +64,10 @@ def _orthonormalize(linear: NDArray[np.float64]) -> NDArray[np.float64]:
 
 
 def pose_from_matrix(matrix: NDArray[np.float64] | Sequence[float]) -> FacePose:
-    """Extract intrinsic Y-X-Z angles from a facial transformation matrix."""
+    """顔の変換行列から intrinsic Y-X-Z の角度を取り出す。"""
     rotation = _orthonormalize(_rotation_part(matrix))
 
-    # R = Ry(yaw) @ Rx(pitch) @ Rz(roll)
+    # R = Ry(yaw) @ Rx(pitch) @ Rz(roll) の分解を行う
     sin_pitch = float(min(1.0, max(-1.0, -rotation[1, 2])))
     pitch = asin(sin_pitch)
     cos_pitch = float(np.sqrt(max(0.0, 1.0 - sin_pitch * sin_pitch)))
@@ -77,7 +76,7 @@ def pose_from_matrix(matrix: NDArray[np.float64] | Sequence[float]) -> FacePose:
         yaw = atan2(float(rotation[0, 2]), float(rotation[2, 2]))
         roll = atan2(float(rotation[1, 0]), float(rotation[1, 1]))
     else:
-        # Gimbal lock: yaw and roll are not separable, so pin roll to zero.
+        # ジンバルロック時は yaw と roll を分離できないので、roll を 0 に固定する。
         yaw = atan2(-float(rotation[2, 0]), float(rotation[0, 0]))
         roll = 0.0
 

@@ -20,7 +20,7 @@ def test_the_frozen_repository_bundle_loads() -> None:
 
 
 def test_the_frozen_bundle_carries_no_calibratable_coefficient() -> None:
-    """AC-SCORE-04: §8.6 left the metric with no free parameter to freeze."""
+    """AC-SCORE-04: §8.6 は指標に、凍結すべき自由パラメータを残さなかった。"""
     raw = json.loads(DEFAULT_METRIC_CONFIG_PATH.read_text(encoding="utf-8"))
 
     assert "sensitivity" not in raw
@@ -29,7 +29,7 @@ def test_the_frozen_bundle_carries_no_calibratable_coefficient() -> None:
 
 
 def test_the_frozen_bundle_pools_every_pair_for_the_overall_distance() -> None:
-    """§8.6: the overall fold sees each of the 63 correspondences once."""
+    """§8.6: 総合の折りたたみは、63 の対応をそれぞれ 1 回ずつ見る。"""
     config = load_metric_config()
 
     pooled = config.all_pairs
@@ -68,7 +68,7 @@ def test_the_frozen_map_keeps_midline_points_out_of_the_pairs() -> None:
 
 
 def test_the_frozen_eye_anchors_are_not_iris_points() -> None:
-    """§8.3 forbids the gaze-dependent iris centres as a scale reference."""
+    """§8.3 は、視線に依存する虹彩中心をスケール基準にすることを禁じる。"""
     iris_indices = set(range(468, 478))
     config = load_metric_config()
 

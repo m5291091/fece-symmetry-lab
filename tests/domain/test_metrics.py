@@ -35,7 +35,7 @@ def test_a_valid_configuration_is_accepted() -> None:
 
 
 def test_the_bundle_carries_no_sensitivity_or_weight_parameters() -> None:
-    """§8.6: the distance metric has no free coefficient left to calibrate."""
+    """§8.6: 距離指標には、較正すべき自由な係数がもう残っていない。"""
     config = build_metric_config(**_config())
 
     assert not hasattr(config, "sensitivity")
@@ -44,7 +44,7 @@ def test_the_bundle_carries_no_sensitivity_or_weight_parameters() -> None:
 
 
 def test_all_pairs_pools_every_part_exactly_once() -> None:
-    """§8.6's overall distance folds one pooled set, so nothing may repeat."""
+    """§8.6 の総合距離はまとめた集合を 1 回折りたたむので、重複があってはならない。"""
     config = build_metric_config(**_config())
 
     pooled = config.all_pairs

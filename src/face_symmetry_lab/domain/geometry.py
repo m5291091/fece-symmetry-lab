@@ -1,9 +1,8 @@
-"""Pure 2D geometry for the symmetry metric (§8.3, §8.4).
+"""左右差指標のための純粋な 2D 幾何（§8.3, §8.4）。
 
-Normalization removes roll, scale, and translation so that only the shape
-difference between the two halves remains. The midline is fitted with total
-least squares (PCA), not an ``x = ay + b`` regression, so a near-horizontal
-midline cannot blow the fit up.
+正規化は roll・スケール・平行移動を取り除き、左右の形状差だけを残す。正中線は
+``x = ay + b`` の回帰ではなく全最小二乗（PCA）で推定する。そうすることで、
+ほぼ水平な正中線でも推定が破綻しない。
 """
 
 from __future__ import annotations
@@ -13,17 +12,17 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-#: Below this normalized eye distance the input is treated as unusable (§8.3).
+#: 正規化後の両眼距離がこの値を下回る入力は、使用不能として扱う（§8.3）。
 MIN_EYE_DISTANCE: float = 1e-9
 
 
 class GeometryError(ValueError):
-    """Invalid geometry input."""
+    """幾何入力が不正である。"""
 
 
 @dataclass(frozen=True, slots=True)
 class Midline:
-    """A line through ``origin`` along the unit vector ``direction``."""
+    """``origin`` を通り、単位ベクトル ``direction`` の向きを持つ直線。"""
 
     origin: NDArray[np.float64]
     direction: NDArray[np.float64]
@@ -31,28 +30,28 @@ class Midline:
 
 @dataclass(frozen=True, slots=True)
 class NormalizationTransform:
-    """The similarity transform §8.3 applies, and its exact inverse.
+    """§8.3 が適用する相似変換と、その厳密な逆変換。
 
-    Forward is ``((p - center) @ rotation.T) / scale``. Because ``rotation``
-    is orthonormal the inverse is the same three steps undone in reverse,
-    which is what §8.6.2 needs to put a symmetrized point back onto the
-    original image's pixel grid rather than approximating its way there.
+    順方向は ``((p - center) @ rotation.T) / scale`` である。``rotation`` は
+    正規直交なので、逆変換は同じ 3 手順を逆順にほどくだけで得られる。§8.6.2 が
+    対称化した点を近似ではなく厳密に元画像の画素格子へ戻すために、これが必要
+    である。
     """
 
-    #: Midpoint of the two eye anchors, in the source coordinate space.
+    #: 2 つの眼のアンカーの中点。入力の座標系で持つ。
     center: NDArray[np.float64]
-    #: 2x2 roll correction, applied on the right as ``@ rotation.T``.
+    #: 2x2 の roll 補正。``@ rotation.T`` として右から適用する。
     rotation: NDArray[np.float64]
-    #: Interocular distance, scaled to 1 by the forward transform.
+    #: 両眼間隔。順方向の変換でこれが 1 になる。
     scale: float
 
     def apply(self, points: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Source coordinates to the normalized frame."""
+        """入力座標を正規化フレームへ移す。"""
         array = _as_points(points)
         return ((array - self.center) @ self.rotation.T) / self.scale
 
     def invert(self, points: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Normalized coordinates back to the source frame."""
+        """正規化座標を入力のフレームへ戻す。"""
         array = _as_points(points)
         return (array * self.scale) @ self.rotation + self.center
 
@@ -80,11 +79,11 @@ def normalization_transform(
     left_eye_corners: tuple[int, int],
     right_eye_corners: tuple[int, int],
 ) -> NormalizationTransform:
-    """Derive §8.3's transform: level the eye line, scale it to 1, centre it.
+    """§8.3 の変換を導く。眼を結ぶ線を水平にし、長さを 1 にし、中心へ寄せる。
 
-    Returned rather than applied so a caller that has to map back — §8.6.2's
-    symmetrized points, which are computed in the normalized frame but drawn
-    on the original image — uses the very same transform in both directions.
+    適用結果ではなく変換自体を返す。逆方向へ戻す必要がある呼び出し側——正規化
+    フレームで計算されるが元画像へ描かれる §8.6.2 の対称化点——が、両方向で
+    まったく同じ変換を使えるようにするためである。
     """
     array = _as_points(points)
     left = _anchor(array, left_eye_corners)
@@ -110,7 +109,7 @@ def normalize_landmarks(
     left_eye_corners: tuple[int, int],
     right_eye_corners: tuple[int, int],
 ) -> NDArray[np.float64]:
-    """Level the eye line, scale the eye distance to 1, and centre on the eyes."""
+    """眼を結ぶ線を水平にし、両眼距離を 1 にし、両眼の中点を原点にする。"""
     transform = normalization_transform(
         points,
         left_eye_corners=left_eye_corners,
@@ -120,7 +119,7 @@ def normalize_landmarks(
 
 
 def fit_midline(points: NDArray[np.float64], indices: tuple[int, ...]) -> Midline:
-    """Fit the midline through the given points by orthogonal distance (TLS)."""
+    """与えられた点群に対し、直交距離最小（TLS）で正中線を推定する。"""
     array = _as_points(points)
     count = len(array)
     for index in indices:
@@ -136,7 +135,7 @@ def fit_midline(points: NDArray[np.float64], indices: tuple[int, ...]) -> Midlin
     if float(np.abs(centred).max()) <= MIN_EYE_DISTANCE:
         raise GeometryError("正中点が退化しているため直線を推定できません。")
 
-    # The first principal component is the total-least-squares line direction.
+    # 第 1 主成分が、全最小二乗による直線の方向である。
     _, singular_values, right_vectors = np.linalg.svd(centred, full_matrices=False)
     if not np.isfinite(singular_values).all() or float(singular_values[0]) <= MIN_EYE_DISTANCE:
         raise GeometryError("正中点が退化しているため直線を推定できません。")
@@ -152,7 +151,7 @@ def reflect_across_midline(
     points: NDArray[np.float64],
     midline: Midline,
 ) -> NDArray[np.float64]:
-    """Mirror every point across the midline. The operation is an involution."""
+    """すべての点を正中線で鏡映する。この操作は対合（2 回で恒等）である。"""
     array = _as_points(points)
     direction = np.asarray(midline.direction, dtype=np.float64)
     relative = array - midline.origin

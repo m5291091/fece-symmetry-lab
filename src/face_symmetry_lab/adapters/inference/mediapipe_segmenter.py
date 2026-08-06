@@ -1,11 +1,10 @@
-"""MediaPipe Image Segmenter adapter for background replacement (§14.3b).
+"""背景置換のための MediaPipe Image Segmenter adapter（§14.3b）。
 
-The adapter owns the MediaPipe boundary only: it converts an RGB array into
-a MediaPipe image, runs ``segment_for_video`` with a strictly increasing
-timestamp, and returns a foreground confidence mask. It never composites a
-background and never fetches a model. The mask is display-only input for
-``domain.frame_adjustments.composite_background``; it never reaches the
-landmark detector or the quality gate.
+この adapter が担うのは MediaPipe との境界だけである。RGB 配列を MediaPipe の
+画像へ変換し、狭義単調増加する timestamp とともに ``segment_for_video`` を実行し、
+前景の確信度 mask を返す。背景の合成は行わず、モデルを取得することもない。
+mask は ``domain.frame_adjustments.composite_background`` への表示専用の入力で
+あり、ランドマーク検出器にも品質ゲートにも届かない。
 """
 
 from __future__ import annotations
@@ -22,11 +21,11 @@ from face_symmetry_lab.adapters.inference.runtime_errors import init_failure_det
 
 
 class SegmentationError(RuntimeError):
-    """Recoverable failure at the segmentation model boundary."""
+    """segmentation モデル境界で発生した、回復可能な失敗。"""
 
 
 class SegmentationFrameOrderError(SegmentationError):
-    """A frame arrived with a non-increasing timestamp (§14.4)."""
+    """timestamp が増加していないフレームが届いた（§14.4）。"""
 
 
 class _Detector(Protocol):
@@ -86,9 +85,9 @@ def _to_mask(result: Any, width: int, height: int) -> NDArray[np.float32]:
     masks = list(getattr(result, "confidence_masks", []) or [])
     if len(masks) != 1:
         raise SegmentationError("セグメンテーション出力が不正です。")
-    # `numpy_view()` is a live view into MediaPipe/TFLite-owned memory that the
-    # delegate can reuse for a later call; copy immediately so this adapter
-    # never hands the caller a buffer that can mutate out from under it.
+    # `numpy_view()` は MediaPipe/TFLite が所有するメモリへの生きたビューで
+    # あり、delegate が後続の呼び出しで再利用しうる。直ちに複製することで、
+    # 呼び出し側の背後で書き換わるバッファを渡さないようにする。
     mask = np.array(masks[0].numpy_view(), dtype=np.float32, copy=True)
     if mask.ndim == 3 and mask.shape[-1] == 1:
         mask = mask[..., 0]
@@ -98,7 +97,7 @@ def _to_mask(result: Any, width: int, height: int) -> NDArray[np.float32]:
 
 
 class MediaPipeSegmenter:
-    """Local Image Segmenter adapter running in ``RunningMode.VIDEO``."""
+    """``RunningMode.VIDEO`` で動作するローカル Image Segmenter adapter。"""
 
     def __init__(
         self,
@@ -118,14 +117,13 @@ class MediaPipeSegmenter:
         self._warm_up()
 
     def _warm_up(self) -> None:
-        """Discard one inference before any real frame (§21.1).
+        """実フレームの前に推論を 1 回捨てる（§21.1）。
 
-        The XNNPACK delegate's very first inference after construction was
-        observed to intermittently return uninitialized (finite but
-        nonsensical) values on this runtime, stabilizing from the second
-        call onward. Absorbing that here means every call through
-        ``segment`` is reliable, instead of leaking a one-in-a-few-calls
-        garbage frame into the displayed composite.
+        この runtime では、構築直後の XNNPACK delegate の最初の推論が、
+        初期化されていない（有限だが無意味な）値を断続的に返すことが観測された。
+        2 回目以降は安定する。ここで吸収しておくことで ``segment`` 経由の呼び
+        出しがすべて信頼できるものになり、数回に 1 回のごみフレームが表示用の
+        合成へ漏れ出すのを防げる。
         """
         detector = self._detector
         if detector is None:

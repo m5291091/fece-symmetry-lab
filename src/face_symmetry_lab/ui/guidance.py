@@ -25,9 +25,9 @@ from typing import Final
 
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode
 
-#: Every `ReasonCode` maps to one short, actionable instruction. No new
-#: judgement is made here — this only translates a reason the quality gate
-#: (`application.quality.QualityGate`) already computed (§6.2, §6.3).
+#: すべての `ReasonCode` を、短く実行可能な 1 つの指示へ対応付ける。ここで新しい
+#: 判断は一切行わない。品質ゲート（`application.quality.QualityGate`）がすでに
+#: 計算した理由を文言へ変換するだけである（§6.2, §6.3）。
 REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
     ReasonCode.NO_FACE: "顔がカメラに映るようにしてください",
     ReasonCode.MULTIPLE_FACES: "1人だけがカメラに映るようにしてください",
@@ -49,11 +49,11 @@ REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
 
 
 def guidance_message(state: AnalysisState) -> str | None:
-    """A short Japanese instruction for `state.reason`, or None when satisfied.
+    """`state.reason` に対応する短い日本語の指示。条件を満たしていれば None。
 
-    §14.3e: reuses the quality gate's own primary reason (already the first
-    of possibly several concurrent `reason_codes`) rather than deriving a new
-    priority order, so this never disagrees with the status shown elsewhere.
+    §14.3e: 新たな優先順位を導かず、品質ゲート自身の主たる理由（同時に成立
+    しうる複数の `reason_codes` のうち、すでに先頭にあるもの）をそのまま使う。
+    これにより、他所で表示される状態と食い違うことがない。
     """
     if state.reason is None:
         return None

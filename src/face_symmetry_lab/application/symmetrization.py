@@ -1,13 +1,13 @@
-"""One-shot symmetrization use case (§14.3g, FR-034).
+"""一発の対称化 use case（§14.3g, FR-034）。
 
-Stateless by definition, like `application.still_image`: no EMA, no history,
-no timestamp, no recorder. One call answers one question about one frame, so
-this never participates in the realtime cadence and cannot perturb a running
-session's smoothing or comparison segment.
+`application.still_image` と同様、定義上まったく状態を持たない。EMA も履歴も
+timestamp も recorder も無い。1 回の呼び出しが 1 フレームについての 1 つの問い
+に答えるだけなので、リアルタイムの周期に加わることはなく、実行中セッションの
+平滑化や比較区間を乱すこともない。
 
-It is deliberately not wired into `RealtimeLandmarkPipeline._analyse`: the
-overlay is a full-resolution repaint that has no place in an 8 Hz loop, and a
-still result is what the feature is actually for.
+`RealtimeLandmarkPipeline._analyse` へ意図的に組み込んでいない。オーバーレイは
+全解像度の再描画であり 8 Hz のループに居場所が無いうえ、この機能が本来求められて
+いるのは静止した結果だからである。
 """
 
 from __future__ import annotations
@@ -37,15 +37,15 @@ from face_symmetry_lab.domain.warp_mesh import WarpMeshError, build_warp_mesh
 
 @dataclass(frozen=True, slots=True)
 class SymmetrizationView:
-    """One symmetrization and the image(s) to render for it."""
+    """1 回の対称化と、それを表示するための画像。"""
 
     result: SymmetrizationResult
     overlay: NDArray[np.uint8]
-    #: §8.6.4's warped image, or None when it was not requested or could not
-    #: be produced. Its absence never invalidates `overlay` (fail-soft).
+    #: §8.6.4 の変形画像。要求されなかったか生成できなかったときは None。
+    #: これが無くても `overlay` は無効にならない（fail-soft）。
     warped: NDArray[np.uint8] | None = None
-    #: Why `warped` is missing despite having been requested, for the UI to
-    #: explain rather than silently showing one image instead of two.
+    #: 要求されたのに `warped` が無い理由。UI が黙って 2 枚のうち 1 枚だけを
+    #: 見せるのではなく、説明できるようにするためである。
     warp_unavailable_reason: str | None = None
 
     @property
@@ -72,17 +72,16 @@ def symmetrize_frame(
     deviation_color: tuple[int, int, int] = DEFAULT_DEVIATION_COLOR,
     radius: int = DEFAULT_POINT_RADIUS,
 ) -> SymmetrizationView:
-    """Symmetrize one frame's landmarks and paint the deviation overlay.
+    """フレーム 1 枚のランドマークを対称化し、ズレのオーバーレイを描く。
 
-    Raises `SymmetrizationError` rather than returning a partial view when the
-    frame cannot carry the construction at all — a multi-face or size-less
-    frame has no single midline to fold about, and drawing one face's fold on
-    an image holding two would attribute it to the wrong person (FR-008).
+    フレームがそもそもこの構成を担えないときは、部分的な表示を返さず
+    `SymmetrizationError` を送出する。複数顔や寸法の無いフレームには折り返す
+    べき正中線が 1 本に定まらず、2 人が写った画像に 1 人分の折り返しを描けば
+    別人に帰属させてしまうためである（FR-008）。
 
-    ``warper`` additionally produces §8.6.4's warped image. It is optional
-    and fails soft: the point overlay is the primary result, and a mesh the
-    displacement guard rejects (or an imaging failure) leaves the view with
-    its reason recorded instead of taking the whole panel down.
+    ``warper`` を渡すと §8.6.4 の変形画像も生成する。これは任意であり fail-soft
+    である。主たる結果は点のオーバーレイなので、変位ガードがメッシュを拒否した
+    場合や画像化に失敗した場合も、パネル全体を落とさずに理由を記録して残す。
     """
     if not frame.has_single_face:
         raise SymmetrizationError("単一顔のフレームだけを対称化できます。")
@@ -120,10 +119,10 @@ def _warp(
     result: SymmetrizationResult,
     warper: PiecewiseWarper | None,
 ) -> tuple[NDArray[np.uint8] | None, str | None]:
-    """§8.6.4's warped image, or (None, why-not). Never raises.
+    """§8.6.4 の変形画像、または (None, 理由) を返す。例外は送出しない。
 
-    The mesh is built from the symmetrized points this same call produced, so
-    the warp adds no geometry of its own — only the pixel transfer.
+    メッシュはこの同じ呼び出しが生成した対称化点から構築する。したがって変形は
+    独自の幾何を一切追加せず、画素の転送だけを行う。
     """
     if warper is None:
         return None, None
@@ -141,5 +140,5 @@ def _warp(
     try:
         return warper.warp(rgb_image, mesh), None
     except Exception as error:
-        # An imaging failure is this image's failure, not the analysis's.
+        # 画像化の失敗は、この画像の失敗であって解析の失敗ではない。
         return None, f"画像を生成できませんでした: {error}"

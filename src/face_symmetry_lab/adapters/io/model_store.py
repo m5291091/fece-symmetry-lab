@@ -1,13 +1,13 @@
-"""Pinned model manifest and verified local install (§10.6, FR-002).
+"""固定した model manifest と、検証付きのローカル install（§10.6, FR-002）。
 
-Rules enforced here:
+ここで強制する規則は次のとおり。
 
-* HTTPS only, and only to hosts on the allow list. No free-form URL input.
-* Download to a temporary file, verify size and sha256, then atomic rename.
-* A byte-different asset is never installed, and a failed install leaves the
-  previously verified file untouched.
-* Nothing in this module runs implicitly: ``install`` is only reached from an
-  explicit user action or from ``scripts/bootstrap_models.py``.
+* HTTPS のみ、かつ許可リストにあるホストのみ。自由入力の URL は受け付けない。
+* 一時ファイルへ取得し、サイズと sha256 を検証してから atomic に rename する。
+* バイト列が異なる asset は決して install せず、install に失敗しても以前に検証
+  済みのファイルは手つかずのまま残す。
+* このモジュールは暗黙には何も実行しない。``install`` へ到達するのは明示的な
+  利用者操作か ``scripts/bootstrap_models.py`` からだけである。
 """
 
 from __future__ import annotations
@@ -27,17 +27,17 @@ APP_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_MANIFEST_PATH = APP_ROOT / "configs" / "model-manifest.json"
 DEFAULT_MODELS_DIR = APP_ROOT / "models"
 
-#: FR-020: the resolved dependency set every exported record is attributed
-#: to, hashed with `file_sha256`. Defined next to `APP_ROOT` so no caller has
-#: to rederive the repository root from its own file's depth.
+#: FR-020: すべてのエクスポート記録が帰属する解決済み依存集合。`file_sha256`
+#: でハッシュ化する。`APP_ROOT` の隣で定義することで、呼び出し側が自分の
+#: ファイル深さから repository root を導き直さずに済む。
 LOCK_PATH = APP_ROOT / "uv.lock"
 
-#: §10.6 requires a fixed allow list rather than arbitrary download targets.
+#: §10.6 は任意の取得先ではなく、固定した許可リストを要求する。
 ALLOWED_MODEL_HOSTS: Final[frozenset[str]] = frozenset(
     {"storage.googleapis.com", "storage.openvinotoolkit.org"}
 )
 
-#: Hard ceiling so a misbehaving host cannot fill the disk.
+#: 不正な挙動のホストがディスクを埋め尽くさないための上限。
 MAX_MODEL_BYTES: Final[int] = 512 * 1024 * 1024
 
 _CHUNK_BYTES: Final[int] = 1024 * 1024
@@ -46,7 +46,7 @@ _DOWNLOAD_ATTEMPTS: Final[int] = 3
 
 
 class ModelStoreError(RuntimeError):
-    """Manifest, download, or verification failure."""
+    """manifest・取得・検証のいずれかが失敗した。"""
 
 
 class InstallStatus(StrEnum):
@@ -56,7 +56,7 @@ class InstallStatus(StrEnum):
 
 
 class ModelAsset(BaseModel):
-    """One pinned model file. Immutable and fully specified."""
+    """固定されたモデルファイル 1 件。不変で、完全に指定されている。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -89,7 +89,7 @@ class ModelAsset(BaseModel):
 
 
 class DerivedModelAsset(BaseModel):
-    """One locally generated model file pinned to source assets and a recipe."""
+    """ローカル生成のモデルファイル 1 件。元 asset と変換手順に固定される。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -120,7 +120,7 @@ class DerivedModelAsset(BaseModel):
         return converter
 
 
-#: A downloader yields the response body in chunks. Injected for tests.
+#: downloader はレスポンス本文を chunk 単位で yield する。テストのため注入可能。
 Downloader = Callable[[str], Iterator[bytes]]
 
 
@@ -135,7 +135,7 @@ def _default_downloader(url: str) -> Iterator[bytes]:
 
 
 def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> tuple[ModelAsset, ...]:
-    """Read and validate the pinned manifest."""
+    """固定された manifest を読み込んで検証する。"""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -156,7 +156,7 @@ def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> tuple[ModelAsset, ...]:
 def load_derived_assets(
     path: Path = DEFAULT_MANIFEST_PATH,
 ) -> tuple[DerivedModelAsset, ...]:
-    """Read and validate locally derived model entries from the manifest."""
+    """manifest からローカル派生モデルの項目を読み込んで検証する。"""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -199,7 +199,7 @@ def file_sha256(path: Path) -> str:
 
 
 def asset_status(path: Path, asset: ModelAsset | DerivedModelAsset) -> InstallStatus:
-    """Verify one local path against a pinned manifest entry without network I/O."""
+    """ローカルの path 1 つを、固定 manifest の項目と照合する。通信は行わない。"""
     if not path.is_file():
         return InstallStatus.MISSING
     if path.stat().st_size != asset.size_bytes:
@@ -210,7 +210,7 @@ def asset_status(path: Path, asset: ModelAsset | DerivedModelAsset) -> InstallSt
 
 
 class ModelStore:
-    """Local model directory with manifest-verified installs."""
+    """manifest で検証した install を行う、ローカルのモデルディレクトリ。"""
 
     def __init__(
         self,
@@ -229,16 +229,15 @@ class ModelStore:
         return self._models_dir / asset.filename
 
     def status(self, asset: ModelAsset) -> InstallStatus:
-        """Check the local file only. Never touches the network."""
+        """ローカルのファイルだけを確認する。通信は一切行わない。"""
         return asset_status(self.path_for(asset), asset)
 
     def install(self, asset: ModelAsset) -> Path:
-        """Download, verify, and atomically install. Explicit action only.
+        """取得・検証し、atomic に install する。明示的な操作からのみ呼ぶ。
 
-        A model host or intermediary can occasionally return a short error page
-        or terminate a response early. Retry those unverified responses, while
-        preserving the rule that only an exact size and sha256 match is ever
-        installed.
+        モデルのホストや中継が、短いエラーページを返したり応答を途中で打ち切ったり
+        することがまれにある。そうした未検証の応答は再試行する。ただし、サイズと
+        sha256 が厳密に一致したものしか install しないという規則は保つ。
         """
         destination = self.path_for(asset)
         self._models_dir.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-"""Immutable export DTOs for the versioned session schema (§9.2)."""
+"""版付きセッションスキーマのための、不変なエクスポート DTO（§9.2）。"""
 
 from __future__ import annotations
 
@@ -18,10 +18,9 @@ from pydantic import (
 
 from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 
-#: §9.2's record schema version, carried by both the records and the
-#: manifest. `Final` narrows it to its literal type, so it can serve as
-#: the default for the `Literal` fields below and the version has one
-#: definition instead of one per model that must agree on it.
+#: §9.2 の record schema の版。records と manifest の両方が持つ。`Final` が
+#: リテラル型へ絞り込むので、下の `Literal` フィールドの既定値として使え、版の
+#: 定義が 1 箇所に収まる。モデルごとに定義して整合を取る必要が無くなる。
 SCHEMA_VERSION: Final = "3.0.0"
 
 
@@ -31,7 +30,7 @@ class InputMode(StrEnum):
 
 
 class ExportRecord(BaseModel):
-    """One row shared by the CSV and JSON representations."""
+    """CSV 表現と JSON 表現が共有する 1 行。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -51,9 +50,9 @@ class ExportRecord(BaseModel):
     roll_deg: float | None = None
     face_area_ratio: float | None = Field(default=None, ge=0, le=1)
     quality_score: float | None = Field(default=None, ge=0, le=1)
-    # §8.6: normalized RMS distances, so 0 is the floor and there is no upper
-    # bound to validate against. `distance_overall_raw` is the pooled fold, not
-    # a blend of the four parts above.
+    # §8.6: 正規化 RMS 距離なので下限は 0 であり、検証すべき上限は存在しない。
+    # `distance_overall_raw` はまとめて折りたたんだ値であって、上の 4 部位を
+    # 混合したものではない。
     distance_contour_raw: float | None = Field(default=None, ge=0)
     distance_eyes_raw: float | None = Field(default=None, ge=0)
     distance_nose_raw: float | None = Field(default=None, ge=0)

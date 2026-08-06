@@ -8,40 +8,40 @@ from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
 from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
 
-# Normalized landmarks of a symmetric face inside a 640x480 frame.
+# 640x480 のフレーム内にある、対称な顔の正規化ランドマーク。
 _BASE_POINTS = (
-    (0.40, 0.40),  # 0 left eye outer
-    (0.45, 0.40),  # 1 left eye inner
-    (0.55, 0.40),  # 2 right eye inner
-    (0.60, 0.40),  # 3 right eye outer
-    (0.50, 0.30),  # 4 midline
-    (0.50, 0.50),  # 5 midline
-    (0.50, 0.62),  # 6 midline
-    (0.35, 0.55),  # 7 contour
+    (0.40, 0.40),  # 0 左目 外側
+    (0.45, 0.40),  # 1 左目 内側
+    (0.55, 0.40),  # 2 右目 内側
+    (0.60, 0.40),  # 3 右目 外側
+    (0.50, 0.30),  # 4 正中
+    (0.50, 0.50),  # 5 正中
+    (0.50, 0.62),  # 6 正中
+    (0.35, 0.55),  # 7 輪郭
     (0.65, 0.55),  # 8
     (0.36, 0.45),  # 9
     (0.64, 0.45),  # 10
     (0.38, 0.35),  # 11
     (0.62, 0.35),  # 12
-    (0.47, 0.50),  # 13 nose
+    (0.47, 0.50),  # 13 鼻
     (0.53, 0.50),  # 14
     (0.46, 0.48),  # 15
     (0.54, 0.48),  # 16
     (0.48, 0.52),  # 17
     (0.52, 0.52),  # 18
-    (0.44, 0.58),  # 19 mouth
+    (0.44, 0.58),  # 19 口
     (0.56, 0.58),  # 20
     (0.47, 0.57),  # 21
     (0.53, 0.57),  # 22
     (0.48, 0.60),  # 23
     (0.52, 0.60),  # 24
-    (0.42, 0.36),  # 25 brow
+    (0.42, 0.36),  # 25 眉
     (0.58, 0.36),  # 26
 )
 
 
 def _scaled(points, factor: float = 1.3):
-    """Grow the face about the frame centre so it clears the face-area gate."""
+    """フレーム中心を基準に顔を拡大し、顔面積のゲートを満たすようにする。"""
     return tuple((0.5 + (x - 0.5) * factor, 0.5 + (y - 0.5) * factor) for x, y in points)
 
 
@@ -135,8 +135,8 @@ def test_the_smoothed_value_lags_a_change_in_the_raw_distance() -> None:
     skewed[19] = (0.20, SYMMETRIC_POINTS[19][1])
     outcome = analyzer.analyze(_frame(tuple(skewed), frame_id=6), at=0.65)
 
-    # The raw distance jumped up; the EMA still trails behind it, above the
-    # symmetric face's 0 it started from.
+    # 生の距離は跳ね上がったが、EMA はまだそれに追随しきれていない。ただし
+    # 出発点である対称な顔の 0 よりは上にある。
     assert outcome.overall_distance_raw is not None
     assert outcome.overall_distance_smooth is not None
     assert outcome.overall_distance_raw > outcome.overall_distance_smooth > 0.0
@@ -229,22 +229,22 @@ def test_tau_seconds_reads_back_the_currently_active_value() -> None:
 
 
 def test_update_swaps_thresholds_and_resets_the_gate_and_smoothing() -> None:
-    """§15.2: applying new Advanced settings must not keep stale EMA history."""
+    """§15.2: 新しい Advanced 設定の適用が、古い EMA 履歴を残してはならない。"""
     analyzer = _analyzer()
-    _drive_to_ok(analyzer)  # gate is OK and EMA has a value
+    _drive_to_ok(analyzer)  # ゲートは OK で、EMA は値を持つ
 
     analyzer.update(thresholds=QualityThresholds(valid_frames_to_ok=1), tau_seconds=0.2)
     outcome = analyzer.analyze(_frame(frame_id=99), at=100.0)
 
     assert analyzer.thresholds.valid_frames_to_ok == 1
-    assert outcome.state.status is Status.OK  # new threshold applies immediately
+    assert outcome.state.status is Status.OK  # 新しい閾値が即座に適用される
     assert (
         outcome.overall_distance_smooth == outcome.overall_distance_raw
-    )  # smoothing history was reset
+    )  # 平滑化の履歴がリセットされた
 
 
 def test_update_cannot_swap_the_pinned_metric_bundle() -> None:
-    """§8.6/§15.2: the bundle has no tunable left, so it stays pinned."""
+    """§8.6/§15.2: bundle に調整対象が残っていないので、固定されたままである。"""
     analyzer = _analyzer()
     original = analyzer.config
 

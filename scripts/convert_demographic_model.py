@@ -7,11 +7,11 @@
 #   "protobuf==7.35.1",
 # ]
 # ///
-"""Convert the pinned OpenVINO IR age/gender graph to a deterministic ONNX.
+"""固定された OpenVINO IR の年齢・性別グラフを、決定的な ONNX へ変換する。
 
-This development-only tool deliberately supports only the operation contract
-used by ``age-gender-recognition-retail-0013``. The application runtime reads
-the generated ONNX with OpenCV and does not depend on ONNX or OpenVINO Python.
+開発時専用のツールであり、``age-gender-recognition-retail-0013`` が使う演算の
+契約だけを意図的に対象とする。アプリの runtime は生成された ONNX を OpenCV で
+読み込み、ONNX や OpenVINO の Python パッケージには依存しない。
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ SUPPORTED_OPERATIONS = {"Add", "Convolution", "MaxPool", "ReLU", "SoftMax"}
 
 
 class ConversionError(RuntimeError):
-    """The source, graph contract, or generated artifact is invalid."""
+    """入力元・グラフ契約・生成物のいずれかが不正である。"""
 
 
 def _sha256(path: Path) -> str:
@@ -134,7 +134,7 @@ def _make_node(
 
 
 def build_onnx(xml_path: Path, bin_path: Path) -> onnx.ModelProto:
-    """Build the fixed ONNX graph from a verified OpenVINO IR v11 pair."""
+    """検証済みの OpenVINO IR v11 の組から、固定された ONNX グラフを構築する。"""
     root = ET.parse(xml_path).getroot()
     if root.attrib.get("version") != "11":
         raise ConversionError("OpenVINO IR v11だけを変換できます。")
@@ -186,13 +186,13 @@ def build_onnx(xml_path: Path, bin_path: Path) -> onnx.ModelProto:
             if len(source_ids) != 1:
                 raise ConversionError(f"Result入力が不正です: {name}")
             output_name = name.removesuffix("/sink_port_0")
-            # `name` (the IR's own unique layer name, e.g. "prob/sink_port_0")
-            # is used as the ONNX node name; `output_name` (the stripped
-            # form, e.g. "prob") is only the output *tensor* name. Reusing
-            # `output_name` as the node name too can collide with another
-            # node already named that (OpenVINO's own naming convention
-            # names a Result's sink "<producer_name>/sink_port_0"), which
-            # OpenCV's importer tolerates but strict ONNX runtimes reject.
+            # `name`（IR 自身の一意な層名、例 "prob/sink_port_0"）を ONNX の
+            # node 名として使う。`output_name`（末尾を取り除いた形、例 "prob"）
+            # は出力 *tensor* の名前にすぎない。`output_name` を node 名にも
+            # 流用すると、すでにその名前を持つ別の node と衝突しうる（OpenVINO の
+            # 命名規約は Result の sink を "<producer_name>/sink_port_0" と
+            # 名付ける）。OpenCV の importer はこれを許容するが、厳格な ONNX
+            # runtime は拒否する。
             nodes.append(
                 helper.make_node("Identity", [tensors[source_ids[0]]], [output_name], name=name)
             )

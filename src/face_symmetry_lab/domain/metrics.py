@@ -1,13 +1,12 @@
-"""Versioned metric configuration (§8.6, §15.2).
+"""版付きの指標設定（§8.6, §15.2）。
 
-The landmark correspondence map is part of the metric version. Nothing here is
-derived at runtime: the values come from a frozen config bundle so a result can
-always be reproduced.
+ランドマークの対応表は指標の版の一部である。ここでは実行時に何も導出しない。
+値は凍結された設定 bundle に由来し、結果を常に再現できるようにするためである。
 
-The bundle carries no sensitivity coefficient and no part weight. §8.6 replaced
-the `100 × exp(-k_p × d_p)` transform and the `Σ(w_p × score_p)` blend with the
-raw distances themselves, so there is no free parameter left for a bundle to
-pin — which is also why nothing may auto-tune scoring any more (FR-030).
+bundle は感度係数も部位の重みも持たない。§8.6 が `100 × exp(-k_p × d_p)` の
+変換と `Σ(w_p × score_p)` の混合を距離そのものへ置き換えたため、bundle が固定
+すべき自由パラメータは残っていない。これは、採点を自動調整できるものがもはや
+存在しない理由でもある（FR-030）。
 """
 
 from __future__ import annotations
@@ -18,17 +17,17 @@ from typing import Final
 
 PART_NAMES: Final[tuple[str, ...]] = ("contour", "eyes", "nose", "mouth")
 
-#: A line fit needs at least three midline points to be meaningful (§8.4).
+#: 直線の推定が意味を持つには、正中点が最低 3 点必要である（§8.4）。
 MIN_MIDLINE_POINTS: Final[int] = 3
 
 
 class MetricConfigError(ValueError):
-    """Invalid metric configuration."""
+    """指標設定が不正である。"""
 
 
 @dataclass(frozen=True, slots=True)
 class PartMap:
-    """Left/right landmark pairs for one facial part."""
+    """顔の部位 1 つ分の、左右ランドマークのペア。"""
 
     pairs: tuple[tuple[int, int], ...]
     min_pairs: int
@@ -36,7 +35,7 @@ class PartMap:
 
 @dataclass(frozen=True, slots=True)
 class MetricConfig:
-    """One immutable, fully versioned metric bundle."""
+    """完全に版付けされた、不変の指標 bundle 1 件。"""
 
     metric_version: str
     landmark_map_version: str
@@ -48,22 +47,21 @@ class MetricConfig:
 
     @property
     def all_pairs(self) -> tuple[tuple[int, int], ...]:
-        """Every part's pairs as one pooled set, for §8.6's overall distance.
+        """全部位のペアを 1 つにまとめた集合。§8.6 の総合距離に使う。
 
-        `build_metric_config` rejects a landmark used twice, so pooling can
-        never double-count a point: each correspondence carries exactly one
-        vote in the overall fold, whichever part defined it.
+        `build_metric_config` は同じランドマークの二重使用を拒否するので、
+        まとめても点が二重に数えられることはない。どの部位が定義したもので
+        あっても、各対応は総合の折りたたみでちょうど 1 票を持つ。
         """
         return tuple(pair for name in PART_NAMES for pair in self.parts[name].pairs)
 
     @property
     def overall_min_pairs(self) -> int:
-        """How many pooled pairs §8.6 needs before an overall distance exists.
+        """総合距離が成立するために §8.6 が必要とする、まとめたペアの本数。
 
-        The sum of the per-part minimums rather than a separate number: those
-        are already the versioned statement of "enough correspondences to
-        measure this face", and reusing them keeps the bundle free of one more
-        uncalibrated threshold.
+        独立した数値ではなく、部位ごとの最小値の総和である。それらはすでに
+        「この顔を測るのに十分な対応がある」という版付きの宣言であり、再利用
+        することで bundle に未較正の閾値をもう 1 つ増やさずに済む。
         """
         return sum(self.parts[name].min_pairs for name in PART_NAMES)
 
@@ -84,7 +82,7 @@ def build_metric_config(
     midline_indices: tuple[int, ...],
     parts: Mapping[str, PartMap],
 ) -> MetricConfig:
-    """Validate a metric bundle. An invalid map must never reach a distance."""
+    """指標 bundle を検証する。不正な対応表が距離計算へ届いてはならない。"""
     if landmark_count <= 0:
         raise MetricConfigError("landmark_count は正の値である必要があります。")
 

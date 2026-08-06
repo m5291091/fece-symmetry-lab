@@ -52,8 +52,8 @@ def test_config_fingerprint_is_canonical_and_covers_metric_and_gate_settings() -
     changed = dict(settings)
     changed["ema_tau_seconds"] = 0.5
     assert config_fingerprint(changed) != config_fingerprint(settings)
-    # §8.6 left no coefficient, so what makes two segments comparable is the
-    # pair map the pooled overall distance is folded from.
+    # §8.6 は係数を残さなかった。したがって 2 つの区間を比較可能にするのは、
+    # まとめた総合距離を折りたたむ元になるペアの対応表である。
     assert settings["part_pair_counts"] == {
         "contour": 1,
         "eyes": 2,
@@ -111,7 +111,7 @@ def test_a_bare_reset_keeps_the_same_config_fingerprint() -> None:
 
 
 def test_reset_with_new_thresholds_recomputes_the_config_fingerprint() -> None:
-    """§15.2: Advanced settings changes must bump revision AND fingerprint."""
+    """§15.2: Advanced 設定の変更は revision と fingerprint の両方を更新する。"""
     recorder = SessionRecorder(
         metric_config=_metric_config(),
         thresholds=QualityThresholds(),
@@ -133,7 +133,7 @@ def test_reset_with_new_thresholds_recomputes_the_config_fingerprint() -> None:
 
 
 def test_reset_does_not_accept_a_replacement_metric_bundle() -> None:
-    """§8.6/§15.2: the bundle has no tunable left, so it is pinned per session."""
+    """§8.6/§15.2: bundle に調整対象が残っていないので、セッション単位で固定である。"""
     recorder = SessionRecorder(
         metric_config=_metric_config(),
         thresholds=QualityThresholds(),
@@ -149,7 +149,7 @@ def test_reset_does_not_accept_a_replacement_metric_bundle() -> None:
 
 
 def test_reset_with_a_new_history_capacity_rebounds_the_buffer() -> None:
-    """§15.2: history_capacity must take effect on the very next records."""
+    """§15.2: history_capacity は直後の記録から効かなければならない。"""
     recorder = SessionRecorder(
         metric_config=_metric_config(),
         thresholds=QualityThresholds(),
@@ -171,7 +171,7 @@ def test_reset_with_a_new_history_capacity_rebounds_the_buffer() -> None:
 
 
 def test_resize_history_capacity_preserves_existing_records() -> None:
-    """§14.3d: cadence auto-tuning must not fragment history like reset() does."""
+    """§14.3d: cadence の自動調整が、reset() のように履歴を分断してはならない。"""
     recorder = SessionRecorder(
         metric_config=_metric_config(),
         thresholds=QualityThresholds(),

@@ -1,14 +1,14 @@
-"""Real-model smoke tests for the background segmenter (§14.3b, §21.1).
+"""背景 segmenter の実モデル smoke test（§14.3b, §21.1）。
 
-These run against the actual `selfie_segmenter.tflite` asset installed by
-`scripts/bootstrap_models.py`. They skip when the asset is absent so a clean
-checkout still passes, and they never download anything themselves.
+`scripts/bootstrap_models.py` が配置した実際の `selfie_segmenter.tflite` asset に
+対して実行する。asset が無いときは skip するので、まっさらな checkout でも
+テストは通る。また、自身が何かを取得することは決してない。
 
-The repository's synthetic, line-art fixture (§21.4) gives this model
-near-zero foreground confidence everywhere — it is not a photographic
-selfie, so behavioral assertions here stay to shape/dtype/finiteness. Set
-`FACE_SYMMETRY_LAB_SEGMENTER_SMOKE_IMAGE` to a locally held, consented photo
-to also see a real foreground mask; such images must not be committed here.
+この repository の合成の線画 fixture（§21.4）に対して、このモデルはどこでも
+ほぼ 0 の前景確信度を返す。写真の自撮りではないためである。したがってここでの
+振る舞いの検証は形状・dtype・有限性に留める。
+`FACE_SYMMETRY_LAB_SEGMENTER_SMOKE_IMAGE` に手元の同意済み写真を指定すると、
+実際の前景 mask も確認できる。そうした画像をここへ commit してはならない。
 """
 
 import os
@@ -49,13 +49,13 @@ def _installed_model() -> Path:
 
 
 def _noise(height: int = 64, width: int = 64) -> NDArray[np.uint8]:
-    """A non-degenerate frame.
+    """退化していないフレーム。
 
-    A flat, all-zero frame was observed to make the underlying TFLite
-    runtime intermittently return uninitialized (huge, still technically
-    finite) values at small sizes — a real upstream instability on
-    degenerate input, not something this adapter can paper over. A seeded
-    noise frame keeps the smoke test both realistic and deterministic.
+    全画素 0 の平坦なフレームでは、小さいサイズのときに基盤の TFLite runtime が
+    初期化されていない（巨大だが形式上は有限な）値を断続的に返すことが観測された。
+    退化した入力に対する上流側の実際の不安定性であり、この adapter が覆い隠せる
+    ものではない。seed 付きのノイズフレームなら、smoke test は現実的かつ決定的に
+    保たれる。
     """
     rng = np.random.default_rng(20260801)
     return rng.integers(0, 255, size=(height, width, 3), dtype=np.uint8)
@@ -104,7 +104,7 @@ def test_consecutive_frames_require_increasing_timestamps() -> None:
 
 
 def test_the_mask_can_composite_a_solid_background(synthetic_face_rgb: NDArray[np.uint8]) -> None:
-    """End-to-end: real model -> mask -> domain compositing, still a valid image."""
+    """端から端まで: 実モデル -> mask -> domain の合成。結果は妥当な画像のままである。"""
     segmenter = MediaPipeSegmenter(model_path=_installed_model(), model_version=_asset().version)
     try:
         height, width = synthetic_face_rgb.shape[:2]
@@ -119,7 +119,7 @@ def test_the_mask_can_composite_a_solid_background(synthetic_face_rgb: NDArray[n
 
 
 def test_a_real_photo_produces_a_high_confidence_foreground_region() -> None:
-    """Only runs with a locally supplied, consented photo (never committed)."""
+    """手元で用意した同意済みの写真がある場合にだけ実行する（commit はしない）。"""
     image = _load_smoke_image()
     segmenter = MediaPipeSegmenter(model_path=_installed_model(), model_version=_asset().version)
     try:

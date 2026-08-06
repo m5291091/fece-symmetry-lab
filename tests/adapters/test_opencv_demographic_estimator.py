@@ -54,7 +54,7 @@ def test_estimator_uses_bgr_62_square_and_maps_continuous_outputs(tmp_path: Path
     assert net.last_blob is not None
     assert net.last_blob.shape == (1, 3, 62, 62)
     assert net.last_blob.dtype == np.float32
-    assert net.last_blob[0, 0, 0, 0] == pytest.approx(30)  # RGB -> BGR
+    assert net.last_blob[0, 0, 0, 0] == pytest.approx(30)  # RGB -> BGR へ並べ替える
     assert net.last_blob[0, 2, 0, 0] == pytest.approx(10)
 
 

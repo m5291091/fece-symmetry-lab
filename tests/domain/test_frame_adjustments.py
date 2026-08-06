@@ -101,11 +101,11 @@ def test_a_trailing_size_one_channel_on_the_mask_is_squeezed() -> None:
 
 def test_mask_values_are_clipped_outside_zero_to_one() -> None:
     image = _image(value=100)
-    mask = np.full((4, 4), 5.0, dtype=np.float32)  # way above 1.0
+    mask = np.full((4, 4), 5.0, dtype=np.float32)  # 1.0 を大きく超える
 
     result = composite_background(image, mask, (0, 0, 0))
 
-    assert np.array_equal(result, image)  # clipped to 1.0 -> fully foreground
+    assert np.array_equal(result, image)  # 1.0 へクリップされ、全面が前景になる
 
 
 def test_a_mismatched_mask_shape_is_refused() -> None:
@@ -138,10 +138,10 @@ def test_composite_rejects_a_non_rgb_image() -> None:
 def test_composite_matches_the_reference_float64_blend_within_one_step(
     background_color: tuple[int, int, int],
 ) -> None:
-    """Whatever the internal implementation (e.g. a per-channel float32
-    loop, to avoid a slow (H, W, 1) -> (H, W, 3) broadcast), the output must
-    stay within rounding distance of the float64 reference blend for
-    realistic, non-round mask/pixel values — not just a few round numbers."""
+    """内部実装が何であれ（遅い (H, W, 1) -> (H, W, 3) の broadcast を避ける
+    ためのチャンネルごとの float32 ループなど）、出力は float64 の参照合成から
+    丸め誤差の範囲に収まらねばならない。しかもきりの良い数値だけでなく、
+    現実的できりの悪い mask・画素値についても成り立つ必要がある。"""
     rng = np.random.default_rng(0)
     image = rng.integers(0, 256, size=(64, 96, 3), dtype=np.uint8)
     mask = rng.random((64, 96)).astype(np.float32)
@@ -178,9 +178,9 @@ def test_mean_luminance_rejects_a_non_rgb_image() -> None:
 def test_gain_matches_the_reference_float64_transform_for_every_input_value(
     gain: float,
 ) -> None:
-    """Whatever the internal implementation (e.g. a cached LUT), the output
-    must match ``round(clip(pixel * gain, 0, 255))`` computed in float64 for
-    every possible uint8 input value — not just a few round numbers."""
+    """内部実装が何であれ（キャッシュした LUT など）、出力は float64 で計算した
+    ``round(clip(pixel * gain, 0, 255))`` と、取りうるすべての uint8 入力値に
+    ついて一致しなければならない。きりの良い数値だけでは足りない。"""
     gradient = np.arange(256, dtype=np.uint8).reshape(1, 256, 1)
     image = np.repeat(gradient, 3, axis=2)
 
@@ -191,7 +191,7 @@ def test_gain_matches_the_reference_float64_transform_for_every_input_value(
 
 
 def test_repeated_calls_with_different_gains_do_not_leak_into_each_other() -> None:
-    """A cached per-gain lookup table must not be reused across gains."""
+    """gain ごとにキャッシュした参照表を、別の gain へ使い回してはならない。"""
     image = _image(value=100)
 
     darker = apply_brightness_gain(image, 0.5)

@@ -1,10 +1,9 @@
-"""Pure, display-oriented frame adjustments (§14.3b).
+"""表示向けの、純粋なフレーム調整（§14.3b）。
 
-Neither adjustment here is part of scoring. Brightness gain is applied
-before landmark detection too, since it can help both detection and
-viewing in a dim room; background compositing only ever touches what is
-displayed, never the frame handed to the landmark detector or the quality
-gate.
+ここにあるどちらの調整も採点の一部ではない。明るさ gain はランドマーク検出の
+前にも適用する。暗い部屋では検出と閲覧の両方を助けうるためである。背景合成は
+表示されるものにしか触れず、ランドマーク検出器や品質ゲートへ渡すフレームには
+決して触れない。
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ MAX_BRIGHTNESS_GAIN: float = 3.0
 
 
 class BackgroundMode(StrEnum):
-    """§15.2 Advanced setting. Display-only; never feeds scoring."""
+    """§15.2 の Advanced 設定。表示専用であり、採点へは決して寄与しない。"""
 
     OFF = "OFF"
     BLACK = "BLACK"
@@ -35,7 +34,7 @@ BACKGROUND_COLORS: Final[dict[BackgroundMode, tuple[int, int, int]]] = {
 
 
 class FrameAdjustmentError(ValueError):
-    """Invalid image, mask, or adjustment parameter."""
+    """画像・mask・調整パラメータのいずれかが不正である。"""
 
 
 def _validate_rgb(rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
@@ -47,20 +46,20 @@ def _validate_rgb(rgb_image: NDArray[np.uint8]) -> NDArray[np.uint8]:
 
 @lru_cache(maxsize=32)
 def _brightness_lut(gain: float) -> NDArray[np.uint8]:
-    """The 256-entry ``round(clip(value * gain, 0, 255))`` table for ``gain``.
+    """``gain`` に対する 256 要素の ``round(clip(value * gain, 0, 255))`` 表。
 
-    Cached because realtime playback calls `apply_brightness_gain` once per
-    *analysed* frame (§14.3b — display output is never brightened) with a
-    `gain` that only changes when auto-tuning (§14.3c) updates it, which is
-    itself throttled well below the analysis cadence. Building this table
-    from scratch per call was the dominant cost of a continuously nonzero
-    gain back when every video frame paid for it.
+    キャッシュする理由は次のとおり。リアルタイム再生では
+    `apply_brightness_gain` が *解析* フレームごとに 1 回呼ばれ（§14.3b: 表示
+    出力は決して明るくしない）、その `gain` は自動調整（§14.3c）が更新したとき
+    しか変わらない。その更新自体も解析周期よりずっと粗く間引かれている。毎回
+    この表を作り直す処理は、全映像フレームがその費用を払っていた頃、gain が
+    常に 1 以外である場合の支配的な費用だった。
     """
     return np.clip(np.rint(np.arange(256, dtype=np.float64) * gain), 0.0, 255.0).astype(np.uint8)
 
 
 def apply_brightness_gain(rgb_image: NDArray[np.uint8], gain: float) -> NDArray[np.uint8]:
-    """Multiply pixel values by ``gain`` and clip back into ``[0, 255]``."""
+    """画素値へ ``gain`` を掛け、``[0, 255]`` へクリップして返す。"""
     image = _validate_rgb(rgb_image)
     if not np.isfinite(gain) or not (MIN_BRIGHTNESS_GAIN <= gain <= MAX_BRIGHTNESS_GAIN):
         raise FrameAdjustmentError(
@@ -73,11 +72,11 @@ def apply_brightness_gain(rgb_image: NDArray[np.uint8], gain: float) -> NDArray[
 
 
 def mean_luminance(rgb_image: NDArray[np.uint8]) -> float:
-    """The plain per-channel pixel average, used as an auto-exposure signal.
+    """チャンネルごとの単純な画素平均。自動露出の信号として使う。
 
-    Deliberately not a perceptual (e.g. ITU-R BT.601) weighting: this feeds
-    §14.3c's auto brightness heuristic, which only needs a stable scalar to
-    drive gain toward a target, not a colorimetric measurement.
+    知覚的な重み付け（ITU-R BT.601 など）は意図的に使わない。これは §14.3c の
+    自動明るさ heuristic へ渡る値であり、そこで必要なのは gain を目標へ動かす
+    ための安定したスカラーであって、測色的な測定値ではないためである。
     """
     image = _validate_rgb(rgb_image)
     return float(np.mean(image, dtype=np.float64))
@@ -88,10 +87,10 @@ def composite_background(
     foreground_mask: NDArray[np.floating],
     background_color: tuple[int, int, int],
 ) -> NDArray[np.uint8]:
-    """Blend ``rgb_image`` with a solid color using a foreground mask.
+    """前景 mask を使って ``rgb_image`` と単色を合成する。
 
-    ``foreground_mask`` is ``0`` (background) to ``1`` (foreground), same
-    height/width as the image; a trailing size-1 channel is squeezed away.
+    ``foreground_mask`` は ``0``（背景）〜``1``（前景）で、画像と同じ高さ・幅を
+    持つ。末尾のサイズ 1 のチャンネルは畳んで落とす。
     """
     image = _validate_rgb(rgb_image)
     mask = np.asarray(foreground_mask, dtype=np.float64)
@@ -104,12 +103,11 @@ def composite_background(
     if len(background_color) != 3 or any(not 0 <= c <= 255 for c in background_color):
         raise FrameAdjustmentError("background_color は 0〜255 の RGB 3 要素である必要があります。")
 
-    # §14.3b: this runs on every video frame while background replacement is
-    # on (analysed frames directly, throttled ones via the cached mask), so
-    # per-channel float32 avoids broadcasting the mask from (H, W) to
-    # (H, W, 3) — that broadcast alone made the naive float64 version ~1.5-2x
-    # slower — at the cost of an at-most-1-step rounding difference, which is
-    # invisible in a display-only composite.
+    # §14.3b: 背景置換が有効な間、これは全映像フレームで走る（解析フレームは
+    # 直接、間引かれたフレームはキャッシュ済み mask 経由）。そのためチャンネル
+    # ごとに float32 で処理し、mask を (H, W) から (H, W, 3) へ broadcast する
+    # のを避ける。その broadcast だけで素朴な float64 版は約 1.5〜2 倍遅かった。
+    # 代償は最大 1 段階の丸め差だが、表示専用の合成では見分けが付かない。
     clipped_mask = np.clip(mask, 0.0, 1.0).astype(np.float32)
     inverse_mask = 1.0 - clipped_mask
     image_f32 = image.astype(np.float32)

@@ -1,1 +1,1 @@
-"""Local session export adapters."""
+"""ローカルのセッションエクスポート adapter。"""

@@ -13,7 +13,7 @@ INTEROCULAR_PX = 60.0
 
 
 def _image(seed: int = 0) -> np.ndarray:
-    """Textured noise, so a warp that moves pixels is detectable."""
+    """模様のあるノイズ。画素を動かす変形を検出できるようにする。"""
     rng = np.random.default_rng(seed)
     return rng.integers(0, 256, size=(HEIGHT, WIDTH, 3), dtype=np.uint8)
 
@@ -38,7 +38,7 @@ def _mesh(target=None):
 
 
 def test_an_identity_mesh_reproduces_the_image_exactly() -> None:
-    """The strongest correctness signal available without a reference render."""
+    """参照描画なしで得られる、最も強い正しさの手がかり。"""
     image = _image()
 
     warped = OpenCvPiecewiseWarper().warp(image, _mesh())
@@ -70,7 +70,7 @@ def test_a_displaced_mesh_actually_moves_pixels() -> None:
 
 
 def test_the_pinned_border_keeps_its_original_pixels() -> None:
-    """§8.6.4: corners are anchors, so hair/background edges stay put."""
+    """§8.6.4: 四隅はアンカーなので、髪や背景の端は動かない。"""
     image = _image()
     target = _grid()
     target[:, 1] += 4.0
@@ -82,7 +82,7 @@ def test_the_pinned_border_keeps_its_original_pixels() -> None:
 
 
 def test_the_triangulation_covers_the_frame_without_stray_vertices() -> None:
-    """Every reported triangle must resolve to three real mesh points."""
+    """報告される三角形はすべて、実在するメッシュ 3 点へ解決できなければならない。"""
     warper = OpenCvPiecewiseWarper()
     mesh = _mesh()
 
@@ -97,7 +97,7 @@ def test_the_triangulation_covers_the_frame_without_stray_vertices() -> None:
 
 
 def test_a_mismatched_image_size_is_refused() -> None:
-    """A mesh built for another frame would map pixels to the wrong places."""
+    """別のフレーム用に作られたメッシュは、画素を誤った位置へ写してしまう。"""
     with pytest.raises(PiecewiseWarpError, match="サイズ"):
         OpenCvPiecewiseWarper().warp(np.zeros((10, 10, 3), dtype=np.uint8), _mesh())
 
@@ -108,7 +108,7 @@ def test_a_non_rgb_image_is_refused() -> None:
 
 
 def test_duplicate_points_do_not_break_the_warp() -> None:
-    """Collapsed coordinates are skipped, not crashed on."""
+    """潰れた座標は例外ではなく、読み飛ばしで扱う。"""
     source = _grid()
     source[1] = source[0]
     mesh = build_warp_mesh(
@@ -125,7 +125,7 @@ def test_duplicate_points_do_not_break_the_warp() -> None:
 
 
 def test_points_on_the_frame_edge_are_accepted() -> None:
-    """`build_warp_mesh` clamps to the last pixel, which must stay insertable."""
+    """`build_warp_mesh` は最終画素へクランプする。その点は挿入可能でなければならない。"""
     source = _grid()
     source[0] = [0.0, 0.0]
     source[-1] = [WIDTH - 1.0, HEIGHT - 1.0]
@@ -143,16 +143,16 @@ def test_points_on_the_frame_edge_are_accepted() -> None:
 
 
 def test_a_symmetric_displacement_moves_both_sides_toward_the_middle() -> None:
-    """A sanity check on direction: pixels follow their landmarks."""
+    """向きの健全性確認。画素は自分のランドマークに追従する。"""
     image = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    image[:, : WIDTH // 2] = 255  # a hard vertical edge at the centre
+    image[:, : WIDTH // 2] = 255  # 中央にはっきりした垂直の境界
     source = _grid()
     target = source.copy()
-    target[:, 0] -= 6.0  # drag every landmark left
+    target[:, 0] -= 6.0  # すべてのランドマークを左へ動かす
 
     warped = OpenCvPiecewiseWarper().warp(image, _mesh(target))
 
-    # The bright/dark boundary must have moved left with the mesh.
+    # 明暗の境界はメッシュとともに左へ移動しているはずである。
     original_edge = int(np.argmax(image[HEIGHT // 2, :, 0] < 128))
     warped_edge = int(np.argmax(warped[HEIGHT // 2, :, 0] < 128))
     assert warped_edge < original_edge

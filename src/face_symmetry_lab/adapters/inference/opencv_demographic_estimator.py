@@ -1,4 +1,4 @@
-"""OpenCV DNN adapter for the pinned Open Model Zoo-derived ONNX asset."""
+"""固定された Open Model Zoo 由来 ONNX asset のための OpenCV DNN adapter。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ OUTPUT_NAMES = ["fc3_a", "prob"]
 
 
 class DemographicInferenceError(RuntimeError):
-    """Recoverable failure at the local demographic-model boundary."""
+    """ローカルの年齢・性別モデル境界で発生した、回復可能な失敗。"""
 
 
 class _DnnNet(Protocol):
@@ -50,7 +50,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def preprocess_demographic_image(rgb_image: NDArray[np.uint8]) -> NDArray[np.float32]:
-    """Resize RGB input and return the model's unscaled NCHW BGR blob."""
+    """RGB 入力をリサイズし、モデルが要求する未スケールの NCHW BGR blob を返す。"""
     image = np.asarray(rgb_image)
     if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
         raise DemographicInferenceError("年齢・性別推定にはuint8のRGB画像が必要です。")
@@ -63,7 +63,7 @@ def preprocess_demographic_image(rgb_image: NDArray[np.uint8]) -> NDArray[np.flo
 
 
 class OpenCvDemographicEstimator:
-    """Local CPU estimator for continuous age and binary appearance labels."""
+    """連続値の年齢と 2 値の外見ラベルを求める、ローカル CPU 推定器。"""
 
     def __init__(
         self,

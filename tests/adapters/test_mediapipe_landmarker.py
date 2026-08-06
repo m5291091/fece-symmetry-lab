@@ -252,7 +252,7 @@ def test_image_mode_close_releases_the_detector(tmp_path: Path) -> None:
 
 
 def test_video_and_image_landmarkers_are_separate_instances(tmp_path: Path) -> None:
-    """§14.3: a VIDEO instance must never be reused for still images."""
+    """§14.3: VIDEO のインスタンスを静止画へ流用してはならない。"""
     model_path = _model_file(tmp_path)
     video_detector = FakeDetector([])
     image_detector = FakeImageDetector([])

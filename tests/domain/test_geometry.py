@@ -20,7 +20,7 @@ def _rotation(degrees: float) -> np.ndarray:
 
 
 def _face_points() -> np.ndarray:
-    """A small synthetic face: index 0/1 left eye corners, 2/3 right eye corners."""
+    """小さな合成顔。index 0/1 が左目の目頭・目尻、2/3 が右目の目頭・目尻。"""
     return np.array(
         [
             [-30.0, 0.0],
@@ -123,7 +123,7 @@ def test_midline_of_a_vertical_point_set_is_vertical() -> None:
 
 
 def test_midline_uses_orthogonal_distance_not_vertical_regression() -> None:
-    """A near-horizontal midline must not blow up like an x = ay + b fit would."""
+    """ほぼ水平な正中線でも、x = ay + b の回帰のように破綻してはならない。"""
     points = np.array([[-4.0, 0.0], [-1.0, 0.1], [2.0, -0.1], [5.0, 0.0]], dtype=np.float64)
 
     midline = fit_midline(points, (0, 1, 2, 3))

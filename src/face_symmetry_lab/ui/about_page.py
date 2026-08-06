@@ -1,8 +1,8 @@
-"""About page: methodology, constraints, models, and privacy (§4.1, FR-014).
+"""About ページ: 算出方法・制約・モデル・プライバシー（§4.1, FR-014）。
 
-Purely informational — no camera or image access happens here, so it is safe
-to show regardless of consent state. Model asset lookups only read the
-pinned manifest; they never download or touch runtime state (§10.6).
+純粋な情報提供であり、カメラにも画像にもアクセスしない。そのため同意の状態に
+関わらず安全に表示できる。モデル asset の参照は固定 manifest を読むだけで、
+取得も runtime 状態への干渉も行わない（§10.6）。
 """
 
 from __future__ import annotations

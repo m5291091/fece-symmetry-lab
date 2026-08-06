@@ -23,7 +23,7 @@ def _frame(
     face_count: int = 1,
     frame_id: int = 1,
 ):
-    """A frame whose landmark bounding box covers ``area`` of the image."""
+    """ランドマークの外接矩形が画像の ``area`` を占めるフレーム。"""
     side = area**0.5
     low = (1.0 - side) / 2.0
     high = low + side
@@ -44,20 +44,20 @@ def test_a_frontal_well_sized_face_passes_the_gate() -> None:
 
 
 def test_a_pc_webcam_arms_length_framing_is_not_rejected_as_too_far() -> None:
-    """A face occupying ~60% of frame width at a typical laptop-webcam
+    """一般的なノート PC の webcam の距離で、フレーム幅の約 60% を占める顔は、
 
-    distance measures a bounding-box area ratio around 0.08 (confirmed
-    against the real Face Landmarker on a scaled synthetic face). Users must
-    not have to lean in far closer than that just to pass the gate.
+    外接矩形の面積比が 0.08 前後になる（拡縮した合成顔に対し、実際の Face
+    Landmarker で確認済み）。ゲートを通すためだけに、利用者がそれより大きく
+    顔を近づける必要があってはならない。
     """
     assert evaluate_frame(_frame(area=0.08), THRESHOLDS, strict=True) == ()
 
 
 def test_a_seated_pc_webcam_framing_with_room_to_spare_is_not_rejected() -> None:
-    """A face at ~30% of frame width (typical relaxed sitting posture, upper
+    """フレーム幅の約 30% を占める顔（上半身が入る、自然な着席姿勢）は、
 
-    body visible) measures a ratio around 0.02. Still further than the
-    arms-length case above; must also pass.
+    比が 0.02 前後になる。上の腕を伸ばした距離よりさらに遠いが、これも通らねば
+    ならない。
     """
     assert evaluate_frame(_frame(area=0.02), THRESHOLDS, strict=True) == ()
 
@@ -126,7 +126,7 @@ def test_frames_short_of_the_streak_report_unstable() -> None:
 
 
 def test_the_documented_hold_ok_hold_sequence() -> None:
-    """§21.3: HOLD -> 5 valid -> OK -> 1 outer-invalid -> HOLD."""
+    """§21.3: HOLD -> 有効 5 回 -> OK -> outer 不成立 1 回 -> HOLD。"""
     gate = QualityGate()
     for index in range(1, 6):
         gate.update(_frame(frame_id=index))

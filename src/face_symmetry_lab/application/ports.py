@@ -11,18 +11,18 @@ from face_symmetry_lab.domain.warp_mesh import WarpMesh
 
 
 class DemographicEstimator(Protocol):
-    """Boundary implemented by local age/gender runtimes."""
+    """ローカルの年齢・性別 runtime が実装する境界。"""
 
     def estimate(self, rgb_image: NDArray[np.uint8]) -> DemographicEstimate: ...
 
 
 class DemographicSampler(Protocol):
-    """Boundary for off-critical-path age/gender sampling (§14.3).
+    """クリティカルパス外で年齢・性別を標本化するための境界（§14.3）。
 
-    The realtime pipeline only ever offers a crop and reads whatever the
-    sampler has finished; it never waits for an inference. ``latest`` pairs
-    the estimate with a version token that changes only on a fresh result,
-    which is what distinguishes a new observation from a redisplay.
+    リアルタイム pipeline は切り出しを提示し、sampler が終えたものを読むだけで
+    あり、推論を待つことはない。``latest`` は推定と版トークンを対にして返す。
+    このトークンは新しい結果が出たときだけ変わり、それが新規観測と再表示を
+    区別する手がかりになる。
     """
 
     def is_due(self) -> bool: ...
@@ -39,7 +39,7 @@ class DemographicSampler(Protocol):
 
 
 class LandmarkProvider(Protocol):
-    """Boundary implemented by local landmark runtimes running on video."""
+    """映像上で動作するローカルの landmark runtime が実装する境界。"""
 
     def detect_video(
         self,
@@ -53,7 +53,7 @@ class LandmarkProvider(Protocol):
 
 
 class ImageLandmarkProvider(Protocol):
-    """Boundary implemented by local landmark runtimes running on still images."""
+    """静止画上で動作するローカルの landmark runtime が実装する境界。"""
 
     def detect(self, rgb_image: NDArray[np.uint8], *, frame_id: int = 0) -> LandmarkFrame: ...
 
@@ -61,18 +61,18 @@ class ImageLandmarkProvider(Protocol):
 
 
 class PiecewiseWarper(Protocol):
-    """Boundary for §8.6.4's pixel warp, implemented with a local imaging library.
+    """§8.6.4 の画素変形の境界。ローカルの画像ライブラリで実装する。
 
-    The mesh already carries every geometric decision (which points move,
-    which are pinned, whether the displacement is safe), so an implementation
-    only has to triangulate and transfer pixels.
+    どの点が動くか、どれが固定か、変位が安全かという幾何的な判断はすべて
+    メッシュがすでに持っている。そのため実装は三角形分割と画素の転送だけを
+    行えばよい。
     """
 
     def warp(self, rgb_image: NDArray[np.uint8], mesh: WarpMesh) -> NDArray[np.uint8]: ...
 
 
 class SegmentationProvider(Protocol):
-    """Boundary implemented by local person/background segmentation runtimes."""
+    """ローカルの人物・背景 segmentation runtime が実装する境界。"""
 
     def segment(
         self,

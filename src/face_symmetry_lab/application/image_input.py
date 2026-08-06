@@ -15,7 +15,7 @@ SUPPORTED_FORMATS = frozenset({"JPEG", "PNG"})
 
 
 class ImageInputError(ValueError):
-    """A safe, user-facing image validation failure."""
+    """利用者へ提示して安全な、画像検証の失敗。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +32,7 @@ def decode_uploaded_image(
     max_bytes: int = DEFAULT_MAX_BYTES,
     max_pixels: int = DEFAULT_MAX_PIXELS,
 ) -> DecodedImage:
-    """Validate, orient and detach an uploaded JPEG/PNG from its metadata."""
+    """アップロードされた JPEG/PNG を検証し、向きを適用し、メタデータから切り離す。"""
     if not payload:
         raise ImageInputError("画像を読み込めません。空のファイルです。")
     if len(payload) > max_bytes:
@@ -74,7 +74,7 @@ def extract_face_crop(
     *,
     padding_ratio: float = 0.15,
 ) -> NDArray[np.uint8]:
-    """Return a clamped, detached face bbox crop for local face models."""
+    """ローカルの顔モデル向けに、範囲を制限して切り離した顔 bbox の切り出しを返す。"""
     image = np.asarray(rgb_image)
     if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
         raise ImageInputError("顔 crop には uint8 の RGB 画像が必要です。")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the local quality gates in the same order as CI."""
+"""CI と同じ順序で、ローカルの品質ゲートを実行する。"""
 
 from __future__ import annotations
 

@@ -28,7 +28,7 @@ from face_symmetry_lab.domain.landmarks import (
 from face_symmetry_lab.domain.models import AnalysisState, DemographicEstimate, Status
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
-#: Spread-out points so `extract_face_crop` can derive a non-degenerate bbox.
+#: `extract_face_crop` が退化しない bbox を導けるよう広げた点。
 SPREAD_POINTS = ((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.2, 0.5), (0.8, 0.5))
 
 
@@ -96,11 +96,11 @@ class FakeSegmenter:
 
 
 class WorkingLandmarker(FakeLandmarker):
-    """A landmarker that advances a `ManualClock` to simulate real work.
+    """実処理を模すために `ManualClock` を進める landmarker。
 
-    Lets a cadence test state the load it wants directly (`work_seconds`)
-    instead of inferring it from how many times `_analyse` reads the clock,
-    which is an implementation detail that has changed more than once.
+    cadence のテストが、望む負荷を `work_seconds` で直接指定できるようにする。
+    `_analyse` が時計を何回読むかから推測させない。その回数は実装の詳細であり、
+    これまでに何度も変わっている。
     """
 
     def __init__(self, clock: "ManualClock", work_seconds: float, **kwargs: object) -> None:
@@ -120,14 +120,13 @@ class WorkingLandmarker(FakeLandmarker):
 
 
 class StepClock:
-    """Monotonic clock stub advancing by a fixed step per call.
+    """呼び出しごとに一定量進む、単調時計のスタブ。
 
-    Defaults to a small step so tests using the bare default (no explicit
-    `step=`) don't accidentally rack up simulated elapsed time across the
-    several `self._clock()` calls one `_analyse` now makes for its §14.3f
-    per-stage timing breakdown — a real clock only advances by microseconds
-    over the same span, so this default is about keeping fixture-driven
-    elapsed time realistic, not about testing any specific cadence.
+    既定の刻みは小さくしてある。`step=` を明示しないテストが、`_analyse` が
+    §14.3f の段階別タイミングのために行う複数回の `self._clock()` 呼び出しを
+    通じて、模擬経過時間を意図せず積み上げないようにするためである。実際の時計
+    は同じ区間でマイクロ秒しか進まない。この既定値は fixture 由来の経過時間を
+    現実的に保つためのものであり、特定の cadence を検証するためのものではない。
     """
 
     def __init__(self, step: float = 0.001) -> None:
@@ -272,7 +271,7 @@ def _pipeline(landmarker: FakeLandmarker, **kwargs: object) -> RealtimeLandmarkP
 
 
 def test_a_detected_face_gets_landmarks_drawn_on_the_frame() -> None:
-    """FR-013: geometry (and only geometry) is drawn onto the video."""
+    """FR-013: 映像へ描かれるのは幾何だけである。"""
     pipeline = _pipeline(FakeLandmarker(face_count=1))
     source = _rgb()
 
@@ -280,13 +279,13 @@ def test_a_detected_face_gets_landmarks_drawn_on_the_frame() -> None:
 
     assert painted is not source
     assert painted.sum() > 0
-    assert np.all(source == 0)  # the caller's frame is never mutated
+    assert np.all(source == 0)  # 呼び出し側のフレームは決して書き換えない
     assert pipeline.snapshot().status is TrackingStatus.SINGLE_FACE
 
 
 def test_multi_face_frames_leave_the_frame_untouched() -> None:
-    """No single face means no geometry, so there is nothing to draw and the
-    frame passes straight through."""
+    """単一顔でなければ幾何が無いので描くものが無く、
+    フレームは素通しされる。"""
     pipeline = _pipeline(FakeLandmarker(face_count=2))
     source = _rgb()
 
@@ -347,10 +346,10 @@ def test_pipeline_samples_latest_frames_at_default_cadence() -> None:
     clock.advance(0.001)
     _, fourth = pipeline.process_with_analysis(_rgb())
 
-    assert first is None  # No analyzer is attached, but landmark inference ran.
+    assert first is None  # analyzer は接続されていないが、ランドマーク推論は走った。
     assert second is None
     assert fourth is None
-    assert skipped_frame.sum() > 0  # throttled frames redraw the cached geometry
+    assert skipped_frame.sum() > 0  # 間引かれたフレームはキャッシュ済みの幾何を描き直す
     assert len(landmarker.calls) == 2
     assert pipeline.snapshot().throttled_frames == 2
 
@@ -390,15 +389,15 @@ def test_a_dropped_frame_never_receives_the_previous_numeric_overlay_result() ->
 
     assert first_analysis is not None
     assert dropped_analysis is None
-    assert raw.sum() > 0  # short-lived geometry is redrawn; numeric analysis is not
+    assert raw.sum() > 0  # 短命な幾何は描き直されるが、数値解析は行われない
 
 
 def test_a_cached_background_mask_expires_after_the_display_ttl() -> None:
-    """The mask cache is the only per-frame cache left (FR-013 dropped the
-    geometry one): it spares a throttled frame a re-segmentation, but must
-    not outlive its TTL."""
+    """フレーム単位のキャッシュとして残るのは mask だけである（FR-013 で幾何側は
+    廃止した）。間引かれたフレームの再 segmentation を省くが、TTL より長く
+    生き残ってはならない。"""
     clock = ManualClock()
-    segmenter = FakeSegmenter(mask_value=0.0)  # fully background -> visibly black
+    segmenter = FakeSegmenter(mask_value=0.0)  # 全面が背景 -> 目に見えて黒くなる
     pipeline = RealtimeLandmarkPipeline(
         landmarker=FakeLandmarker(),
         segmenter=segmenter,
@@ -414,9 +413,9 @@ def test_a_cached_background_mask_expires_after_the_display_ttl() -> None:
     clock.advance(0.051)
     expired = pipeline.process(_flat_rgb(200))
 
-    assert first.max() == 0  # segmented on the analysed frame
-    assert retained.max() == 0  # throttled frame reused the cached mask
-    assert expired.max() == 200  # TTL passed: frame passes through untouched
+    assert first.max() == 0  # 解析フレームで segmentation を実行した
+    assert retained.max() == 0  # 間引かれたフレームはキャッシュ済み mask を再利用した
+    assert expired.max() == 200  # TTL 超過: フレームは無変更で素通しされる
     assert len(segmenter.calls) == 1
 
 
@@ -480,7 +479,7 @@ def test_snapshot_is_immutable() -> None:
 
 
 def test_snapshot_reports_landmark_timing() -> None:
-    """§14.3f: a NFR-002 diagnostic breakdown of processing_ms."""
+    """§14.3f: processing_ms を段階別に分けた NFR-002 の診断値。"""
     pipeline = _pipeline(FakeLandmarker())
 
     pipeline.process(_rgb())
@@ -586,9 +585,9 @@ def _flat_rgb(value: int, height: int = 20, width: int = 20) -> NDArray[np.uint8
 
 
 def test_brightness_gain_reaches_the_detector_but_never_the_display() -> None:
-    """§14.3b: the user always sees the raw camera feed; only the frame
-    handed to the landmark detector is brightened."""
-    landmarker = FakeLandmarker(face_count=0)  # no overlay drawn, so display == input
+    """§14.3b: 利用者が見るのは常に生のカメラ映像であり、明るくするのは
+    ランドマーク検出器へ渡すフレームだけである。"""
+    landmarker = FakeLandmarker(face_count=0)  # オーバーレイを描いていないので、表示 == 入力
     pipeline = _pipeline(landmarker, brightness_gain=2.0)
 
     painted = pipeline.process(_flat_rgb(100))
@@ -613,9 +612,9 @@ def test_an_out_of_range_brightness_gain_is_refused_at_construction() -> None:
 
 
 def test_an_auto_tuned_gain_reaches_the_detector_on_the_following_frame() -> None:
-    """Auto-tuning is the only thing that changes gain at runtime (§14.3c,
-    no manual setter exists), and its result must reach the detector while
-    still leaving the displayed frame raw."""
+    """実行時に gain を変えるのは自動調整だけであり（§14.3c、手動 setter は
+    存在しない）、その結果は検出器へ届く一方で、表示フレームは生のまま
+    でなければならない。"""
     landmarker = FakeLandmarker(face_count=0)
     clock = ManualClock()
     pipeline = RealtimeLandmarkPipeline(
@@ -625,13 +624,13 @@ def test_an_auto_tuned_gain_reaches_the_detector_on_the_following_frame() -> Non
         auto_tune_enabled=True,
     )
 
-    pipeline.process(_flat_rgb(64))  # 128 target / 64 measured -> gain 2.0
-    clock.advance(2.0)  # past the retune throttle
+    pipeline.process(_flat_rgb(64))  # 目標 128 / 実測 64 -> gain 2.0
+    clock.advance(2.0)  # 再調整の間引きを越えた
     painted = pipeline.process(_flat_rgb(64))
 
     assert pipeline.brightness_gain == pytest.approx(2.0)
     assert np.all(landmarker.received_images[1] == 128)  # 64 * 2.0
-    assert np.all(painted == 64)  # display stays raw
+    assert np.all(painted == 64)  # 表示は生のまま
 
 
 def test_background_mode_off_never_calls_the_segmenter() -> None:
@@ -645,7 +644,7 @@ def test_background_mode_off_never_calls_the_segmenter() -> None:
 
 def test_background_replacement_composites_only_the_display_frame() -> None:
     landmarker = FakeLandmarker(face_count=0)
-    segmenter = FakeSegmenter(mask_value=0.0)  # fully background
+    segmenter = FakeSegmenter(mask_value=0.0)  # 全面が背景
     pipeline = _pipeline(
         landmarker,
         segmenter=segmenter,
@@ -654,8 +653,8 @@ def test_background_replacement_composites_only_the_display_frame() -> None:
 
     painted = pipeline.process(_flat_rgb(10))
 
-    assert np.all(landmarker.received_images[0] == 10)  # detector input untouched
-    assert np.all(painted == 255)  # display replaced with white
+    assert np.all(landmarker.received_images[0] == 10)  # 検出器への入力は無変更
+    assert np.all(painted == 255)  # 表示は白へ置き換わる
 
 
 def test_background_replacement_fails_open_on_segmenter_error() -> None:
@@ -670,8 +669,8 @@ def test_background_replacement_fails_open_on_segmenter_error() -> None:
 
     painted = pipeline.process(_flat_rgb(77))
 
-    assert np.all(painted == 77)  # fell back to the un-composited frame
-    assert pipeline.snapshot().consecutive_errors == 0  # not counted as a stream failure
+    assert np.all(painted == 77)  # 合成前のフレームへ退避した
+    assert pipeline.snapshot().consecutive_errors == 0  # 通信の失敗としては数えない
 
 
 def test_set_background_mode_updates_the_running_pipeline() -> None:
@@ -683,12 +682,12 @@ def test_set_background_mode_updates_the_running_pipeline() -> None:
     pipeline.set_background_mode(BackgroundMode.BLACK)
     after = pipeline.process(_flat_rgb(10))
 
-    assert np.all(before == 10)  # OFF by default: untouched
-    assert np.all(after == 0)  # BLACK: replaced
+    assert np.all(before == 10)  # 既定は OFF: 無変更
+    assert np.all(after == 0)  # BLACK: 置き換わる
 
 
 def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> None:
-    """§15.2: an Advanced settings apply must reach every affected component."""
+    """§15.2: Advanced 設定の適用は、影響を受けるすべての構成要素へ届かねばならない。"""
     landmarker = FakeLandmarker()
     analyzer = StubAnalyzer()
     recorder = RecorderSpy()
@@ -726,7 +725,7 @@ def test_metric_config_reflects_the_attached_analyzers_bundle() -> None:
 
 
 def test_apply_advanced_settings_cannot_swap_the_metric_config() -> None:
-    """§8.6/§15.2: with no coefficient left, the bundle is pinned per session."""
+    """§8.6/§15.2: 係数が残っていないので、bundle はセッション単位で固定である。"""
     analyzer = StubAnalyzer()
     recorder = RecorderSpy()
     pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
@@ -791,13 +790,13 @@ def test_apply_advanced_settings_without_an_age_interval_leaves_the_worker_untou
 
 
 def test_apply_advanced_settings_can_change_the_analysis_cadence() -> None:
-    """§15.2 `analysis_interval_ms`: independent of the WebRTC frame rate."""
+    """§15.2 の `analysis_interval_ms`: WebRTC のフレームレートから独立している。"""
     clock = ManualClock()
     landmarker = FakeLandmarker()
     pipeline = RealtimeLandmarkPipeline(
         landmarker=landmarker, clock=clock, analysis_interval_ms=1000
     )
-    pipeline.process(_rgb())  # consumes the first admitted slot
+    pipeline.process(_rgb())  # 最初に受け入れられた枠を消費する
 
     pipeline.apply_advanced_settings(
         thresholds=object(),
@@ -805,18 +804,18 @@ def test_apply_advanced_settings_can_change_the_analysis_cadence() -> None:
         zoom_policy=object(),
         analysis_interval_ms=0,
     )
-    pipeline.process(_rgb())  # would be throttled under the old 1000ms cadence
+    pipeline.process(_rgb())  # 旧 1000ms の周期なら間引かれていた
 
     assert len(landmarker.calls) == 2
 
 
 def test_apply_advanced_settings_clears_cached_geometry_and_background() -> None:
-    """A throttled frame right after applying settings must not paint stale
+    """設定適用の直後に間引かれたフレームが、変更前に残っていた
 
-    cached geometry/background left over from before the change.
+    古いキャッシュの幾何や背景を描いてはならない。
     """
     landmarker = FakeLandmarker(points=((0.5, 0.2), (0.5, 0.5), (0.5, 0.8)))
-    segmenter = FakeSegmenter(mask_value=0.0)  # fully background -> composites solid white
+    segmenter = FakeSegmenter(mask_value=0.0)  # 全面が背景 -> composites solid white
     pipeline = RealtimeLandmarkPipeline(
         landmarker=landmarker,
         analyzer=StubAnalyzer(),
@@ -825,11 +824,11 @@ def test_apply_advanced_settings_clears_cached_geometry_and_background() -> None
         clock=lambda: 0.0,
         analysis_interval_ms=1000,
     )
-    pipeline.process(_rgb())  # populates cached geometry + mask; result is white
+    pipeline.process(_rgb())  # 幾何と mask のキャッシュを満たす。結果は白
 
     pipeline.apply_advanced_settings(thresholds=object(), tau_seconds=0.4, zoom_policy=object())
-    # clock never advances, so this next call is throttled and must fall
-    # back to the (now-cleared) cache instead of the stale white composite.
+    # 時計が進まないため次の呼び出しは間引かれる。古い白の合成ではなく、
+    # （今は消去された）キャッシュへ退避しなければならない。
     reused = pipeline.process(_rgb())
 
     assert np.all(reused == 0)
@@ -848,12 +847,12 @@ def test_cached_frames_reuse_the_last_computed_mask_without_resegmenting() -> No
     )
 
     analysed = pipeline.process(_flat_rgb(10))
-    clock.advance(0.05)  # well inside the 125ms/1000ms cadence: this frame is throttled
+    clock.advance(0.05)  # 125ms/1000ms の周期の十分内側: このフレームは間引かれる
     throttled = pipeline.process(_flat_rgb(10))
 
     assert np.all(analysed == 255)
-    assert np.all(throttled == 255)  # still composited, from the cached mask
-    assert segmenter.calls == [0]  # segmentation only ran once
+    assert np.all(throttled == 255)  # キャッシュ済み mask から、なお合成される
+    assert segmenter.calls == [0]  # segmentation は 1 回しか走っていない
 
 
 def test_single_face_frames_submit_a_crop_to_the_demographic_worker() -> None:
@@ -867,9 +866,9 @@ def test_single_face_frames_submit_a_crop_to_the_demographic_worker() -> None:
 
 
 def test_no_crop_is_built_while_the_worker_is_not_due() -> None:
-    """The worker's cadence is slower than the analysis cadence, so the
+    """worker の周期は解析周期より遅いので、費用の高い切り出しは
 
-    expensive crop must be skipped rather than built and discarded.
+    作って捨てるのではなく、そもそも省かねばならない。
     """
     worker = FakeDemographicWorker()
     worker.due = False
@@ -1043,7 +1042,7 @@ def test_auto_tune_is_off_by_default_and_never_touches_brightness_gain() -> None
     landmarker = FakeLandmarker(face_count=0)
     pipeline = _pipeline(landmarker)
 
-    pipeline.process(_flat_rgb(20))  # far from the 128 target
+    pipeline.process(_flat_rgb(20))  # 目標 128 から遠い
 
     assert pipeline.brightness_gain == pytest.approx(1.0)
 
@@ -1052,7 +1051,7 @@ def test_auto_tune_enabled_moves_brightness_gain_toward_the_target() -> None:
     landmarker = FakeLandmarker(face_count=0)
     pipeline = _pipeline(landmarker, auto_tune_enabled=True)
 
-    pipeline.process(_flat_rgb(64))  # 128 target / 64 measured -> gain 2.0
+    pipeline.process(_flat_rgb(64))  # 目標 128 / 実測 64 -> gain 2.0
 
     assert pipeline.brightness_gain == pytest.approx(2.0)
 
@@ -1061,7 +1060,7 @@ def test_auto_tuned_brightness_is_clamped_to_fr_028_bounds() -> None:
     landmarker = FakeLandmarker(face_count=0)
     pipeline = _pipeline(landmarker, auto_tune_enabled=True)
 
-    pipeline.process(_flat_rgb(1))  # would recommend a gain far above 3.0
+    pipeline.process(_flat_rgb(1))  # 3.0 を大きく超える gain を推奨してしまう値
 
     assert pipeline.brightness_gain == pytest.approx(MAX_BRIGHTNESS_GAIN)
 
@@ -1125,8 +1124,8 @@ def test_auto_tune_zoom_no_ops_when_the_landmarker_does_not_support_zoom() -> No
 
 
 def test_brightness_auto_tune_is_throttled_within_the_retune_interval() -> None:
-    """Perf regression guard: recomputing every analysed frame defeated
-    apply_brightness_gain's per-gain LUT cache and caused visible video lag."""
+    """性能の回帰ガード: 解析フレームごとに再計算すると apply_brightness_gain の
+    gain ごとの LUT キャッシュが無効になり、目に見える映像の遅延を招いた。"""
     landmarker = FakeLandmarker(face_count=0)
     clock = ManualClock()
     pipeline = RealtimeLandmarkPipeline(
@@ -1136,14 +1135,16 @@ def test_brightness_auto_tune_is_throttled_within_the_retune_interval() -> None:
         auto_tune_enabled=True,
     )
 
-    pipeline.process(_flat_rgb(64))  # first call is always due -> gain becomes 2.0
+    pipeline.process(
+        _flat_rgb(64)
+    )  # 最初の呼び出しは常に実行時刻に達している -> gain は 2.0 になる
     assert pipeline.brightness_gain == pytest.approx(2.0)
 
-    clock.advance(0.1)  # well within the 1s retune interval
-    pipeline.process(_flat_rgb(1))  # would push gain to MAX if retuned now
-    assert pipeline.brightness_gain == pytest.approx(2.0)  # unchanged: throttled
+    clock.advance(0.1)  # 1 秒の再調整間隔の十分内側
+    pipeline.process(_flat_rgb(1))  # 今再調整すれば gain が上限まで上がる値
+    assert pipeline.brightness_gain == pytest.approx(2.0)  # 変化なし: 間引かれた
 
-    clock.advance(2.0)  # past the interval
+    clock.advance(2.0)  # 間隔を越えた
     pipeline.process(_flat_rgb(1))
     assert pipeline.brightness_gain == pytest.approx(MAX_BRIGHTNESS_GAIN)
 
@@ -1163,7 +1164,7 @@ def test_zoom_auto_tune_is_throttled_within_the_retune_interval() -> None:
 
     clock.advance(0.1)
     pipeline.process(_rgb(height=40, width=40))
-    assert len(landmarker.policy_updates) == 1  # unchanged: throttled
+    assert len(landmarker.policy_updates) == 1  # 変化なし: 間引かれた
 
     clock.advance(2.0)
     pipeline.process(_rgb(height=40, width=40))
@@ -1174,7 +1175,7 @@ def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_lo
     clock = ManualClock()
     recorder = RecorderSpy()
     pipeline = RealtimeLandmarkPipeline(
-        landmarker=WorkingLandmarker(clock, 0.2, face_count=0),  # 200ms per frame
+        landmarker=WorkingLandmarker(clock, 0.2, face_count=0),  # 1 フレームあたり 200ms
         recorder=recorder,
         clock=clock,
         analysis_interval_ms=0,
@@ -1185,16 +1186,16 @@ def test_auto_tune_enabled_slows_the_analysis_interval_under_heavy_processing_lo
         pipeline.process(_rgb())
         clock.advance(CADENCE_RETUNE_INTERVAL_SECONDS)
 
-    # 200ms mean load only clears the slowest documented choice's utilization target.
+    # 平均 200ms の負荷では、文書化された候補のうち最も遅いものしか利用率目標を満たさない。
     assert pipeline.analysis_interval_ms == 333
     assert recorder.resize_calls != []
-    assert recorder.reset_calls == 0  # cadence retuning must not fragment history
+    assert recorder.reset_calls == 0  # cadence の再調整が履歴を分断してはならない
 
 
 def test_auto_tuned_cadence_widens_the_display_ttl_past_the_new_interval() -> None:
-    """Regression guard: a TTL shorter than the auto-tuned interval expired
-    the cache every single throttled frame, causing visible flicker
-    (background replacement, landmark overlay) once cadence slowed to 333ms."""
+    """回帰ガード: 自動調整後の間隔より短い TTL は、間引かれたフレームごとに
+    キャッシュを失効させ、cadence が 333ms まで遅くなった時点で目に見える
+    ちらつき（背景置換、ランドマークのオーバーレイ）を起こした。"""
     pipeline = RealtimeLandmarkPipeline(
         landmarker=FakeLandmarker(face_count=0),
         clock=StepClock(step=0.2),
@@ -1226,9 +1227,9 @@ def test_auto_tune_disabled_never_widens_the_display_ttl() -> None:
 
 
 def test_an_explicitly_configured_interval_and_ttl_are_not_widened_by_construction() -> None:
-    """A caller-provided (analysis_interval_ms, geometry_ttl_ms) pair — from a
-    test or `apply_advanced_settings` — is respected as-is; only cadence
-    auto-tuning (§14.3d) widens the TTL."""
+    """呼び出し側が与えた (analysis_interval_ms, geometry_ttl_ms) の組——テスト
+    由来でも `apply_advanced_settings` 由来でも——はそのまま尊重される。TTL を
+    広げるのは cadence の自動調整（§14.3d）だけである。"""
     pipeline = RealtimeLandmarkPipeline(
         landmarker=FakeLandmarker(face_count=0),
         clock=StepClock(),
@@ -1240,17 +1241,16 @@ def test_an_explicitly_configured_interval_and_ttl_are_not_widened_by_constructi
 
 
 def test_auto_tune_enabled_skips_the_history_resize_when_the_interval_is_unchanged() -> None:
-    """Regression guard: resizing on every retune tick regardless of whether
-    the recommendation actually changed rebuilt the whole history buffer
-    under lock every ~2s for the entire session, compounding into escalating
-    lag on long-running sessions."""
+    """回帰ガード: 推奨値が実際に変わったかに関わらず再調整の tick ごとに
+    リサイズすると、セッション中ずっと約 2 秒ごとに履歴バッファ全体を lock の
+    下で作り直すことになり、長時間のセッションで遅延が積み上がっていった。"""
     landmarker = FakeLandmarker(face_count=0)
     recorder = RecorderSpy()
     pipeline = RealtimeLandmarkPipeline(
         landmarker=landmarker,
         recorder=recorder,
         clock=StepClock(step=0.2),
-        analysis_interval_ms=333,  # already at the recommendation heavy load picks
+        analysis_interval_ms=333,  # 高負荷時に選ばれる推奨値へすでに到達している
         auto_tune_enabled=True,
     )
 
@@ -1258,7 +1258,7 @@ def test_auto_tune_enabled_skips_the_history_resize_when_the_interval_is_unchang
         pipeline.process(_rgb())
 
     assert pipeline.analysis_interval_ms == 333
-    assert recorder.resize_calls == []  # never actually changed, so never called
+    assert recorder.resize_calls == []  # 実際には一度も変わらないので、一度も呼ばれない
 
 
 def test_auto_tune_enabled_speeds_the_analysis_interval_back_up_under_light_load() -> None:
@@ -1269,12 +1269,12 @@ def test_auto_tune_enabled_speeds_the_analysis_interval_back_up_under_light_load
         analysis_interval_ms=333,
         auto_tune_enabled=True,
     )
-    for _ in range(10):  # let it settle at the slow interval first
+    for _ in range(10):  # まず遅い間隔で落ち着かせる
         pipeline.process(_rgb())
         heavy_clock.advance(CADENCE_RETUNE_INTERVAL_SECONDS)
     assert pipeline.analysis_interval_ms == 333
 
-    # 10ms per frame is comfortably under the 125-choice's utilization target.
+    # 1 フレーム 10ms は、候補 125 の利用率目標を余裕をもって下回る。
     light_clock = ManualClock()
     fast_pipeline = RealtimeLandmarkPipeline(
         landmarker=WorkingLandmarker(light_clock, 0.01, face_count=0),
@@ -1319,11 +1319,10 @@ def test_auto_tune_enabled_retunes_the_demographic_worker_interval_with_cadence(
     assert worker.interval_updates[-1] == recommend_age_interval_ms(333)
 
 
-#: `ManualClock` (not `StepClock`) controls elapsed time explicitly via
-#: `.advance()` between iterations, independent of how many `self._clock()`
-#: calls one `_analyse` happens to make internally (§14.3f's per-stage
-#: timing breakdown added several) — robust against that count changing
-#: again later, unlike computing elapsed time from a per-call step.
+#: 経過時間は `StepClock` ではなく `ManualClock` が、繰り返しの合間の
+#: `.advance()` で明示的に制御する。`_analyse` が内部で `self._clock()` を何回
+#: 呼ぶか（§14.3f の段階別タイミングで数回増えた）に依存しない。呼び出しごとの
+#: 刻みから経過時間を算出する方式と違い、その回数が後で再び変わっても壊れない。
 def _sensitivity_pipeline(
     landmarker, clock: ManualClock, **kwargs: object
 ) -> RealtimeLandmarkPipeline:
@@ -1336,11 +1335,12 @@ def _sensitivity_pipeline(
 
 
 def test_auto_tuning_never_reaches_the_analyzer_or_starts_a_new_segment() -> None:
-    """§8.6/AC-AUTOTUNE-02: nothing auto-tuned may move a measured value.
+    """§8.6/AC-AUTOTUNE-02: 自動調整のどれもが測定値を動かしてはならない。
 
-    Cadence and display tuning run freely below; what must never happen is a
-    `FrameAnalyzer.update` or `SessionRecorder.reset` behind the user's back,
-    which is what the removed sensitivity path used to do every time it fired.
+    以下では cadence と表示の調整を自由に走らせる。決して起きてはならないのは、
+    利用者の与り知らぬところでの `FrameAnalyzer.update` や
+    `SessionRecorder.reset` である。廃止した感度調整の経路は、発火のたびに
+    まさにそれを行っていた。
     """
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
     analyzer = StubAnalyzer()
@@ -1350,7 +1350,7 @@ def test_auto_tuning_never_reaches_the_analyzer_or_starts_a_new_segment() -> Non
         landmarker, clock, analyzer=analyzer, recorder=recorder, auto_tune_enabled=True
     )
 
-    for _ in range(15):  # far past every retune interval in the controller
+    for _ in range(15):  # controller のどの再調整間隔もはるかに越えた時点
         pipeline.process(_rgb(height=40, width=40))
         clock.advance(1.0)
 
@@ -1359,11 +1359,11 @@ def test_auto_tuning_never_reaches_the_analyzer_or_starts_a_new_segment() -> Non
     assert recorder.reset_calls == 0
 
 
-# --- §14.3g one-shot capture (FR-034, AC-SYMM-01) ----------------------------
+# --- §14.3g 一発の取り込み（FR-034, AC-SYMM-01）-----------------------------
 
 
 def test_no_frame_is_retained_until_a_capture_is_requested() -> None:
-    """The realtime loop pays nothing for a button that was never pressed."""
+    """一度も押されなかったボタンのために、リアルタイムのループが費用を払うことはない。"""
     pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
 
     for _ in range(5):
@@ -1389,7 +1389,7 @@ def test_a_requested_capture_keeps_the_next_analysed_frame() -> None:
 
 
 def test_the_capture_holds_the_raw_frame_not_the_painted_preview() -> None:
-    """§14.3g: the overlay draws its own geometry over an unannotated frame."""
+    """§14.3g: オーバーレイは注記の無いフレームの上へ、自前の幾何を描く。"""
     pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
     source = np.full((20, 20, 3), 77, dtype=np.uint8)
 
@@ -1403,13 +1403,13 @@ def test_the_capture_holds_the_raw_frame_not_the_painted_preview() -> None:
 
 
 def test_the_capture_survives_the_source_buffer_being_reused() -> None:
-    """WebRTC owns the incoming buffer, so the hold must be a copy."""
+    """届くバッファは WebRTC が所有するので、保持するのは複製でなければならない。"""
     pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
     source = np.full((20, 20, 3), 77, dtype=np.uint8)
 
     pipeline.request_capture()
     pipeline.process(source)
-    source[:] = 3  # the next frame overwrites the same array
+    source[:] = 3  # 次のフレームが同じ配列を上書きする
 
     captured = pipeline.take_capture()
     assert captured is not None
@@ -1417,7 +1417,7 @@ def test_the_capture_survives_the_source_buffer_being_reused() -> None:
 
 
 def test_taking_a_capture_consumes_it() -> None:
-    """§10.4: the raw image is held only until the UI has used it."""
+    """§10.4: 生画像は UI が使うまでの間しか保持しない。"""
     pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
 
     pipeline.request_capture()
@@ -1428,7 +1428,7 @@ def test_taking_a_capture_consumes_it() -> None:
 
 
 def test_a_capture_request_waits_for_a_single_face_frame() -> None:
-    """A multi-face frame cannot be symmetrized, so it must not spend the request."""
+    """複数顔のフレームは対称化できないので、要求を消費してはならない。"""
     landmarker = FakeLandmarker(face_count=2)
     pipeline = _pipeline(landmarker)
 
@@ -1460,7 +1460,7 @@ def test_a_capture_request_survives_a_failed_frame() -> None:
 
 
 def test_capturing_does_not_disturb_the_running_analysis() -> None:
-    """FR-034: the continuous loop is neither stopped nor altered."""
+    """FR-034: 連続処理のループは停止も変更もされない。"""
     landmarker = FakeLandmarker(points=SPREAD_POINTS)
     analyzer = StubAnalyzer()
     pipeline = _pipeline(landmarker, analyzer=analyzer)
@@ -1477,7 +1477,7 @@ def test_capturing_does_not_disturb_the_running_analysis() -> None:
 
 
 def test_resetting_the_analysis_drops_the_capture() -> None:
-    """§4.4/FR-034: reset must clear the held frame too."""
+    """§4.4/FR-034: リセットは保持中のフレームも消去しなければならない。"""
     pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
     pipeline.request_capture()
     pipeline.process(_rgb())
@@ -1500,7 +1500,7 @@ def test_clear_capture_drops_a_pending_request_too() -> None:
 
 
 def test_closing_the_pipeline_releases_the_capture() -> None:
-    """AC-PRIV-01: no face-derived image outlives the session."""
+    """AC-PRIV-01: 顔由来の画像がセッションより長く残ることはない。"""
     pipeline = _pipeline(FakeLandmarker(points=SPREAD_POINTS))
     pipeline.request_capture()
     pipeline.process(_rgb())

@@ -61,7 +61,7 @@ def test_points_on_the_border_are_clamped_instead_of_wrapping() -> None:
     assert painted.shape == (4, 4, 3)
     assert np.all(painted[0, 0] == 255)
     assert np.all(painted[3, 3] == 255)
-    # A clamped brush must not bleed across to the opposite corners.
+    # クランプされた描画が、反対側の隅までにじみ出してはならない。
     assert np.all(painted[0, 3] == 0)
     assert np.all(painted[3, 0] == 0)
 
@@ -119,7 +119,7 @@ def test_default_midline_is_thick_and_visually_distinct_from_landmarks() -> None
 
 
 def test_the_deviation_overlay_draws_both_layers_and_leaves_the_source_alone() -> None:
-    """§8.6.2/FR-034: measured and symmetrized points, plus a segment between."""
+    """§8.6.2/FR-034: 実測点と対称化点、そしてその間を結ぶ線分。"""
     image = np.zeros((40, 40, 3), dtype=np.uint8)
     measured = np.array([[10.0, 10.0], [30.0, 10.0]], dtype=np.float64)
     symmetrized = np.array([[14.0, 10.0], [26.0, 10.0]], dtype=np.float64)
@@ -135,14 +135,14 @@ def test_the_deviation_overlay_draws_both_layers_and_leaves_the_source_alone() -
         radius=0,
     )
 
-    assert np.array_equal(image, np.zeros((40, 40, 3), dtype=np.uint8))  # pure
-    assert tuple(painted[10, 10]) == (255, 0, 0)  # measured
-    assert tuple(painted[10, 14]) == (0, 255, 0)  # symmetrized
-    assert tuple(painted[10, 12]) == (0, 0, 255)  # the deviation segment
+    assert np.array_equal(image, np.zeros((40, 40, 3), dtype=np.uint8))  # 純色
+    assert tuple(painted[10, 10]) == (255, 0, 0)  # 実測
+    assert tuple(painted[10, 14]) == (0, 255, 0)  # 対称化
+    assert tuple(painted[10, 12]) == (0, 0, 255)  # ズレの線分
 
 
 def test_the_deviation_overlay_skips_points_with_no_correspondence() -> None:
-    """Only symmetrized indices are drawn; the rest were never folded."""
+    """描かれるのは対称化した index だけである。残りは一度も折り返していない。"""
     image = np.zeros((40, 40, 3), dtype=np.uint8)
     measured = np.array([[10.0, 10.0], [30.0, 30.0]], dtype=np.float64)
     symmetrized = measured.copy()

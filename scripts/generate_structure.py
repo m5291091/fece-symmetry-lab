@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the compact repository tree embedded in STRUCTURE.md."""
+"""STRUCTURE.md に埋め込む、簡潔な repository ツリーを生成する。"""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ _TreeNode = dict[str, Any]
 
 
 def select_repository_paths(paths: list[str]) -> list[str]:
-    """Return sorted, safe, non-generated repository-relative paths."""
+    """整列済みで安全な、生成物を除く repository 相対 path を返す。"""
     selected: set[str] = set()
     for raw_path in paths:
         normalized = raw_path.replace("\\", "/").removeprefix("./")
@@ -53,7 +53,7 @@ def select_repository_paths(paths: list[str]) -> list[str]:
 
 
 def existing_repository_paths(paths: list[str], repository_root: Path) -> list[str]:
-    """Exclude tracked paths deleted in the current working tree."""
+    """現在の作業ツリーで削除された、追跡済み path を除外する。"""
     return [path for path in select_repository_paths(paths) if (repository_root / path).is_file()]
 
 
@@ -117,7 +117,7 @@ def _render_node(
 
 
 def render_tree(paths: list[str]) -> str:
-    """Render a bounded-depth Markdown tree suitable for AI context."""
+    """AI の文脈に適した、深さを制限した Markdown ツリーを描画する。"""
     output = ["face-symmetry-lab/"]
     _render_node(_build_tree(paths), depth=0, indent="", output=output)
     if len(output) > MAX_GENERATED_LINES:
@@ -129,7 +129,7 @@ def render_tree(paths: list[str]) -> str:
 
 
 def replace_generated_tree(document: str, generated_tree: str) -> str:
-    """Replace only the generated block and preserve the curated index."""
+    """生成ブロックだけを置き換え、手で整備した索引はそのまま残す。"""
     if document.count(BEGIN_MARKER) != 1 or document.count(END_MARKER) != 1:
         raise ValueError("STRUCTURE.md must contain exactly one marker pair")
     before, remainder = document.split(BEGIN_MARKER, maxsplit=1)
@@ -142,7 +142,7 @@ def repository_paths(
     *,
     include_untracked: bool = False,
 ) -> list[str]:
-    """Read the tracked, non-ignored Git file set without walking caches."""
+    """cache を走査せずに、追跡済みかつ ignore されていない Git のファイル集合を読む。"""
     command = ["git", "ls-files", "--cached", "-z"]
     if include_untracked:
         command = [

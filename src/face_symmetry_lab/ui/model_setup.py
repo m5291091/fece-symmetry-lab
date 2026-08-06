@@ -1,8 +1,8 @@
-"""Manifest-verified model readiness shared by the UI sections.
+"""UI の各セクションが共有する、manifest 検証済みモデルの準備状態。
 
-Resolves pinned landmark and demographic assets, reports their verification
-status, and tells the user how to prepare them. It never downloads anything:
-preparation is an explicit `scripts/bootstrap_models.py` run (FR-002, §10.6).
+固定された landmark asset と年齢・性別 asset を解決し、その検証状態を報告し、
+準備方法を利用者へ示す。取得は一切行わない。準備は
+`scripts/bootstrap_models.py` の明示的な実行である（FR-002, §10.6）。
 """
 
 from __future__ import annotations
@@ -38,17 +38,17 @@ CONVERT_DEMOGRAPHIC_COMMAND = "uv run --script scripts/convert_demographic_model
 
 
 def landmark_asset() -> ModelAsset:
-    """Return the pinned Face Landmarker entry from the manifest."""
+    """manifest から、固定された Face Landmarker の項目を返す。"""
     return find_asset(load_manifest(), LANDMARK_ASSET_NAME)
 
 
 def segmenter_asset() -> ModelAsset:
-    """Return the pinned Image Segmenter entry from the manifest."""
+    """manifest から、固定された Image Segmenter の項目を返す。"""
     return find_asset(load_manifest(), SEGMENTER_ASSET_NAME)
 
 
 def demographic_assets() -> tuple[ModelAsset, ModelAsset]:
-    """Return the pinned XML and BIN entries after validating pair metadata."""
+    """対になるメタデータを検証したうえで、固定された XML と BIN の項目を返す。"""
     assets = load_manifest()
     xml_asset = find_asset(assets, DEMOGRAPHIC_XML_ASSET_NAME)
     bin_asset = find_asset(assets, DEMOGRAPHIC_BIN_ASSET_NAME)
@@ -60,7 +60,7 @@ def demographic_assets() -> tuple[ModelAsset, ModelAsset]:
 
 
 def demographic_asset() -> DerivedModelAsset:
-    """Return the derived ONNX entry after checking its source provenance."""
+    """元 asset の由来を確認したうえで、派生 ONNX の項目を返す。"""
     xml_asset, bin_asset = demographic_assets()
     onnx_asset = find_derived_asset(load_derived_assets(), DEMOGRAPHIC_ONNX_ASSET_NAME)
     if onnx_asset.source_assets != (xml_asset.name, bin_asset.name):
@@ -71,7 +71,7 @@ def demographic_asset() -> DerivedModelAsset:
 
 
 def configured_landmarker_path() -> Path:
-    """Resolve the local asset path. The env var wins over the models directory."""
+    """ローカル asset の path を解決する。環境変数が models ディレクトリに優先する。"""
     configured = os.environ.get(LANDMARKER_PATH_ENV_VAR)
     if configured:
         return Path(configured).expanduser()
@@ -79,14 +79,14 @@ def configured_landmarker_path() -> Path:
 
 
 def configured_demographic_path() -> Path:
-    """Resolve the derived ONNX path; local overrides still require its hash."""
+    """派生 ONNX の path を解決する。ローカル指定でも hash 一致は必須である。"""
     asset = demographic_asset()
     configured = os.environ.get(DEMOGRAPHIC_ONNX_PATH_ENV_VAR)
     return Path(configured).expanduser() if configured else DEFAULT_MODELS_DIR / asset.filename
 
 
 def configured_segmenter_path() -> Path:
-    """Resolve the local asset path. The env var wins over the models directory."""
+    """ローカル asset の path を解決する。環境変数が models ディレクトリに優先する。"""
     configured = os.environ.get(SEGMENTER_PATH_ENV_VAR)
     if configured:
         return Path(configured).expanduser()
@@ -94,17 +94,17 @@ def configured_segmenter_path() -> Path:
 
 
 def landmarker_status(path: Path) -> InstallStatus:
-    """Compare the file at ``path`` against the pinned sha256."""
+    """``path`` にあるファイルを、固定された sha256 と照合する。"""
     return asset_status(path, landmark_asset())
 
 
 def demographic_model_status(onnx_path: Path) -> InstallStatus:
-    """Require the derived ONNX to match the pinned manifest before inference."""
+    """推論の前に、派生 ONNX が固定 manifest と一致することを要求する。"""
     return asset_status(onnx_path, demographic_asset())
 
 
 def segmenter_status(path: Path) -> InstallStatus:
-    """Compare the file at ``path`` against the pinned sha256."""
+    """``path`` にあるファイルを、固定された sha256 と照合する。"""
     return asset_status(path, segmenter_asset())
 
 
@@ -121,7 +121,7 @@ def _render_missing(path: Path, asset: ModelAsset) -> None:
 
 
 def resolve_ready_landmarker() -> Path | None:
-    """Render the model status and return the path only when it is verified."""
+    """モデルの状態を描画し、検証できた場合にのみ path を返す。"""
     try:
         asset = landmark_asset()
     except ModelStoreError as error:
@@ -147,7 +147,7 @@ def resolve_ready_landmarker() -> Path | None:
 
 
 def resolve_ready_demographic() -> tuple[Path, str] | None:
-    """Render status and return only a verified derived ONNX path."""
+    """状態を描画し、検証済みの派生 ONNX の path だけを返す。"""
     try:
         xml_asset, bin_asset = demographic_assets()
         onnx_asset = demographic_asset()

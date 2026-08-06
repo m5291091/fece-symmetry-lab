@@ -1,1 +1,1 @@
-"""Adapters for local model runtimes and external I/O."""
+"""ローカルのモデル runtime と外部 I/O のための adapter。"""

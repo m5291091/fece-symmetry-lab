@@ -1,8 +1,8 @@
-"""Still-image landmark use case.
+"""静止画のランドマーク use case。
 
-Stateless by definition (§8.7): no EMA, no history, no timestamp. Multi-face
-and no-face inputs return an un-annotated preview so the UI can never present
-one face's landmarks as "the" result.
+定義上まったく状態を持たない（§8.7）。EMA も履歴も timestamp も無い。複数顔や
+顔なしの入力に対しては注記の無いプレビューを返す。UI が 1 人分のランドマークを
+「その」結果として提示できないようにするためである。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from face_symmetry_lab.domain.overlay import (
 
 @dataclass(frozen=True, slots=True)
 class StillImageLandmarks:
-    """One still-image detection and the preview to render for it."""
+    """静止画 1 枚の検出結果と、それを表示するためのプレビュー。"""
 
     frame: LandmarkFrame
     preview: NDArray[np.uint8]
@@ -46,7 +46,7 @@ def detect_still_image_landmarks(
     show_midline: bool = False,
     midline_indices: tuple[int, ...] = (),
 ) -> StillImageLandmarks:
-    """Detect landmarks in one image and return an annotated copy."""
+    """画像 1 枚のランドマークを検出し、注記を描き込んだ複製を返す。"""
     frame = provider.detect(rgb_image)
     preview = draw_landmark_points(rgb_image, frame, color=color, radius=radius)
     if show_midline:
@@ -58,13 +58,13 @@ def detect_still_image_landmarks(
     return StillImageLandmarks(frame=frame, preview=preview)
 
 
-#: A still image cannot build a stability streak, so one valid frame is enough.
+#: 静止画では安定性の連続数を作れないので、有効なフレーム 1 枚で十分である。
 STILL_IMAGE_THRESHOLDS = QualityThresholds(valid_frames_to_ok=1)
 
 
 @dataclass(frozen=True, slots=True)
 class StillImageAnalysis:
-    """Landmarks plus the symmetry outcome for one uploaded photo."""
+    """アップロードされた写真 1 枚の、ランドマークと左右差の結果。"""
 
     landmarks: StillImageLandmarks
     outcome: AnalysisOutcome
@@ -84,7 +84,7 @@ def analyze_still_image(
     radius: int = DEFAULT_POINT_RADIUS,
     show_midline: bool = True,
 ) -> StillImageAnalysis:
-    """Detect, draw, and score one photo. Stateless: no smoothing is applied."""
+    """写真 1 枚を検出・描画・採点する。状態を持たず、平滑化は適用しない。"""
     landmarks = detect_still_image_landmarks(
         provider,
         rgb_image,
