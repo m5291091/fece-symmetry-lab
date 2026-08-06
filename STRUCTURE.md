@@ -14,9 +14,14 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
+| 映像へ重ねる HUD の資産と組み立て | `src/face_symmetry_lab/ui/hud.py` |
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
+| 解析周期と表示キャッシュ TTL | `src/face_symmetry_lab/application/analysis_cadence.py` |
+| 表示専用の合成（描画・背景置換・表示キャッシュ） | `src/face_symmetry_lab/application/preview_compositor.py` |
+| 一発取り込みバッファ | `src/face_symmetry_lab/application/frame_capture.py` |
+| 年齢・性別 worker との中継役 | `src/face_symmetry_lab/application/demographic_relay.py` |
 | 自動調整の判断ロジック | `src/face_symmetry_lab/application/auto_tune_controller.py` |
 | Realtime age/gender worker | `src/face_symmetry_lab/application/demographic_worker.py` |
 | Session history / export records | `src/face_symmetry_lab/application/session.py` |
@@ -72,6 +77,10 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
+| 解析周期・表示 TTL | `application/analysis_cadence.py` | `tests/application/test_analysis_cadence.py` | NFR-006, §1.2(17), §14.3d |
+| 表示専用の合成 | `application/preview_compositor.py` | `tests/application/test_preview_compositor.py` | FR-013, FR-027, FR-028, §14.3b |
+| 一発取り込みバッファ | `application/frame_capture.py` | `tests/application/test_frame_capture.py` | FR-034, §10.4, §14.3g |
+| 年齢・性別の中継役 | `application/demographic_relay.py` | `tests/application/test_demographic_relay.py` | FR-022〜024, §14.3 |
 | 自動調整の判断ロジック（cadence・表示のみ） | `application/auto_tune_controller.py` | `tests/application/test_auto_tune_controller.py` | FR-029, FR-030, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | 年齢・性別の独立worker | `application/demographic_worker.py` | `tests/application/test_demographic_worker.py` | FR-022〜024, §14.3 |
 | Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
@@ -97,6 +106,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
 | Camera composition（対称化キャプチャUIを含む） | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, FR-034, NFR-009 |
+| 映像へ重ねる HUD の資産 | `ui/hud.py` | `tests/ui/test_hud.py` | FR-013, FR-032, §5.2, §14.3e |
 | 位置誘導メッセージ | `ui/guidance.py` | `tests/ui/test_guidance.py` | FR-031, AC-GUIDE-01 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Streamlit flow | `ui/app.py` | future UI / E2E tests | AC-FLOW-01, AC-AGE-02 |
@@ -111,7 +121,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `2448333c4829227c8b9dd164674e9ef8168f1b7b5181f5463472595635b485e5`_
+_File-list SHA-256: `63092742821c76a79783cb908c2dc4ef1e56139172fc9921b436dfbca57dcd91`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -135,6 +145,7 @@ face-symmetry-lab/
     - `mediapipe-selfie-segmenter.md`
     - `openvino-age-gender-retail-0013.md`
     - `symmetry-2d-v1.md`
+  - `beauty-page-plan.md`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
@@ -157,13 +168,13 @@ face-symmetry-lab/
         - … (3 files)
       - … (1 files)
     - `application/`
-      - … (11 files)
+      - … (15 files)
     - `domain/`
       - … (17 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (8 files)
+      - … (9 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -178,10 +189,14 @@ face-symmetry-lab/
     - `test_session_exporter.py`
     - `test_tracking_zoom_landmarker.py`
   - `application/`
+    - `test_analysis_cadence.py`
     - `test_analyzer.py`
     - `test_auto_tune_controller.py`
+    - `test_demographic_relay.py`
     - `test_demographic_worker.py`
+    - `test_frame_capture.py`
     - `test_image_input.py`
+    - `test_preview_compositor.py`
     - `test_quality.py`
     - `test_realtime.py`
     - `test_session.py`
@@ -224,6 +239,7 @@ face-symmetry-lab/
     - `test_app.py`
     - `test_camera.py`
     - `test_guidance.py`
+    - `test_hud.py`
     - `test_model_setup.py`
     - `test_scores.py`
   - `__init__.py`

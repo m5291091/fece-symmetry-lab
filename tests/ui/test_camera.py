@@ -1,9 +1,14 @@
-import json
+"""カメラ画面の合成に対するテスト。
+
+映像フレームの受け渡し、取り込み配線、§5.1 のレイアウト、そして HUD を
+「どこから呼ぶか」という配線を検証する。HUD が browser へ送る資産そのもの
+（CSS・実行時 JS・payload の中身）は `test_hud.py` が受け持つ。
+"""
+
 from fractions import Fraction
 
 import av
 import numpy as np
-import pytest
 from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
@@ -11,24 +16,19 @@ from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_frame
 from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
-from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
+from face_symmetry_lab.domain.models import AnalysisState, Status
 from face_symmetry_lab.ui.camera import (
-    _HUD_PLACEMENTS,
-    _HUD_POSITION_OPTIONS,
     FULLSCREEN_STATE_KEY,
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
     PANEL_LAYOUT_STATE_KEY,
     SYMMETRIZATION_STATE_KEY,
-    _hud_html,
-    _hud_payload,
     build_video_frame_callback,
 )
-from face_symmetry_lab.ui.scores import GENDER_LABELS, format_symmetry
 
 
 class StubLandmarker:
-    """Reports one face, so geometry gets drawn (FR-013)."""
+    """顔を 1 つ報告し、幾何が描画されるようにする（FR-013）。"""
 
     def __init__(self, face_count: int = 1) -> None:
         self.sizes: list[tuple[int, int]] = []
@@ -73,7 +73,7 @@ class StubAnalyzer:
 
 
 class BlackoutSegmenter:
-    """Reports everything as background, so compositing visibly changes pixels."""
+    """すべてを背景として報告し、合成が画素を目に見えて変えるようにする。"""
 
     def segment(self, rgb_image: np.ndarray, *, timestamp_ms: int) -> np.ndarray:
         height, width = rgb_image.shape[:2]
@@ -101,7 +101,7 @@ def test_media_constraints_request_video_only() -> None:
 
 
 def test_callback_draws_geometry_onto_the_returned_frame() -> None:
-    """FR-013: landmarks and the midline are the only things drawn."""
+    """FR-013: 描くのはランドマークと正中線だけである。"""
     pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analyzer=StubAnalyzer())  # type: ignore[arg-type]
     callback = build_video_frame_callback(pipeline)
     source = _source_frame(value=0)
@@ -113,8 +113,8 @@ def test_callback_draws_geometry_onto_the_returned_frame() -> None:
 
 
 def test_callback_returns_the_source_frame_when_there_is_nothing_to_draw() -> None:
-    """With no face detected there is no geometry, so the frame that arrived
-    is handed straight back — no pixel change and no re-encode."""
+    """顔が検出されなければ描く幾何も無いので、届いたフレームをそのまま返す。
+    画素も変わらず、再エンコードも起きない。"""
     pipeline = RealtimeLandmarkPipeline(
         landmarker=StubLandmarker(face_count=0),  # type: ignore[arg-type]
         analyzer=StubAnalyzer(),  # type: ignore[arg-type]
@@ -128,7 +128,7 @@ def test_callback_returns_the_source_frame_when_there_is_nothing_to_draw() -> No
 
 
 def test_callback_still_feeds_every_frame_to_the_pipeline() -> None:
-    """Pass-through display must not mean pass-through analysis."""
+    """表示が素通しでも、解析まで素通しになってはならない。"""
     landmarker = StubLandmarker()
     callback = build_video_frame_callback(RealtimeLandmarkPipeline(landmarker=landmarker))
 
@@ -149,7 +149,7 @@ def test_analysis_still_reaches_the_snapshot_the_side_panel_reads() -> None:
 
 
 def test_background_replacement_still_produces_a_new_frame_with_timing_intact() -> None:
-    """The one case that legitimately rewrites pixels keeps pts/time_base."""
+    """画素を正当に書き換える唯一の経路でも pts/time_base は保たれる。"""
     pipeline = RealtimeLandmarkPipeline(
         landmarker=StubLandmarker(face_count=0),  # type: ignore[arg-type]
         segmenter=BlackoutSegmenter(),  # type: ignore[arg-type]
@@ -164,7 +164,7 @@ def test_background_replacement_still_produces_a_new_frame_with_timing_intact() 
     assert (result.width, result.height) == (64, 48)
     assert result.pts == source.pts
     assert result.time_base == source.time_base
-    assert result.to_ndarray(format="rgb24").max() == 0  # fully replaced
+    assert result.to_ndarray(format="rgb24").max() == 0  # 完全に置き換わっている
 
 
 def test_callback_never_raises_when_the_pipeline_fails() -> None:
@@ -180,7 +180,7 @@ def test_callback_never_raises_when_the_pipeline_fails() -> None:
 
 
 def test_worker_thread_callback_never_touches_streamlit_state() -> None:
-    """§14.3: the WebRTC callback runs off-thread and must not call `st.*`."""
+    """§14.3: WebRTC のコールバックは別スレッドで動くため `st.*` を呼べない。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
@@ -191,10 +191,10 @@ def test_worker_thread_callback_never_touches_streamlit_state() -> None:
     assert "st." not in source
 
 
-# --- FR-034 capture wiring ---------------------------------------------------
+# --- FR-034 取り込みの配線 ----------------------------------------------------
 
 
-#: A symmetric face, spread out enough to fold about a real midline.
+#: 対称な顔。実際の正中線で折り返せる程度に広がりを持たせてある。
 _SYMMETRIZABLE_POINTS = (
     (0.35, 0.40),
     (0.45, 0.40),
@@ -215,7 +215,7 @@ _SYMMETRIZABLE_POINTS = (
 
 
 class SymmetrizableLandmarker(StubLandmarker):
-    """Reports a face whose landmarks the versioned map can actually fold."""
+    """版付きの対応表で実際に折り返せるランドマークを持つ顔を報告する。"""
 
     def detect_video(
         self,
@@ -260,7 +260,7 @@ def _panel_script() -> str:
 
 
 def test_the_capture_button_arms_the_pipeline_without_stopping_it() -> None:
-    """FR-034: requesting a capture must not disturb the running analysis."""
+    """FR-034: 取り込みの要求が、走っている解析を乱してはならない。"""
     pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analysis_interval_ms=0)
     at = AppTest.from_string(_panel_script())
     at.session_state["pipeline"] = pipeline
@@ -273,7 +273,7 @@ def test_the_capture_button_arms_the_pipeline_without_stopping_it() -> None:
 
 
 def test_a_captured_frame_becomes_a_symmetrization_view() -> None:
-    """§14.3g: the held frame is consumed once and rendered as a still result."""
+    """§14.3g: 保持したフレームは一度だけ消費され、静止結果として描画される。"""
     pipeline = RealtimeLandmarkPipeline(
         landmarker=SymmetrizableLandmarker(),
         analyzer=FrameAnalyzer(config=_symmetrizable_config()),
@@ -290,12 +290,12 @@ def test_a_captured_frame_becomes_a_symmetrization_view() -> None:
     view = at.session_state[SYMMETRIZATION_STATE_KEY]
     assert not isinstance(view, str)
     assert view.symmetrized_point_count > 0
-    assert pipeline.take_capture() is None  # consumed exactly once
+    assert pipeline.take_capture() is None  # ちょうど 1 回で消費される
 
 
 def test_a_capture_that_cannot_be_symmetrized_is_reported_not_retried() -> None:
     pipeline = RealtimeLandmarkPipeline(
-        landmarker=StubLandmarker(),  # a single degenerate point cannot fold
+        landmarker=StubLandmarker(),  # 退化した 1 点だけでは折り返せない
         analyzer=FrameAnalyzer(config=_symmetrizable_config()),
         analysis_interval_ms=0,
     )
@@ -308,11 +308,11 @@ def test_a_capture_that_cannot_be_symmetrized_is_reported_not_retried() -> None:
 
     assert not at.exception
     assert isinstance(at.session_state[SYMMETRIZATION_STATE_KEY], str)
-    assert at.warning  # surfaced to the user rather than silently dropped
+    assert at.warning  # 黙って捨てず利用者へ提示する
 
 
 def test_clearing_the_view_also_drops_the_held_frame() -> None:
-    """§10.4: no face-derived image is kept after the user clears the panel."""
+    """§10.4: 利用者がパネルを消した後、顔由来の画像を一切残さない。"""
     pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analysis_interval_ms=0)
     pipeline.request_capture()
 
@@ -327,7 +327,7 @@ def test_clearing_the_view_also_drops_the_held_frame() -> None:
 
 
 def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
-    """§5.3/§10.7: a symmetrized face is a construction, not an ideal."""
+    """§5.3/§10.7: 対称化した顔は構成物であって規範ではない。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
@@ -338,15 +338,14 @@ def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
         assert forbidden not in source
 
 
-# --- §5.1 layout: the video stays at the top ---------------------------------
+# --- §5.1 レイアウト: 映像を最上部に保つ --------------------------------------
 
 
 def test_the_layout_split_reads_the_stored_preset_without_rendering_a_widget() -> None:
-    """§5.1: the video is placed before the control that moves its panel.
+    """§5.1: そのパネルを動かす操作子よりも前に映像を配置する。
 
-    The split has to be decided at the top of the section, while the radio
-    that changes it lives in the settings tab below — so this reads the
-    preference rather than drawing the widget.
+    分割はセクション先頭で決める必要がある一方、それを変えるラジオは下の設定
+    タブにある。そのため widget を描かず設定値だけを読む。
     """
     at = AppTest.from_string(
         "import streamlit as st\n"
@@ -359,7 +358,7 @@ def test_the_layout_split_reads_the_stored_preset_without_rendering_a_widget() -
 
     assert not at.exception
     assert at.session_state["stacked"] is True
-    assert not at.radio  # the preset widget belongs to the settings tab
+    assert not at.radio  # プリセットの widget は設定タブに属する
 
 
 def test_the_default_layout_places_the_headline_beside_the_video() -> None:
@@ -376,7 +375,7 @@ def test_the_default_layout_places_the_headline_beside_the_video() -> None:
 
 
 def test_the_panel_layout_control_writes_the_key_the_split_reads() -> None:
-    """A change in the settings tab has to reach the split on the next run."""
+    """設定タブでの変更が、次の実行で分割処理へ届かなければならない。"""
     at = AppTest.from_string(
         "from face_symmetry_lab.ui.camera import _render_panel_layout_control\n"
         "_render_panel_layout_control()\n"
@@ -392,11 +391,11 @@ def test_the_panel_layout_control_writes_the_key_the_split_reads() -> None:
 
 
 def test_the_camera_section_puts_the_video_above_every_tab() -> None:
-    """§5.1/AC-LAYOUT-01: settings must not push the preview off screen.
+    """§5.1/AC-LAYOUT-01: 設定が表示を画面外へ押し出してはならない。
 
-    Asserted on the composition itself, since `webrtc_streamer` needs a live
-    browser: the streamer call has to precede `st.tabs`, and the display
-    controls must not be rendered before it.
+    `webrtc_streamer` は実ブラウザを必要とするため、合成そのものに対して
+    検証する。streamer の呼び出しは `st.tabs` より前で、表示設定はそれより
+    先に描画されてはならない。
     """
     import inspect
 
@@ -410,7 +409,7 @@ def test_the_camera_section_puts_the_video_above_every_tab() -> None:
 
 
 def test_every_below_video_panel_lives_in_a_tab() -> None:
-    """One panel at a time keeps the page short enough to keep the video visible."""
+    """一度に 1 つだけ表示することで、映像が見えたままの高さに収める。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
@@ -427,211 +426,17 @@ def test_every_below_video_panel_lives_in_a_tab() -> None:
         assert source.index(panel) > tabs_at, panel
 
 
-# --- §14.3e HUD --------------------------------------------------------------
-
-
-def _estimate(age: float = 34.0, female: float = 0.8):
-    from datetime import UTC, datetime
-
-    from face_symmetry_lab.domain.demographics import build_demographic_estimate
-
-    return build_demographic_estimate(
-        estimated_age_years=age,
-        gender_probabilities=(female, 1.0 - female),
-        model_version="age-gender/test",
-        model_sha256="a" * 64,
-        observed_at=datetime(2026, 8, 3, tzinfo=UTC),
-    )
-
-
-def _payload(**overrides):
-    settings = {
-        "overall": 0.0215,
-        "estimate": None,
-        "show_demographics": False,
-        "gate": "#2E9E5B",
-        "position": "左上",
-    }
-    settings.update(overrides)
-    return _hud_payload(**settings)
-
-
-def test_the_hud_reuses_the_shared_symmetry_formatter() -> None:
-    """No second way of rendering the same measurement (§14.3e)."""
-    assert _payload()["symmetry"] == format_symmetry(0.0215)
-
-
-def test_a_missing_symmetry_value_renders_as_a_dash() -> None:
-    """NFR-013: absent is absent, never a stale or zeroed number."""
-    assert _payload(overall=None)["symmetry"] == "—"
-    assert "—" in _hud_html(**{**_payload_kwargs(), "overall": None})
-
-
-def test_the_hud_carries_the_experimental_label() -> None:
-    assert _payload()["label"] == "対称度（実験値）"
-
-
-def test_the_hud_avoids_any_value_judgement() -> None:
-    """§5.3: reorienting the number must not turn the HUD into a verdict."""
-    rendered = repr(_payload(estimate=_estimate(), show_demographics=True))
-
-    for forbidden in ("良い", "悪い", "改善", "スコアが高い", "優秀", "理想"):
-        assert forbidden not in rendered
-
-
-def test_the_hud_shows_age_and_gender_through_the_shared_labels() -> None:
-    demo = _payload(estimate=_estimate(age=34.4), show_demographics=True)["demo"]
-
-    assert "参考年齢 34 歳" in demo
-    assert GENDER_LABELS[GenderLabel.FEMALE] in demo
-
-
-def test_the_demographic_row_is_dropped_rather_than_dashed_when_absent() -> None:
-    """FR-024: an empty row would imply the feature is running and failing."""
-    payload = _payload(estimate=None, show_demographics=True)
-
-    assert payload["demo"] == ""
-    assert payload["symmetry"] == format_symmetry(0.0215)
-
-
-def test_the_demographic_row_is_dropped_when_the_user_turned_it_off() -> None:
-    assert _payload(estimate=_estimate(), show_demographics=False)["demo"] == ""
-
-
-def test_the_hud_carries_the_gate_colour() -> None:
-    assert _payload(gate="#D9A21B")["gate"] == "#D9A21B"
-
-
-@pytest.mark.parametrize("position", ["左上", "右上", "左下", "右下"])
-def test_every_visible_preset_marks_the_hud_visible(position: str) -> None:
-    assert _payload(position=position)["visible"] is True
-
-
-def test_the_hidden_preset_marks_the_hud_invisible() -> None:
-    assert _payload(position="非表示")["visible"] is False
-
-
-def test_an_unknown_preset_hides_rather_than_floating_loose() -> None:
-    assert _payload(position="斜め上")["visible"] is False
-
-
-def test_every_hud_preset_is_accepted_by_the_payload() -> None:
-    for position in _HUD_POSITION_OPTIONS:
-        assert isinstance(_hud_payload(**{**_payload_kwargs(), "position": position}), dict)
-
-
-def test_the_hud_preset_list_offers_a_hidden_option_and_defaults_to_top_left() -> None:
-    assert _HUD_POSITION_OPTIONS[0] == "左上"
-    assert _HUD_POSITION_OPTIONS[-1] == "非表示"
-    assert set(_HUD_PLACEMENTS) == set(_HUD_POSITION_OPTIONS) - {"非表示"}
-
-
-# --- §14.3e: the 5 Hz payload stays cheap ------------------------------------
-
-
-def test_the_payload_element_is_hidden_and_carries_only_json() -> None:
-    """This is the only thing crossing the wire at 5 Hz."""
-    html = _hud_html(**_payload_kwargs())
-
-    assert "display:none" in html
-    assert html.count("<div") == 1
-    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
-    assert payload["symmetry"] == format_symmetry(0.0215)
-
-
-def test_the_five_hertz_update_never_ships_css() -> None:
-    """Re-sending a stylesheet at 5 Hz forced a whole-document style recalc,
-    which is what made the video stutter. It must not come back."""
-    html = _hud_html(**_payload_kwargs())
-
-    assert "<style" not in html
-    assert "backdrop-filter" not in html
-    assert "transition" not in html
-
-
-def test_the_hud_never_uses_backdrop_filter_anywhere() -> None:
-    """Blurring the backdrop re-runs on every *video* frame, not every update."""
-    from face_symmetry_lab.ui import camera
-
-    assert "backdrop-filter" not in camera._HUD_STYLESHEET
-    assert "backdrop-filter" not in camera._hud_bridge_script(fullscreen=False, position="左上")
+# --- §14.3e HUD の配線 --------------------------------------------------------
 
 
 def test_the_hud_is_published_from_the_existing_headline_fragment() -> None:
-    """A third 5 Hz fragment was pure overhead; the payload rides along."""
+    """3 つ目の 5 Hz fragment は純粋な負荷だった。payload は相乗りさせる。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
 
     assert not hasattr(camera, "_render_hud_fragment")
-    assert "_render_hud_payload" in inspect.getsource(camera._render_headline_fragment)
-
-
-# --- §14.3e: the bridge ------------------------------------------------------
-
-
-def _bridge(**overrides) -> str:
-    settings = {"fullscreen": False, "position": "左上"}
-    settings.update(overrides)
-    from face_symmetry_lab.ui import camera
-
-    return camera._hud_bridge_script(**settings)
-
-
-def test_the_hud_shell_stays_click_through_except_for_its_grip() -> None:
-    """It sits over the video's own STOP control."""
-    from face_symmetry_lab.ui import camera
-
-    css = camera._HUD_STYLESHEET
-
-    assert "#fsl-hud {" in css
-    assert "pointer-events: none;" in css
-    # The grip is the one interactive part, so the HUD can be dragged.
-    assert "#fsl-hud-grip" in css
-    assert "pointer-events: auto;" in css
-
-
-def test_the_hud_keeps_digit_widths_stable_at_five_hertz() -> None:
-    from face_symmetry_lab.ui import camera
-
-    assert "tabular-nums" in camera._HUD_STYLESHEET
-
-
-def test_the_bridge_makes_the_hud_draggable() -> None:
-    script = _bridge()
-
-    assert "pointerdown" in script
-    assert "pointermove" in script
-    assert "setPointerCapture" in script
-
-
-def test_the_bridge_attaches_the_hud_to_the_page_body() -> None:
-    """On <body> nothing can clip it and `position: fixed` behaves — which is
-    why the HUD used to vanish in fullscreen."""
-    from face_symmetry_lab.ui import camera
-
-    assert "document.body.appendChild(hud)" in camera._HUD_RUNTIME_JS
-
-
-def test_fullscreen_targets_the_video_through_a_stable_hook() -> None:
-    """The old `data-testid` selector matched nothing, so only the HUD moved."""
-    from face_symmetry_lab.ui import camera
-
-    assert ".st-key-camera_preview_frame iframe" in camera._HUD_STYLESHEET
-    assert "data-testid" not in camera._HUD_STYLESHEET
-
-
-def test_the_bridge_toggles_fullscreen_by_class_rather_than_reinjecting_css() -> None:
-    assert "classList.toggle('fsl-fullscreen', !!CFG.fullscreen)" in _bridge()
-    assert "fsl-fullscreen" in _bridge(fullscreen=True)
-
-
-def test_the_bridge_replaces_its_timer_instead_of_stacking_them() -> None:
-    """The script re-runs on every full rerun; timers must not accumulate."""
-    script = _bridge()
-
-    assert "clearInterval" in script
-    assert script.count("setInterval") == 1
+    assert "render_hud_payload(" in inspect.getsource(camera._render_headline_fragment)
 
 
 def test_the_bridge_is_installed_once_and_never_inside_a_fragment() -> None:
@@ -641,22 +446,12 @@ def test_the_bridge_is_installed_once_and_never_inside_a_fragment() -> None:
 
     source = inspect.getsource(camera.render_camera_section)
 
-    assert "_render_hud_bridge(" in source
-    assert "_render_hud_bridge" not in inspect.getsource(camera._render_headline_fragment)
-
-
-def test_the_bridge_creates_the_hud_only_once() -> None:
-    script = _bridge()
-
-    assert "if (!hud)" in script
-    assert "getElementById('fsl-hud')" in script
-
-
-# --- §14.3e fullscreen -------------------------------------------------------
+    assert "render_hud_bridge(" in source
+    assert "render_hud_bridge" not in inspect.getsource(camera._render_headline_fragment)
 
 
 def test_the_frame_path_is_untouched_by_the_overlay_work() -> None:
-    """The overlay is a DOM layer: the callback must stay Streamlit-free."""
+    """オーバーレイは DOM の層である。コールバックは Streamlit に触れないまま保つ。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
@@ -668,29 +463,11 @@ def test_the_frame_path_is_untouched_by_the_overlay_work() -> None:
     assert "fullscreen" not in source.lower()
 
 
-def test_no_streamlit_internal_testid_is_relied_on_any_more() -> None:
-    """The `data-testid` hook silently broke fullscreen; nothing selects on it.
-
-    Checked against the CSS and the bridge script — the strings the browser
-    actually evaluates — so the comment explaining why it was dropped does not
-    trip this.
-    """
-    from face_symmetry_lab.ui import camera
-
-    assert "data-testid" not in camera._HUD_STYLESHEET
-    assert "data-testid" not in camera._hud_bridge_script(fullscreen=True, position="左上")
-
-
-def test_the_overlay_css_avoids_structural_selectors() -> None:
-    """§5.2's exception requires stable hooks, not `nth-child` positions."""
-    from face_symmetry_lab.ui import camera
-
-    assert "nth-child" not in camera._HUD_STYLESHEET
-    assert "nth-of-type" not in camera._HUD_STYLESHEET
+# --- §14.3e 全画面 ------------------------------------------------------------
 
 
 def test_the_exit_control_clears_the_fullscreen_toggle() -> None:
-    """Without this the tabs are unreachable and the user is stuck."""
+    """これが無いとタブへ到達できず、利用者が戻れなくなる。"""
     at = AppTest.from_string(
         "import streamlit as st\n"
         "from face_symmetry_lab.ui.camera import FULLSCREEN_STATE_KEY, _exit_fullscreen\n"
@@ -706,7 +483,7 @@ def test_the_exit_control_clears_the_fullscreen_toggle() -> None:
 
 
 def test_fullscreen_skips_the_tab_block_entirely() -> None:
-    """No point repainting 5 Hz fragments behind a full-viewport video."""
+    """全画面の映像の背後で 5 Hz の fragment を再描画する意味は無い。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
@@ -716,71 +493,22 @@ def test_fullscreen_skips_the_tab_block_entirely() -> None:
     assert source.index("if fullscreen:") < source.index("st.tabs(")
 
 
-def _payload_kwargs() -> dict:
-    return {
-        "overall": 0.0215,
-        "estimate": None,
-        "show_demographics": False,
-        "gate": "#2E9E5B",
-        "position": "左上",
-    }
+def test_the_exit_control_is_labelled_as_an_exit() -> None:
+    import inspect
 
-
-def test_the_runtime_is_injected_into_the_page_realm_not_the_component_iframe() -> None:
-    """A timer defined in the component iframe dies when Streamlit replaces it,
-    leaving the HUD frozen while its timer id survives on the parent."""
-    script = _bridge()
-
-    assert "createElement('script')" in script
-    assert "fsl-hud-runtime" in script
-    assert "doc.head.appendChild(runtime)" in script
-
-
-def test_the_runtime_owns_the_timer_and_the_element() -> None:
     from face_symmetry_lab.ui import camera
 
-    runtime = camera._HUD_RUNTIME_JS
-
-    assert "setInterval(sync" in runtime
-    assert "document.body.appendChild(hud)" in runtime
-    assert "clearInterval(window.__fslHudTimer)" in runtime
+    assert "✕ 全画面を終了" in inspect.getsource(camera.render_camera_section)
 
 
-def test_fullscreen_stacks_above_streamlit_chrome() -> None:
-    """Streamlit's sidebar/header sit at z-index 999990+, so anything lower is
-    covered — which hid a third of the video and the whole HUD."""
-    from face_symmetry_lab.ui import camera
-
-    css = camera._HUD_STYLESHEET
-
-    assert "body.fsl-fullscreen .stSidebar" in css
-    assert "body.fsl-fullscreen .stAppHeader" in css
-    assert "display: none !important;" in css
-    # video < HUD < exit control, all above Streamlit's own chrome.
-    for value in (1000000, 1000050, 1000060):
-        assert f"z-index: {value}" in css
-
-
-# --- fullscreen chrome: controls, native buttons, HUD lifetime ---------------
-
-
-def test_the_exit_control_shrinks_to_its_button() -> None:
-    """Streamlit's vertical block is width:100%, so a `right`-anchored fixed
-    container stretched across the viewport and dropped the button off the
-    left edge (measured at x=-24)."""
-    from face_symmetry_lab.ui import camera
-
-    css = camera._HUD_STYLESHEET
-
-    assert "width: auto !important;" in css
-    assert "left: auto;" in css
+# --- 映像コンポーネントの属性 -------------------------------------------------
 
 
 def test_the_native_video_controls_are_switched_off_through_the_component_api() -> None:
-    """Native fullscreen promotes the <video> into the browser's top layer,
-    above every page element — the HUD included — so it defeats the overlay.
-    `controls: False` removes the whole bar; the attributes close the routes
-    that survive a hidden bar (context menu, remote playback)."""
+    """ネイティブの全画面は <video> をブラウザの top layer へ昇格させ、HUD を
+    含むあらゆるページ要素の上へ出すため、オーバーレイを無効化してしまう。
+    `controls: False` がバーごと取り除き、各属性は隠したバーでも残る経路
+    （コンテキストメニュー、リモート再生）を塞ぐ。"""
     from face_symmetry_lab.ui.camera import VIDEO_HTML_ATTRS
 
     assert VIDEO_HTML_ATTRS["controls"] is False
@@ -794,128 +522,3 @@ def test_the_video_attributes_reach_the_component() -> None:
     from face_symmetry_lab.ui import camera
 
     assert "video_html_attrs=VIDEO_HTML_ATTRS" in inspect.getsource(camera.render_camera_section)
-
-
-def test_fullscreen_makes_the_picture_fill_the_frame() -> None:
-    """The component sizes the video `width: 100%` with *auto* height, so in a
-    full-height frame it stayed a letterbox strip at the top."""
-    from face_symmetry_lab.ui import camera
-
-    css = camera._VIDEO_CHROME_CSS
-
-    assert "html.fsl-fs video" in css
-    assert "height: 100vh !important;" in css
-    assert "object-fit: contain;" in css
-
-
-def test_fullscreen_centres_and_enlarges_the_start_stop_row() -> None:
-    """At the far-left edge of a fullscreen viewport the row was hard to hit."""
-    from face_symmetry_lab.ui import camera
-
-    css = camera._VIDEO_CHROME_CSS
-
-    assert "html.fsl-fs .fsl-controls" in css
-    assert "width: max-content;" in css  # centred by auto margins, not transform
-    assert "bottom: 44px;" in css
-    assert "min-height: 48px" in css
-
-
-def test_the_control_row_is_tagged_from_js_rather_than_by_a_vendor_class() -> None:
-    """The component ships only emotion/MUI hashes, so the app adds its own."""
-    from face_symmetry_lab.ui import camera
-
-    assert "classList.add('fsl-controls')" in camera._HUD_RUNTIME_JS
-
-
-def test_the_hud_disappears_when_the_camera_is_not_running() -> None:
-    """The panel that publishes the payload only renders while playing, so a
-    missing payload must hide the HUD instead of freezing its last values."""
-    from face_symmetry_lab.ui import camera
-
-    runtime = camera._HUD_RUNTIME_JS
-    branch = runtime[runtime.index("if (!holder)") : runtime.index("if (hint) hint.hidden = true;")]
-
-    assert "hudEl.hidden = true;" in branch
-    assert "return;" in branch
-
-
-def test_the_component_iframe_access_is_guarded() -> None:
-    """A cross-origin or not-yet-ready iframe must not throw on every tick."""
-    from face_symmetry_lab.ui import camera
-
-    runtime = camera._HUD_RUNTIME_JS
-
-    assert "try { vdoc = host && host.contentDocument; } catch (err) { return; }" in runtime
-
-
-def test_the_fullscreen_band_states_where_you_are_and_how_to_leave() -> None:
-    """Fullscreen folds the page chrome away, so this is the only text left."""
-    from face_symmetry_lab.ui import camera
-
-    assert "全画面表示中" in camera._FULLSCREEN_BADGE
-    assert "終了" in camera._FULLSCREEN_BADGE
-    assert "START" in camera._FULLSCREEN_HINT
-    assert "F11" in camera._FULLSCREEN_HINT
-
-
-def test_the_band_is_built_and_driven_by_the_runtime() -> None:
-    from face_symmetry_lab.ui import camera
-
-    runtime = camera._HUD_RUNTIME_JS
-
-    assert "fsl-chrome" in runtime
-    assert "chrome.hidden = !CFG.fullscreen;" in runtime
-    # The hint is guidance for starting, so it goes once the camera is running.
-    assert "hint.hidden = true;" in runtime
-    assert "hint.hidden = false;" in runtime
-
-
-def test_the_band_never_intercepts_clicks() -> None:
-    from face_symmetry_lab.ui import camera
-
-    css = camera._HUD_STYLESHEET
-    band = css[css.index("#fsl-chrome {") : css.index("#fsl-chrome[hidden]")]
-
-    assert "pointer-events: none;" in band
-
-
-def test_the_exit_control_is_labelled_as_an_exit() -> None:
-    import inspect
-
-    from face_symmetry_lab.ui import camera
-
-    assert "✕ 全画面を終了" in inspect.getsource(camera.render_camera_section)
-
-
-# --- the containing-block trap ----------------------------------------------
-
-
-def test_the_control_row_is_centred_without_a_transform() -> None:
-    """A transform makes an element a containing block for *fixed* descendants.
-
-    When the row turned out to wrap the <video>, that pinned the picture to
-    the pill instead of the viewport and it ended up in the corner.
-    """
-    from face_symmetry_lab.ui import camera
-
-    css = camera._VIDEO_CHROME_CSS
-    rule = css[css.index("html.fsl-fs .fsl-controls {") :]
-    rule = rule[: rule.index("}")]
-
-    assert "translateX" not in rule
-    assert "transform: none;" in rule
-    assert "margin-left: auto;" in rule and "margin-right: auto;" in rule
-
-
-def test_the_control_row_never_wraps_the_video() -> None:
-    """Tagging stops at the last wrapper that still excludes the video, and a
-    wrapper that grows to contain one (the tree changes once playing) is
-    untagged again."""
-    from face_symmetry_lab.ui import camera
-
-    runtime = camera._HUD_RUNTIME_JS
-
-    assert "if (n.querySelector('video')) break;" in runtime
-    assert "if (stale[s].querySelector('video')) stale[s].classList.remove('fsl-controls');" in (
-        runtime
-    )

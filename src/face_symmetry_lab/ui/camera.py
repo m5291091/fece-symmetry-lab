@@ -1,14 +1,15 @@
-"""Streamlit + streamlit-webrtc composition for realtime landmark preview.
+"""リアルタイムのランドマーク表示を構成する Streamlit + streamlit-webrtc の層。
 
-Composition only: this module wires the MediaPipe adapter to the realtime use
-case and renders the result. No geometry, no inference, and no model download
-happens here. The WebRTC callback runs on a worker thread and therefore never
-touches Streamlit state (§14.3).
+構成だけを担う。MediaPipe adapter をリアルタイム use case へ配線し、結果を描画
+するのみで、幾何計算も推論もモデル取得もここでは行わない。WebRTC のコールバック
+は worker thread で動くため、Streamlit の状態には決して触れない（§14.3）。
+
+映像へ重ねる HUD は `ui.hud` が持つ。ブラウザ側資産（CSS・JS）は変更理由が
+この構成層とは異なるためである。
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
@@ -16,7 +17,6 @@ from typing import Any, Final
 import av
 import numpy as np
 import streamlit as st
-import streamlit.components.v1 as components
 from streamlit.delta_generator import DeltaGenerator
 from streamlit_webrtc import WebRtcMode, WebRtcStreamerContext, webrtc_streamer
 
@@ -43,7 +43,6 @@ from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
-    PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
@@ -51,11 +50,16 @@ from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
-from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.guidance import guidance_message
+from face_symmetry_lab.ui.hud import (
+    HUD_POSITION_OPTIONS,
+    HUD_POSITION_STATE_KEY,
+    render_hud_bridge,
+    render_hud_payload,
+)
 from face_symmetry_lab.ui.model_setup import (
     configured_demographic_path,
     configured_segmenter_path,
@@ -68,10 +72,7 @@ from face_symmetry_lab.ui.model_setup import (
 )
 from face_symmetry_lab.ui.scores import (
     DEVIATION_UNIT_CAPTION,
-    GENDER_LABELS,
     format_distance,
-    format_symmetry,
-    gate_color,
     render_demographic_estimate,
     render_headline_metrics,
     render_score_details,
@@ -85,7 +86,7 @@ _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.WHITE: "白",
 }
 
-#: FR-032: display-only placement preset. Does not affect scoring.
+#: FR-032: 表示位置のプリセット。採点には一切影響しない。
 _PANEL_LAYOUT_RIGHT: Final[str] = "動画の右"
 _PANEL_LAYOUT_LEFT: Final[str] = "動画の左"
 _PANEL_LAYOUT_BELOW: Final[str] = "動画の下"
@@ -96,132 +97,23 @@ _PANEL_LAYOUT_OPTIONS: Final[tuple[str, ...]] = (
 )
 PANEL_LAYOUT_STATE_KEY = "camera_panel_layout"
 
-#: §14.3e/FR-032: the HUD moves by preset, like the panel layout, rather than
-#: by dragging. "非表示" draws nothing at all.
-_HUD_HIDDEN: Final[str] = "非表示"
-_HUD_POSITION_OPTIONS: Final[tuple[str, ...]] = ("左上", "右上", "左下", "右下", _HUD_HIDDEN)
-HUD_POSITION_STATE_KEY = "camera_hud_position"
 FULLSCREEN_STATE_KEY = "camera_fullscreen"
 DEMOGRAPHIC_ENABLED_STATE_KEY = "camera_demographic_enabled"
 
-#: Where each preset pins the HUD inside its positioning context.
-_HUD_PLACEMENTS: Final[dict[str, str]] = {
-    "左上": "top:24px; left:24px;",
-    "右上": "top:24px; right:24px;",
-    "左下": "bottom:24px; left:24px;",
-    "右下": "bottom:24px; right:24px;",
-}
-
-#: §14.3e: the fullscreen band's wording. Kept as constants so the copy can be
-#: asserted on — this is the only text shown while the page chrome is folded
-#: away, so it has to carry both the state and the way out.
-_FULLSCREEN_BADGE: Final[str] = "全画面表示中 — 右上の「終了」で戻ります"
-_FULLSCREEN_HINT: Final[str] = (
-    "画面下の「START」を押すとカメラが始まります。"
-    "ブラウザの F11 と併用すると、タブやアドレスバーも隠れた完全な全画面になります。"
-)
-
-#: The hidden element the 5 Hz fragment writes and the bridge script reads.
-#: Values travel as JSON text: Streamlit sanitizes markdown HTML, and text
-#: content is the one thing guaranteed to survive it intact.
-_HUD_DATA_ELEMENT_ID: Final[str] = "fsl-hud-data"
-
-#: §5.2 exception (§14.3e): the stylesheet is installed **once** by the bridge
-#: and thereafter only toggled by a class, never re-injected. Re-sending a
-#: `<style>` at 5 Hz forces a whole-document style recalculation five times a
-#: second, which is what made the video stutter; the same goes for
-#: `backdrop-filter`, which re-blurs the region behind the HUD on *every*
-#: video frame rather than on every update. Neither is used any more.
-#:
-#: The video is found through `.st-key-camera_preview_frame iframe` — the hook
-#: `st.container(key=...)` emits — so nothing here depends on a Streamlit
-#: internal `data-testid`, which is what silently broke fullscreen before.
-_HUD_STYLESHEET: Final[str] = """
-#fsl-hud {
-    position: fixed; z-index: 1000050;
-    background: rgba(0,0,0,.72); color: #fff;
-    padding: 16px 22px; border-radius: 16px;
-    border: 2px solid #6B6B6B;
-    pointer-events: none;
-    font-variant-numeric: tabular-nums;
-    font-family: inherit;
-}
-#fsl-hud[hidden] { display: none; }
-/* Fullscreen state band: says where you are and, before START, what to do.
-   Centred so it cannot collide with the HUD (top-left) or the exit control
-   (top-right). */
-#fsl-chrome {
-    position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
-    z-index: 1000055; pointer-events: none;
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-    font-family: inherit; text-align: center;
-}
-#fsl-chrome[hidden] { display: none; }
-#fsl-chrome-badge {
-    background: rgba(0,0,0,.72); color: #fff;
-    border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
-    padding: 6px 16px; font-size: .8rem; letter-spacing: .04em;
-}
-#fsl-chrome-hint {
-    background: rgba(0,0,0,.72); color: #fff;
-    border-radius: 12px; padding: 10px 18px; font-size: 1rem; max-width: 70vw;
-}
-#fsl-chrome-hint[hidden] { display: none; }
-#fsl-hud-value { font-size: 3.2rem; font-weight: 700; line-height: 1; }
-#fsl-hud-label { font-size: .85rem; opacity: .75; margin-bottom: 10px; }
-#fsl-hud-demo { font-size: 1.1rem; }
-#fsl-hud-demo:empty { display: none; }
-/* Only the grip takes pointer events, so the video's own STOP button stays
-   clickable everywhere else under the HUD. */
-#fsl-hud-grip {
-    pointer-events: auto; cursor: move; touch-action: none;
-    margin-top: 10px; font-size: .75rem; opacity: .55;
-    border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px;
-}
-.st-key-camera_preview_frame { position: relative; border-width: 3px !important; }
-/* `width: auto` is load-bearing: Streamlit's vertical block is width:100%,
-   so a fixed container anchored by `right` would stretch across the viewport
-   and drop its button off the left edge. */
-.st-key-fsl_exit_fullscreen {
-    position: fixed; top: 24px; right: 24px; left: auto; z-index: 1000060;
-    width: auto !important; min-width: 0 !important;
-}
-.st-key-fsl_exit_fullscreen button {
-    background: rgba(0,0,0,.72) !important;
-    color: #fff !important;
-    border: 2px solid rgba(255,255,255,.65) !important;
-    padding: 10px 22px !important;
-    font-size: 1rem !important;
-}
-body.fsl-fullscreen .st-key-camera_preview_frame iframe {
-    position: fixed; inset: 0;
-    width: 100vw !important; height: 100vh !important;
-    z-index: 1000000; background: #000;
-}
-/* Streamlit's own chrome sits at z-index 999990/999991 — far above any value
-   a page-level overlay would naturally pick — so fullscreen has to stack
-   above it and fold the chrome away, or the sidebar covers a third of the
-   video and the header hides the HUD. `.stSidebar`/`.stAppHeader` are
-   Streamlit's semantic class names, not emotion hashes, so they are stable
-   hooks (§5.2). Verified against streamlit 1.59.1. */
-body.fsl-fullscreen .stSidebar,
-body.fsl-fullscreen .stAppHeader { display: none !important; }
-"""
-
-#: §10.2 forbids STUN and TURN. An empty ICE list keeps the session on loopback.
+#: §10.2 は STUN と TURN を禁じている。ICE を空にすることでセッションを
+#: loopback へ閉じ込める。
 LOOPBACK_RTC_CONFIGURATION: Final[dict[str, list[object]]] = {"iceServers": []}
 
-#: streamlit-webrtc's own `video_html_attrs`, which is the supported way to
-#: configure the `<video>` — far steadier than reaching into the component's
-#: iframe. Two things matter here:
+#: streamlit-webrtc 自身の `video_html_attrs`。`<video>` を設定する公式の手段
+#: であり、コンポーネントの iframe へ手を伸ばすより安定している。要点は 2 つ。
 #:
-#: * `controls: False` removes the native control bar entirely. Its fullscreen
-#:   button promoted the `<video>` into the browser's top layer, above every
-#:   page element including the HUD; and play/pause/seek mean nothing for a
-#:   live preview. START/STOP are the component's own buttons, not these.
-#: * The default is `style={"width": "100%"}` with *auto* height, which is why
-#:   the picture stayed letterboxed at the top of a full-height frame instead
-#:   of filling the screen. Fullscreen sizing is finished in `_VIDEO_CHROME_CSS`.
+#: * `controls: False` はネイティブのコントロールバーごと取り除く。その全画面
+#:   ボタンは `<video>` をブラウザの top layer へ昇格させ、HUD を含むあらゆる
+#:   ページ要素の上へ出してしまう。再生・一時停止・シークもライブ表示には
+#:   意味がない。START/STOP はコンポーネント自身のボタンであり、これらとは別。
+#: * 既定は `style={"width": "100%"}` かつ高さ auto である。これが全高フレーム
+#:   の上端で映像が帯状のままになる原因だった。全画面時のサイズ調整は
+#:   `ui.hud` の `VIDEO_CHROME_CSS` で仕上げる。
 VIDEO_HTML_ATTRS: Final[dict[str, object]] = {
     "autoPlay": True,
     "controls": False,
@@ -232,7 +124,7 @@ VIDEO_HTML_ATTRS: Final[dict[str, object]] = {
     "style": {"width": "100%", "background": "#000"},
 }
 
-#: FR-005: video only. No audio permission is requested.
+#: FR-005: 映像のみ。音声の許可は要求しない。
 MEDIA_STREAM_CONSTRAINTS: Final[dict[str, object]] = {
     "video": {"width": {"ideal": 1280}, "height": {"ideal": 720}},
     "audio": False,
@@ -241,16 +133,12 @@ MEDIA_STREAM_CONSTRAINTS: Final[dict[str, object]] = {
 WEBRTC_KEY = "face-landmark-preview"
 PIPELINE_STATE_KEY = "landmark_pipeline"
 
-#: FR-034: the symmetrization view for the frame the user captured. Session
-#: state only — never written to disk, and cleared with the analysis (§10.4).
+#: FR-034: 利用者が取り込んだフレームの対称化ビュー。セッション状態のみに置き、
+#: ディスクへ書かず、解析のリセットと一緒に消す（§10.4）。
 SYMMETRIZATION_STATE_KEY = "symmetrization_view"
 
-#: §11 NFR-003: the result panel refreshes at 4-5 Hz, independent of video fps.
+#: §11 NFR-003: 結果パネルは映像の fps とは独立に 4〜5 Hz で更新する。
 STATUS_REFRESH_INTERVAL = "200ms"
-
-#: The bridge's own DOM-only refresh. Same cadence as the panels, but it
-#: costs no server round trip — it just re-reads the hidden payload.
-_HUD_REFRESH_MS: Final[int] = 200
 
 _STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
     TrackingStatus.NO_FACE: "顔が見つかりません。カメラの正面に入ってください。",
@@ -263,14 +151,13 @@ VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
 
 def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrameCallback:
-    """Adapt the realtime pipeline to the streamlit-webrtc frame callback.
+    """リアルタイム pipeline を streamlit-webrtc のフレームコールバックへ適合させる。
 
-    FR-013: the pipeline draws only landmarks and the midline (~1ms per
-    frame). The numeric panel is deliberately not drawn here — rendering it
-    cost 18.6ms of the 33ms available per frame at 720p/30fps and was what
-    surfaced as lag — so the numbers live in the panel beside the video
-    instead. When nothing changed the pixels, the frame that arrived is
-    handed straight back with no re-encode.
+    FR-013: pipeline が描くのはランドマークと正中線だけである（1 フレーム
+    あたり約 1ms）。数値パネルを意図的にここへ描かないのは、720p/30fps で 1
+    フレームに使える 33ms のうち 18.6ms を消費し、それが遅延として表面化した
+    ためである。数値は映像の隣のパネルが受け持つ。画素が変わらなかった場合は、
+    届いたフレームを再エンコードせずそのまま返す。
     """
 
     def callback(frame: av.VideoFrame) -> av.VideoFrame:
@@ -278,11 +165,11 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
             rgb = np.asarray(frame.to_ndarray(format="rgb24"), dtype=np.uint8)
             painted, _ = pipeline.process_with_analysis(rgb)
             if painted is rgb:
-                # Untouched: skip re-encoding it into a new VideoFrame.
+                # 無変更なので、新しい VideoFrame への再エンコードを省く。
                 return frame
             replaced = av.VideoFrame.from_ndarray(painted, format="rgb24")
         except Exception:
-            # Returning the source frame keeps the preview alive (NFR-017).
+            # 元のフレームを返すことで表示を生かし続ける（NFR-017）。
             return frame
         if frame.pts is not None:
             replaced.pts = frame.pts
@@ -294,7 +181,7 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
 
 
 def _build_segmenter() -> MediaPipeSegmenter | None:
-    """Background replacement is optional (§14.3b): never blocks the camera."""
+    """背景置換は任意機能である（§14.3b）。カメラを止める理由にはしない。"""
     path = configured_segmenter_path()
     if segmenter_status(path) is not InstallStatus.READY:
         return None
@@ -305,10 +192,10 @@ def _build_segmenter() -> MediaPipeSegmenter | None:
 
 
 def _build_demographic_worker() -> DemographicWorker | None:
-    """Age/gender inference is optional (§14.3, FR-024): never blocks the camera.
+    """年齢・性別推論は任意機能である（§14.3, FR-024）。カメラを止める理由にはしない。
 
-    Uses the silent status query rather than `resolve_ready_demographic`,
-    which renders its own status block — a builder must not paint UI.
+    `resolve_ready_demographic` ではなく状態を黙って問い合わせる関数を使う。
+    前者は自前の状態ブロックを描画するが、builder が UI を描いてはならない。
     """
     path = configured_demographic_path()
     if demographic_model_status(path) is not InstallStatus.READY:
@@ -329,10 +216,9 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         model_path=model_path,
         model_version=landmark_asset().version,
     )
-    # §14.3a: a PC webcam frames a face far smaller than a phone selfie, so
-    # crop-and-enlarge around the last detection before handing it to
-    # MediaPipe. The wrapper still reports `model_version`/`model_sha256`
-    # via the underlying `landmarker` reference below.
+    # §14.3a: PC の webcam はスマートフォンの自撮りよりも顔が小さく写るため、
+    # 直前の検出位置を中心に切り出して拡大してから MediaPipe へ渡す。wrapper は
+    # 下の `landmarker` 参照を通じて `model_version`/`model_sha256` を報告する。
     zoomed_landmarker = TrackingZoomLandmarker(landmarker)
     analyzer = FrameAnalyzer(config=config)
     recorder = SessionRecorder(
@@ -353,16 +239,16 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         demographic_worker=_build_demographic_worker(),
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
         midline_indices=config.midline_indices,
-        # §15.2: Advanced settings have no manual UI. brightness/zoom/cadence
-        # are AI auto-tuned unconditionally (FR-029, FR-030); quality-gate
-        # thresholds stay fixed at their constructor defaults above and are
-        # never exposed for editing. Nothing auto-tuned touches scoring.
+        # §15.2: Advanced 設定に手動 UI は無い。明るさ・ズーム・cadence は無条件
+        # に AI が自動調整し（FR-029, FR-030）、品質ゲートの閾値は上のコンストラクタ
+        # 既定値のまま固定して編集手段を設けない。自動調整の対象はいずれも採点に
+        # 影響しない。
         auto_tune_enabled=True,
     )
 
 
 def _session_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
-    """Keep one landmark runtime per Streamlit session (§13.4)."""
+    """1 つの Streamlit セッションにつき landmark runtime を 1 つに保つ（§13.4）。"""
     pipeline = st.session_state.get(PIPELINE_STATE_KEY)
     if not isinstance(pipeline, RealtimeLandmarkPipeline):
         pipeline = _build_pipeline(model_path)
@@ -371,7 +257,7 @@ def _session_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
 
 
 def release_session_pipeline() -> None:
-    """Close the landmark runtime and drop the session reference (FR-004, §10.4)."""
+    """landmark runtime を閉じ、セッションからの参照も落とす（FR-004, §10.4）。"""
     pipeline = st.session_state.pop(PIPELINE_STATE_KEY, None)
     st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
     if isinstance(pipeline, RealtimeLandmarkPipeline):
@@ -380,13 +266,12 @@ def release_session_pipeline() -> None:
 
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
 def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
-    """Poll the immutable snapshot at 5 Hz for the headline block only.
+    """不変 snapshot を 5 Hz で読み、見出しブロックだけを描画する。
 
-    FR-013/FR-032: total score, gender, age, tracking status and position
-    guidance stay beside the video (placement follows the panel_layout
-    preset) so the user can watch them without looking away from the
-    camera. Everything else is detail and lives in `_render_detail_fragment`
-    instead, always full width below (§5.1, AC-LAYOUT-01).
+    FR-013/FR-032: 総合スコア・参考性別・参考年齢・追跡状態・位置誘導は映像の
+    隣（配置はプリセットに従う）へ置き、カメラから目を離さずに読めるようにする。
+    それ以外は詳細であり、常に画面幅いっぱいで下に出る `_render_detail_fragment`
+    が受け持つ（§5.1, AC-LAYOUT-01）。
     """
     snapshot = pipeline.snapshot()
     with st.container(border=True):
@@ -407,363 +292,19 @@ def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
         if snapshot.needs_recovery:
             st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
 
-    # §14.3e: rides along in this existing 5 Hz fragment rather than adding a
-    # third one. The element is hidden and found by id, so where it lands in
-    # the DOM does not matter.
-    _render_hud_payload(snapshot)
-
-
-def _hud_payload(
-    *,
-    overall: float | None,
-    estimate: DemographicEstimate | None,
-    show_demographics: bool,
-    gate: str,
-    position: str,
-) -> dict[str, object]:
-    """The §14.3e HUD's values. Pure: no Streamlit, no markup, no side effects.
-
-    Every number goes through the same formatter the panels use
-    (`format_symmetry`, `GENDER_LABELS`), so the HUD can never drift into a
-    second way of rendering the same measurement. Missing values read `—`
-    rather than a stale or zeroed number (NFR-013).
-
-    ``demo`` is empty — not `—` — when there is no estimate or the user turned
-    the demographic panel off, since an empty row would imply the feature is
-    running and failing (FR-024).
-    """
-    visible = position != _HUD_HIDDEN and position in _HUD_PLACEMENTS
-    demo = ""
-    if show_demographics and estimate is not None:
-        age = f"{estimate.estimated_age_years:.0f} 歳"
-        # `DemographicEstimate` validates that `gender` is the argmax of
-        # `gender_probabilities`, so this is that label without re-deriving it.
-        gender = GENDER_LABELS.get(estimate.gender, "—")
-        demo = f"参考年齢 {age} · 参考性別 {gender}"
-    return {
-        "visible": visible,
-        "symmetry": format_symmetry(overall),
-        "label": "対称度（実験値）",
-        "demo": demo,
-        "gate": gate,
-    }
-
-
-def _hud_html(
-    *,
-    overall: float | None,
-    estimate: DemographicEstimate | None,
-    show_demographics: bool,
-    gate: str,
-    position: str,
-) -> str:
-    """Serialize the payload into the hidden element the bridge reads.
-
-    Deliberately tiny and unstyled. This is the only thing that crosses the
-    wire at 5 Hz, and the previous version — a fully styled block plus a
-    `<style>` tag — is what made the video stutter: every repaint forced the
-    browser into a whole-document style recalculation.
-    """
-    payload = _hud_payload(
-        overall=overall,
-        estimate=estimate,
-        show_demographics=show_demographics,
-        gate=gate,
-        position=position,
+    # §14.3e: 3 つ目の fragment を新設せず、既存の 5 Hz fragment へ相乗りさせる。
+    # 対象要素は隠されていて id で参照されるため、DOM 上のどこへ出ても構わない。
+    render_hud_payload(
+        snapshot,
+        show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
     )
-    encoded = json.dumps(payload, ensure_ascii=False)
-    return f'<div id="{_HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
-
-
-def _render_hud_payload(snapshot: PipelineSnapshot) -> None:
-    """Publish one snapshot's HUD values (called from the 5 Hz headline fragment).
-
-    Hidden and located by id, so its position in the DOM does not matter —
-    which is what lets it ride along in an existing fragment instead of
-    needing a third one of its own.
-    """
-    analysis = snapshot.analysis
-    overall = analysis.overall_distance_smooth if analysis is not None else None
-    if overall is None and analysis is not None and analysis.symmetry is not None:
-        overall = analysis.symmetry.overall
-
-    st.markdown(
-        _hud_html(
-            overall=overall,
-            estimate=snapshot.demographic_estimate,
-            show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
-            gate=gate_color(analysis.state if analysis is not None else None),
-            position=st.session_state.get(HUD_POSITION_STATE_KEY, _HUD_POSITION_OPTIONS[0]),
-        ),
-        unsafe_allow_html=True,
-    )
-
-
-#: Injected into the WebRTC component's own iframe (same-origin), because a
-#: stylesheet in the page does not reach inside it. Only two jobs remain now
-#: that `VIDEO_HTML_ATTRS` handles the native controls:
-#:
-#: * Make the picture actually fill the screen. The component sizes the video
-#:   `width: 100%` with auto height, so in a full-height frame it stays a
-#:   letterbox strip at the top — pinning it to the frame's viewport is what
-#:   fills the screen.
-#: * Move the START/STOP row off the far-left edge, where it is genuinely hard
-#:   to hit once the frame spans the display. `.fsl-controls` is a class this
-#:   app puts on the row from JS, since the component only ships emotion/MUI
-#:   hashes and offers no stable hook of its own (§5.2).
-_VIDEO_CHROME_CSS: Final[str] = """
-html.fsl-fs, html.fsl-fs body { margin: 0; background: #000; }
-html.fsl-fs video {
-    position: fixed; inset: 0;
-    width: 100vw !important; height: 100vh !important;
-    object-fit: contain; background: #000;
-}
-/* Centred with auto margins rather than `translateX(-50%)`: a transform makes
-   the element a containing block for *fixed* descendants, and when the row
-   turned out to wrap the <video>, the picture was positioned against this pill
-   instead of the viewport — which is how it ended up tucked into the corner. */
-html.fsl-fs .fsl-controls {
-    position: fixed; left: 0; right: 0; bottom: 44px;
-    width: max-content; margin-left: auto; margin-right: auto;
-    transform: none;
-    z-index: 20; gap: 16px;
-    background: rgba(0,0,0,.66); padding: 12px 20px; border-radius: 999px;
-    box-shadow: 0 6px 24px rgba(0,0,0,.45);
-}
-html.fsl-fs .fsl-controls button {
-    font-size: 1.05rem !important;
-    padding: 10px 26px !important;
-    min-height: 48px;
-}
-"""
-
-
-#: The HUD runtime, injected into the *page's* JS realm (not the component
-#: iframe's). Streamlit tears the component iframe down on every rerun, and a
-#: timer callback defined inside it dies with its realm while the timer id
-#: lives on — which is exactly how the HUD ended up frozen. Running here, the
-#: element, its drag handlers and its timer all outlive any rerun.
-_HUD_RUNTIME_JS: Final[str] = """
-(function () {
-  var CFG = window.__fslHudConfig;
-  if (!CFG) return;
-
-  var sheet = document.getElementById('fsl-hud-style');
-  if (!sheet) {
-    sheet = document.createElement('style');
-    sheet.id = 'fsl-hud-style';
-    document.head.appendChild(sheet);
-  }
-  if (sheet.textContent !== CFG.css) sheet.textContent = CFG.css;
-
-  var chrome = document.getElementById('fsl-chrome');
-  if (!chrome) {
-    chrome = document.createElement('div');
-    chrome.id = 'fsl-chrome';
-    chrome.innerHTML =
-      '<span id="fsl-chrome-badge"></span>' +
-      '<span id="fsl-chrome-hint"></span>';
-    document.body.appendChild(chrome);
-  }
-  document.getElementById('fsl-chrome-badge').textContent = CFG.badgeText;
-  document.getElementById('fsl-chrome-hint').textContent = CFG.hintText;
-  chrome.hidden = !CFG.fullscreen;
-
-  var hud = document.getElementById('fsl-hud');
-  if (!hud) {
-    hud = document.createElement('div');
-    hud.id = 'fsl-hud';
-    hud.hidden = true;
-    hud.innerHTML =
-      '<div id="fsl-hud-value"></div>' +
-      '<div id="fsl-hud-label"></div>' +
-      '<div id="fsl-hud-demo"></div>' +
-      '<div id="fsl-hud-grip">\u283f ドラッグで移動</div>';
-    document.body.appendChild(hud);
-
-    // Drag by the grip only, so the rest of the HUD stays click-through and
-    // the video's own STOP button underneath keeps working.
-    var grip = hud.querySelector('#fsl-hud-grip');
-    var dragging = false, offsetX = 0, offsetY = 0;
-    grip.addEventListener('pointerdown', function (event) {
-      var box = hud.getBoundingClientRect();
-      dragging = true;
-      offsetX = event.clientX - box.left;
-      offsetY = event.clientY - box.top;
-      try { grip.setPointerCapture(event.pointerId); } catch (err) {}
-      event.preventDefault();
-    });
-    grip.addEventListener('pointermove', function (event) {
-      if (!dragging) return;
-      var x = Math.max(0, event.clientX - offsetX);
-      var y = Math.max(0, event.clientY - offsetY);
-      hud.style.left = x + 'px';
-      hud.style.top = y + 'px';
-      hud.style.right = 'auto';
-      hud.style.bottom = 'auto';
-      try {
-        localStorage.setItem('fslHudPos', JSON.stringify({x: x, y: y}));
-      } catch (err) { /* private mode: the position simply is not remembered */ }
-    });
-    var stop = function (event) {
-      if (!dragging) return;
-      dragging = false;
-      try { grip.releasePointerCapture(event.pointerId); } catch (err) {}
-    };
-    grip.addEventListener('pointerup', stop);
-    grip.addEventListener('pointercancel', stop);
-  }
-
-  // Choosing a preset clears any dragged position, so the radio stays a way
-  // back to a known corner.
-  var applyAnchor = function () { hud.setAttribute('style', CFG.anchor); };
-  if (window.__fslHudPreset !== CFG.position) {
-    window.__fslHudPreset = CFG.position;
-    applyAnchor();
-    try { localStorage.removeItem('fslHudPos'); } catch (err) {}
-  } else {
-    var saved = null;
-    try { saved = JSON.parse(localStorage.getItem('fslHudPos')); } catch (err) {}
-    if (saved && typeof saved.x === 'number') {
-      hud.setAttribute('style', 'left:' + saved.x + 'px; top:' + saved.y + 'px;');
-    } else {
-      applyAnchor();
-    }
-  }
-
-  document.body.classList.toggle('fsl-fullscreen', !!CFG.fullscreen);
-
-  // One timer, replaced rather than stacked when the bridge re-runs.
-  if (window.__fslHudTimer) clearInterval(window.__fslHudTimer);
-  // The component iframe is same-origin, so its <video> and its START/STOP
-  // row can be reached. Idempotent: safe to re-run on every tick.
-  var tameVideoFrame = function () {
-    var host = document.querySelector('.st-key-camera_preview_frame iframe');
-    var vdoc = null;
-    try { vdoc = host && host.contentDocument; } catch (err) { return; }
-    if (!vdoc || !vdoc.head) return;
-    var vstyle = vdoc.getElementById('fsl-video-style');
-    if (!vstyle) {
-      vstyle = vdoc.createElement('style');
-      vstyle.id = 'fsl-video-style';
-      vdoc.head.appendChild(vstyle);
-    }
-    if (vstyle.textContent !== CFG.videoCss) vstyle.textContent = CFG.videoCss;
-    vdoc.documentElement.classList.toggle('fsl-fs', !!CFG.fullscreen);
-    // The control row must never be an ancestor of the <video>: styling it
-    // would then reposition the picture too. Walk up only as far as the last
-    // wrapper that still excludes the video, and drop the class from anything
-    // that has since grown to contain it (the tree changes once playing).
-    var stale = vdoc.querySelectorAll('.fsl-controls');
-    for (var s = 0; s < stale.length; s++) {
-      if (stale[s].querySelector('video')) stale[s].classList.remove('fsl-controls');
-    }
-    var anyButton = vdoc.querySelector('button');
-    if (anyButton) {
-      var row = null;
-      for (var n = anyButton.parentElement; n && n !== vdoc.body; n = n.parentElement) {
-        if (n.querySelector('video')) break;
-        row = n;
-      }
-      if (row && !row.classList.contains('fsl-controls')) row.classList.add('fsl-controls');
-    }
-  };
-
-  var lastGate = '';
-  var sync = function () {
-    tameVideoFrame();
-    var holder = document.getElementById(CFG.dataId);
-    var hudEl = document.getElementById('fsl-hud');
-    if (!hudEl) return;
-    // No payload means the camera is not running: the panel that publishes it
-    // only renders while playing, so the HUD must go with it rather than
-    // linger showing the last frame's numbers.
-    var hint = document.getElementById('fsl-chrome-hint');
-    if (!holder) {
-      hudEl.hidden = true;
-      if (hint) hint.hidden = false;
-      return;
-    }
-    if (hint) hint.hidden = true;
-    var data;
-    try { data = JSON.parse(holder.textContent); } catch (err) { return; }
-    hudEl.hidden = !data.visible;
-    if (!data.visible) return;
-    var valueEl = document.getElementById('fsl-hud-value');
-    var labelEl = document.getElementById('fsl-hud-label');
-    var demoEl = document.getElementById('fsl-hud-demo');
-    if (valueEl && valueEl.textContent !== data.symmetry) valueEl.textContent = data.symmetry;
-    if (labelEl && labelEl.textContent !== data.label) labelEl.textContent = data.label;
-    if (demoEl && demoEl.textContent !== data.demo) demoEl.textContent = data.demo;
-    if (data.gate !== lastGate) {
-      lastGate = data.gate;
-      hudEl.style.borderColor = data.gate;
-      var frame = document.querySelector('.st-key-camera_preview_frame');
-      if (frame) frame.style.borderColor = data.gate;
-    }
-  };
-  sync();
-  window.__fslHudTimer = setInterval(sync, CFG.intervalMs);
-})();
-"""
-
-
-def _hud_bridge_script(*, fullscreen: bool, position: str) -> str:
-    """The loader that installs `_HUD_RUNTIME_JS` into the page.
-
-    Runs inside a `components.v1.html` iframe, which is same-origin with the
-    page, so it can reach `window.parent`. It does as little as possible
-    there: publish the config, then hand the actual runtime to the parent
-    realm as a `<script>`, because anything defined in the iframe stops
-    working the moment Streamlit replaces it on the next rerun.
-
-    Attaching the HUD to the page `<body>` is also what makes it survive
-    fullscreen: on `<body>` no Streamlit container can clip it or become its
-    containing block, so `position: fixed` behaves.
-    """
-    config = json.dumps(
-        {
-            "fullscreen": fullscreen,
-            "position": position,
-            "anchor": _HUD_PLACEMENTS.get(position, ""),
-            "dataId": _HUD_DATA_ELEMENT_ID,
-            "css": _HUD_STYLESHEET,
-            "videoCss": _VIDEO_CHROME_CSS,
-            "intervalMs": _HUD_REFRESH_MS,
-            "badgeText": _FULLSCREEN_BADGE,
-            "hintText": _FULLSCREEN_HINT,
-        },
-        ensure_ascii=False,
-    )
-    runtime = json.dumps(_HUD_RUNTIME_JS)
-    return f"""
-<script>
-(function () {{
-  var win = window.parent;
-  var doc = win && win.document;
-  if (!doc || !doc.body) return;
-  win.__fslHudConfig = {config};
-  var previous = doc.getElementById('fsl-hud-runtime');
-  if (previous) previous.remove();
-  var runtime = doc.createElement('script');
-  runtime.id = 'fsl-hud-runtime';
-  runtime.textContent = {runtime};
-  doc.head.appendChild(runtime);
-}})();
-</script>
-"""
-
-
-def _render_hud_bridge(*, fullscreen: bool, position: str) -> None:
-    """Install the HUD bridge once per run (never inside a 5 Hz fragment)."""
-    components.html(_hud_bridge_script(fullscreen=fullscreen, position=position), height=0)
 
 
 def _render_headline_panel(
     pipeline: RealtimeLandmarkPipeline,
     context: WebRtcStreamerContext[Any, Any],
 ) -> None:
-    """The "ライブ解析" heading + headline block, placed per panel_layout (FR-032)."""
+    """「ライブ解析」の見出しと見出しブロック。配置は FR-032 のプリセットに従う。"""
     st.markdown("#### ライブ解析")
     if context.state.playing:
         _render_headline_fragment(pipeline)
@@ -773,11 +314,11 @@ def _render_headline_panel(
 
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
 def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
-    """Poll the immutable snapshot at 5 Hz for the full-width detail block."""
+    """不変 snapshot を 5 Hz で読み、画面幅いっぱいの詳細ブロックを描画する。"""
     snapshot = pipeline.snapshot()
     with st.container(border=True):
-        # The measured result leads; the runtime counters below are diagnostics
-        # and were burying it under frame bookkeeping the user cannot act on.
+        # 測定結果を先頭に置く。下の実行時カウンタは診断用であり、利用者が
+        # 手を打てないフレーム統計で結果を埋もれさせていた。
         if snapshot.analysis is not None:
             render_score_details(snapshot.analysis)
         else:
@@ -785,7 +326,7 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
 
         if snapshot.demographic_estimate is not None:
             st.divider()
-            # No chart: this fragment repaints at 5 Hz (§11 NFR-003).
+            # グラフは描かない。この fragment は 5 Hz で再描画される（§11 NFR-003）。
             render_demographic_estimate(
                 snapshot.demographic_estimate,
                 show_distribution=False,
@@ -803,10 +344,9 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
                 f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
                 f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
             )
-            # §14.3f: a NFR-002 diagnostic breakdown of the total above, so a
-            # slow session can be traced to a stage before considering
-            # GPU/deployment changes. segmentation/scoring only show once that
-            # stage has run.
+            # §14.3f: 上の合計を段階別に分けた NFR-002 の診断表示。遅いセッション
+            # を GPU や配備の変更を検討する前に段階まで絞り込めるようにする。
+            # 背景置換と scoring はその段階が実際に走ったときだけ出す。
             breakdown = [f"landmark {snapshot.landmark_ms:.1f} ms"]
             if snapshot.segmentation_ms > 0.0:
                 breakdown.append(f"背景置換 {snapshot.segmentation_ms:.1f} ms")
@@ -825,21 +365,21 @@ def _render_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def _clear_symmetrization(pipeline: RealtimeLandmarkPipeline) -> None:
-    """Drop the captured frame and its view together (§10.4, FR-034)."""
+    """取り込んだフレームとその表示を一緒に破棄する（§10.4, FR-034）。"""
     pipeline.clear_capture()
     st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
 
 
 def _consume_pending_capture(pipeline: RealtimeLandmarkPipeline, *, warp: bool) -> None:
-    """Turn a fulfilled capture into a view, once, off the realtime path.
+    """取り込み済みフレームを、リアルタイム経路の外で一度だけ表示用へ変換する。
 
-    The pipeline hands the frame over exactly once, so this runs the one-shot
-    symmetrization and keeps only the result. A capture that cannot be
-    symmetrized is reported rather than retried silently.
+    pipeline はフレームをちょうど 1 回だけ引き渡すので、ここで一発の対称化を
+    実行し、結果だけを保持する。対称化できなかった取り込みは、黙って再試行せず
+    利用者へ報告する。
 
-    ``warp`` requests §8.6.4's image, which rebuilds every pixel and is
-    therefore opt-in; it is read at capture time, since the raw frame is
-    consumed here and not retained afterwards (§10.4).
+    ``warp`` は §8.6.4 の画像を要求する。全画素を作り直すため任意指定とし、
+    取り込み時点の値を読む。生フレームはここで消費され、以後は保持しない
+    （§10.4）。
     """
     captured = pipeline.take_capture()
     if captured is None:
@@ -860,11 +400,10 @@ def _consume_pending_capture(pipeline: RealtimeLandmarkPipeline, *, warp: bool) 
 
 
 def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
-    """FR-034: capture one moment and show it folded about its own midline.
+    """FR-034: ある瞬間を取り込み、自身の正中線で折り返した姿を並べて示す。
 
-    Deliberately outside the 5 Hz fragments: this is a still result computed
-    once from one frame, and the live preview keeps running untouched while
-    it is displayed (§14.3g).
+    5 Hz の fragment の外に置いている。これは 1 フレームから一度だけ計算する
+    静止結果であり、表示中もライブ表示はそのまま動き続ける（§14.3g）。
     """
     st.markdown("#### 左右対称にそろえた位置との比較")
     st.caption(
@@ -873,8 +412,8 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         "どちらが正しい・望ましいという意味はありません。"
     )
 
-    # Read before the button so the toggle's current state is the one that
-    # applies to the capture it triggers.
+    # ボタンより前に読む。取り込みを起こすトグルの現在値が、その取り込みへ
+    # 適用される値と一致するようにするためである。
     warp = st.checkbox(
         "左右対称にそろえた画像も生成する（幾何変形・処理が重くなります）",
         key="camera_symmetrization_warp",
@@ -928,18 +467,18 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
             "共有先と利用目的を確認してから保存してください。"
         ),
         key_prefix="download_session",
-        # A live session accumulates records, so the count tells the user
-        # how much this download actually covers.
+        # ライブセッションは記録を積み上げるため、件数を示してこの
+        # ダウンロードが実際にどこまでを含むかを伝える。
         show_record_count=True,
     )
 
 
 def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
-    """§15.2: Advanced settings have no manual UI; show what the AI picked.
+    """§15.2: Advanced 設定に手動 UI は無い。AI が選んだ値を表示する。
 
-    Quality-gate thresholds are fixed constants and are intentionally not
-    shown here as if they were tunable (§14.3d). Nothing listed affects a
-    measured value: §8.6 left the metric with no coefficient to tune.
+    品質ゲートの閾値は固定の定数であり、調整可能であるかのようにここへ並べる
+    ことは意図的に避けている（§14.3d）。列挙するどの項目も測定値へは影響しない。
+    §8.6 の指標には調整できる係数が残っていないためである。
     """
     zoom_policy = pipeline.zoom_policy
     zoom_caption = f" · ズーム目標 {zoom_policy.target_px}px" if zoom_policy is not None else ""
@@ -955,12 +494,12 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
-    """§15.1's display-only preferences, pushed straight onto the pipeline.
+    """§15.1 の表示専用の設定を、そのまま pipeline へ書き込む。
 
-    None of these change a score (FR-027, FR-028): the midline and background
-    are drawn after analysis, and the age/gender toggle only gates a panel
-    that is already independent of the symmetry side (FR-024). Reading them
-    here and writing them through in one place keeps that claim checkable.
+    どれもスコアを変えない（FR-027, FR-028）。正中線と背景は解析の後に描かれ、
+    年齢・性別のトグルは元から左右差とは独立したパネルの表示可否を切り替える
+    だけである（FR-024）。ここで読み、1 箇所で書き込むことで、その主張を
+    検証可能な形に保つ。
     """
     midline_column, demographic_column = st.columns(2)
     with midline_column:
@@ -971,12 +510,12 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
             help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
         )
     with demographic_column:
-        # Gated on the worker this pipeline actually holds, so the toggle can
-        # never claim the feature is live while no worker exists.
+        # この pipeline が実際に保持している worker を条件にする。worker が無いのに
+        # 機能が動いていると示すことがないようにするためである。
         show_demographics = st.toggle(
             "年齢・性別の参考値を表示",
             value=True,
-            key="camera_demographic_enabled",
+            key=DEMOGRAPHIC_ENABLED_STATE_KEY,
             disabled=not pipeline.has_demographic_worker,
             help=(
                 "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
@@ -988,8 +527,8 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
     pipeline.set_midline_enabled(show_midline)
     pipeline.set_demographic_enabled(show_demographics)
 
-    # §5.4/§14.3e: the border colour is an identifier, not a verdict, and the
-    # same information stays available as text in the panel beside the video.
+    # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。同じ情報は映像の
+    # 隣のパネルにテキストとしても残している。
     st.caption(
         "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
         "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
@@ -1016,17 +555,16 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def _split_for_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
-    """Return (preview, headline) columns for the stored FR-032 preset.
+    """保存済みの FR-032 プリセットに対応する (preview, headline) の列を返す。
 
-    Reads the preference instead of rendering its widget, because §5.1 puts
-    the video at the very top while the control that changes it lives in the
-    "表示設定" tab below. The widget writes the same session-state key, so a
-    change is picked up on the rerun it triggers.
+    widget を描画せず設定値だけを読む。§5.1 は映像を最上部に置くと定めている
+    一方、それを変える操作子は下の「表示設定」タブにあるためである。widget は
+    同じセッション状態のキーへ書くので、変更はそれが起こす再実行で反映される。
 
-    Display-only, and "movable" by preset choice rather than mouse drag
-    (§14.3e). A ``None`` headline column means "stack it below the video",
-    which is the one preset that needs no column of its own. §5.1's 7:5
-    ratio holds whichever side the headline lands on.
+    表示専用であり、マウスのドラッグではなくプリセット選択で「動く」（§14.3e）。
+    headline 列が ``None`` のときは「映像の下へ積む」という意味で、これだけが
+    専用の列を必要としないプリセットである。§5.1 の 7:5 比は headline が
+    どちら側へ来ても保たれる。
     """
     panel_layout = st.session_state.get(PANEL_LAYOUT_STATE_KEY, _PANEL_LAYOUT_RIGHT)
     if panel_layout == _PANEL_LAYOUT_BELOW:
@@ -1039,10 +577,10 @@ def _split_for_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
 
 
 def _render_panel_layout_control() -> None:
-    """The FR-032 preset widget, rendered inside the "表示設定" tab.
+    """FR-032 のプリセット widget。「表示設定」タブの中で描画する。
 
-    `st.tabs` builds every tab's contents on each run, so this widget exists
-    (and keeps its value) whichever tab is on screen.
+    `st.tabs` はどのタブが画面に出ていても毎回すべてのタブの中身を構築する
+    ため、この widget は常に存在し、値も保たれる。
     """
     st.radio(
         "「ライブ解析」パネルの配置",
@@ -1053,7 +591,7 @@ def _render_panel_layout_control() -> None:
     )
     st.radio(
         "映像上の HUD の位置",
-        options=_HUD_POSITION_OPTIONS,
+        options=HUD_POSITION_OPTIONS,
         key=HUD_POSITION_STATE_KEY,
         horizontal=True,
         help="映像へ重ねる対称度・参考年齢・参考性別の位置です。映像自体は加工しません。",
@@ -1061,24 +599,24 @@ def _render_panel_layout_control() -> None:
 
 
 def _exit_fullscreen() -> None:
-    """Leave fullscreen from the pinned button.
+    """固定表示のボタンから全画面を抜ける。
 
-    A callback rather than an inline assignment: Streamlit refuses to modify
-    a widget's session-state key after that widget has been instantiated, and
-    the toggle is created earlier in the same run. `on_click` runs before the
-    next run builds it, so the write lands legally.
+    直接代入ではなくコールバックにしている。Streamlit は widget が生成された
+    後にその session state キーを書き換えることを拒み、トグルは同じ実行の
+    早い段階で作られているためである。`on_click` は次の実行が widget を作る
+    前に走るので、書き込みが正当に成立する。
     """
     st.session_state[FULLSCREEN_STATE_KEY] = False
 
 
 def _render_session_controls(pipeline: RealtimeLandmarkPipeline) -> None:
-    """Stop/reset controls, kept reachable from the main screen (§5.1)."""
+    """停止・リセットの操作子。メイン画面から到達できる位置に置く（§5.1）。"""
     st.caption("カメラ映像は映像上の `STOP` で停止します。")
     controls = st.columns(2)
     if controls[0].button("結果・履歴・平滑化をリセット", key="reset_analysis"):
         pipeline.reset_analysis()
-        # `reset_analysis` drops the captured frame; the view derived from it
-        # has to go with it, or the panel would outlive its own segment.
+        # `reset_analysis` は取り込み済みフレームを破棄する。そこから導いた
+        # 表示も一緒に消さないと、パネルが自身の区間より長く生き残ってしまう。
         st.session_state.pop(SYMMETRIZATION_STATE_KEY, None)
         st.rerun()
     if controls[1].button("推論を停止してモデルを解放", key="release_landmarker"):
@@ -1087,14 +625,13 @@ def _render_session_controls(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def render_camera_section() -> None:
-    """Render the realtime landmark preview. Call only after consent.
+    """リアルタイムのランドマーク表示を描画する。同意の後にのみ呼ぶこと。
 
-    §5.1: the video and its headline come first and stay first. Everything
-    else — settings, detail numbers, symmetrization, export — sits below in
-    tabs, so only one of them occupies height at a time and the preview
-    remains on screen instead of being pushed out of view. Tab switching is
-    display-only: it changes no measured value and does not interrupt the
-    WebRTC stream (AC-LAYOUT-01).
+    §5.1: 映像とその見出しを最初に置き、その位置を保つ。設定・詳細数値・
+    対称化・エクスポートはすべて下のタブへ入れ、一度に高さを占めるのが 1 つ
+    だけになるようにする。これにより表示が画面外へ押し出されない。タブの
+    切り替えは表示専用で、測定値を変えず WebRTC の通信も中断しない
+    （AC-LAYOUT-01）。
     """
     st.subheader("リアルタイム ランドマーク表示")
     st.caption(
@@ -1121,15 +658,15 @@ def render_camera_section() -> None:
             "ブラウザの F11 と併用すると完全な全画面になります。"
         ),
     )
-    # §5.2's overlay exception: installed once per run, never inside a
-    # fragment, so the 5 Hz update never re-sends CSS.
-    _render_hud_bridge(
+    # §5.2 のオーバーレイ例外: 1 回の実行につき一度だけ設置し、fragment の内側
+    # では決して呼ばない。これにより 5 Hz の更新が CSS を送り直すことはない。
+    render_hud_bridge(
         fullscreen=fullscreen,
-        position=st.session_state.get(HUD_POSITION_STATE_KEY, _HUD_POSITION_OPTIONS[0]),
+        position=st.session_state.get(HUD_POSITION_STATE_KEY, HUD_POSITION_OPTIONS[0]),
     )
     if fullscreen:
-        # The tabs below are not rendered while fullscreen, so this is the
-        # only way back — it has to exist before anything can cover it.
+        # 全画面中は下のタブが描画されないため、これが唯一の戻り道である。
+        # 何かに覆われる前に存在している必要がある。
         with st.container(key="fsl_exit_fullscreen"):
             st.button("✕ 全画面を終了", key="exit_fullscreen", on_click=_exit_fullscreen)
 
@@ -1153,30 +690,29 @@ def render_camera_section() -> None:
             _render_headline_panel(pipeline, context)
 
     if not context.state.playing:
-        # Settings still belong on screen before starting, but there is no
-        # result, capture, or export to offer yet.
+        # 開始前でも設定は画面上にあるべきだが、提示できる結果・取り込み・
+        # エクスポートはまだ無い。
         with st.expander("表示設定"):
             _render_display_controls(pipeline)
             _render_panel_layout_control()
         return
 
     if fullscreen:
-        # Nothing below the video is reachable while it covers the viewport,
-        # so skip it entirely rather than leaving 5 Hz fragments repainting
-        # panels no one can see.
+        # 映像がビューポートを覆っている間、その下の要素へは到達できない。
+        # 誰も見られないパネルを 5 Hz で再描画し続けないよう、まるごと省く。
         st.caption("全画面表示中です。設定・詳細結果は「全画面を終了」で戻ると表示されます。")
         return
 
-    # §5.1, AC-LAYOUT-01: everything below the video is full width and one at
-    # a time, so the preview above never scrolls out of reach.
+    # §5.1, AC-LAYOUT-01: 映像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
+    # 上の表示がスクロールで手の届かない位置へ行かないようにする。
     detail_tab, symmetry_tab, settings_tab, export_tab = st.tabs(
         ["詳細結果", "左右対称との比較", "表示設定", "エクスポート"]
     )
     with detail_tab:
         _render_detail_panel(pipeline)
     with symmetry_tab:
-        # FR-034/§14.3g: a still, one-shot view. The live preview above keeps
-        # running at its own cadence while this is on screen.
+        # FR-034/§14.3g: 一度きりの静止表示。上のライブ表示はこれが画面に出て
+        # いる間も自身の周期で動き続ける。
         _render_symmetrization_panel(pipeline)
     with settings_tab:
         _render_display_controls(pipeline)
