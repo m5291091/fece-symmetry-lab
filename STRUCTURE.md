@@ -43,6 +43,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Model preparation CLI | `scripts/bootstrap_models.py` |
 | OpenVINO reference parity (OD-07, dev-only) | `scripts/verify_openvino_parity.py` |
 | Cross-ONNX-runtime agreement (OD-07 due diligence, dev-only) | `scripts/verify_onnx_runtime_agreement.py` |
+| 実写での左右差ノイズ床・左右バイアス・注入ゲイン測定 (diagnostic, dev-only) | `scripts/measure_metric_noise.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | 間引きフレーム用のTTL cache | `src/face_symmetry_lab/runtime/display_cache.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
@@ -62,7 +63,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Capability | Production | Tests | Requirements |
 |---|---|---|---|
 | Analysis DTO | `domain/models.py` | `tests/domain/test_models.py` | FR-008, FR-011 |
-| Landmark DTO / pixel mapping | `domain/landmarks.py` | `tests/domain/test_landmarks.py` | FR-008, FR-009 |
+| Landmark DTO / pixel mapping（推定奥行き `z` を含む） | `domain/landmarks.py` | `tests/domain/test_landmarks.py` | FR-008, FR-009, §8.1.1 |
 | Landmark overlay painting | `domain/overlay.py` | `tests/domain/test_overlay.py` | FR-013, FR-034 |
 | Export record DTO | `domain/export.py` | `tests/domain/test_export.py` | FR-017, NFR-020 |
 | Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
@@ -88,9 +89,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
 | Latest-frame-wins gate | `runtime/frame_scheduler.py` | `tests/runtime/test_frame_scheduler.py` | NFR-006, NFR-007 |
 | 幾何・mask共用の表示TTL cache | `runtime/display_cache.py` | `tests/runtime/test_display_cache.py` | FR-013, §1.2(17), AC-DISPLAY-01 |
-| Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009 |
-| Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, AC-ZOOM-01 |
-| Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, AC-ZOOM-01 |
+| Landmark detection | `adapters/inference/mediapipe_landmarker.py` | `tests/adapters/test_mediapipe_landmarker.py` | FR-008, FR-009, §8.1.1 |
+| Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, §8.1.1, AC-ZOOM-01 |
+| Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, §8.1.1, AC-ZOOM-01 |
 | Brightness / background compositing | `domain/frame_adjustments.py` | `tests/domain/test_frame_adjustments.py` | FR-027, FR-028, AC-DISPLAY-01 |
 | 明るさ・追跡ズームの自動調整heuristic | `domain/auto_tuning.py` | `tests/domain/test_auto_tuning.py` | FR-026, FR-028, FR-029, AC-AUTOTUNE-01 |
 | MediaPipe segmentation adapter | `adapters/inference/mediapipe_segmenter.py` | `tests/adapters/test_mediapipe_segmenter.py` | FR-027, AC-DISPLAY-01 |
@@ -121,7 +122,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `63092742821c76a79783cb908c2dc4ef1e56139172fc9921b436dfbca57dcd91`_
+_File-list SHA-256: `f83af2d0a0dd5837a0a60f39064481334518c61183519e6f63af819d6efd0bee`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -146,12 +147,19 @@ face-symmetry-lab/
     - `openvino-age-gender-retail-0013.md`
     - `symmetry-2d-v1.md`
   - `beauty-page-plan.md`
+  - `implementation-prompts.md`
+  - `symmetry-metric-analysis.md`
+  - `symmetry-metric-level3.md`
+  - `symmetry-metric-measurements.md`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
   - `convert_demographic_model.py`
   - `derive_landmark_map.py`
   - `generate_structure.py`
+  - `measure_metric_noise.py`
+  - `symmetry_level3_probe.py`
+  - `symmetry_metric_probe.py`
   - `verify.py`
   - `verify_onnx_runtime_agreement.py`
   - `verify_openvino_parity.py`

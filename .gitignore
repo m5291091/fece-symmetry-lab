@@ -15,6 +15,16 @@ models/*
 !models/.gitkeep
 tmp/
 
+# 診断用の実写素材と、その測定出力（不変条件 1: 顔の画像・映像・座標を
+# repository へ入れない）。scripts/measure_metric_noise.py が読む入力と、
+# それが書き出す統計 JSON、および変形画像を保存してしまった場合の受け皿。
+*.mov
+*.mp4
+*.avi
+frames/
+take*.json
+warped*.png
+
 # Tool caches and reports
 .mypy_cache/
 .ruff_cache/
