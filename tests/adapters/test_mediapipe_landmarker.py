@@ -345,6 +345,82 @@ def test_multi_face_results_carry_no_pose(tmp_path: Path) -> None:
     assert landmarker.detect(_rgb()).pose is None
 
 
+# --------------------------------------------------------------------------
+# 推定奥行き z（§8.1.1, FR-009）
+# --------------------------------------------------------------------------
+
+
+def _face_3d(*points: tuple[float, float, float]) -> list[SimpleNamespace]:
+    return [SimpleNamespace(x=x, y=y, z=z) for x, y, z in points]
+
+
+def test_the_depth_reaches_the_landmark_frame(tmp_path: Path) -> None:
+    detector = FakeDetector([_face_3d((0.25, 0.5, -0.02), (0.75, 0.5, 0.03))])
+    landmarker = _landmarker(tmp_path, detector)
+
+    frame = landmarker.detect_video(_rgb(), frame_id=1, timestamp_ms=0)
+
+    assert frame.points == ((0.25, 0.5), (0.75, 0.5))
+    assert frame.depths == (-0.02, 0.03)
+    assert frame.has_depth is True
+
+
+def test_a_result_without_z_leaves_the_depth_missing_and_the_2d_path_intact(
+    tmp_path: Path,
+) -> None:
+    """z を返さない検出器でも、xy はこれまでどおり届く（不変条件 11, 12）。"""
+    detector = FakeDetector([[SimpleNamespace(x=0.25, y=0.5), SimpleNamespace(x=0.75, y=0.5)]])
+    landmarker = _landmarker(tmp_path, detector)
+
+    frame = landmarker.detect_video(_rgb(), frame_id=1, timestamp_ms=0)
+
+    assert frame.face_count == 1
+    assert frame.points == ((0.25, 0.5), (0.75, 0.5))
+    assert frame.depths is None
+    assert frame.has_depth is False
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_a_non_finite_z_makes_the_whole_frames_depth_missing(tmp_path: Path, bad: float) -> None:
+    """z の欠測は欠測として扱い、0 で埋めず、xy 経路も止めない。"""
+    detector = FakeDetector([_face_3d((0.25, 0.5, -0.02), (0.75, 0.5, bad))])
+    landmarker = _landmarker(tmp_path, detector)
+
+    frame = landmarker.detect_video(_rgb(), frame_id=1, timestamp_ms=0)
+
+    assert frame.points == ((0.25, 0.5), (0.75, 0.5))
+    assert frame.depths is None
+
+
+def test_multi_face_results_carry_no_depth(tmp_path: Path) -> None:
+    detector = FakeDetector([_face_3d((0.2, 0.2, 0.0)), _face_3d((0.8, 0.8, 0.0))])
+    landmarker = _landmarker(tmp_path, detector)
+
+    frame = landmarker.detect_video(_rgb(), frame_id=1, timestamp_ms=0)
+
+    assert frame.face_count == 2
+    assert frame.depths is None
+
+
+def test_image_mode_also_carries_the_depth(tmp_path: Path) -> None:
+    detector = FakeImageDetector([_face_3d((0.4, 0.6, 0.05), (0.6, 0.6, -0.05))])
+    landmarker = _image_landmarker(tmp_path, detector)
+
+    frame = landmarker.detect(_rgb())
+
+    assert frame.depths == (0.05, -0.05)
+
+
+def test_image_mode_treats_a_missing_z_as_missing(tmp_path: Path) -> None:
+    detector = FakeImageDetector([[SimpleNamespace(x=0.4, y=0.6)]])
+    landmarker = _image_landmarker(tmp_path, detector)
+
+    frame = landmarker.detect(_rgb())
+
+    assert frame.points == ((0.4, 0.6),)
+    assert frame.depths is None
+
+
 def test_the_frame_records_the_image_size_for_pixel_conversion(tmp_path: Path) -> None:
     detector = FakePoseDetector([_face((0.5, 0.5))], [_rotation_matrix_y(0.0)])
     landmarker = MediaPipeImageLandmarker(

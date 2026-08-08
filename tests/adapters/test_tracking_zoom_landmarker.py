@@ -18,8 +18,9 @@ _FACE_FRACTION = ((0.4, 0.4), (0.6, 0.4), (0.4, 0.6), (0.6, 0.6))
 class _FakeLandmarkProvider:
     """画素の内容を無視し、呼び出しごとに用意した結果を返す。"""
 
-    def __init__(self, modes: list[str]) -> None:
+    def __init__(self, modes: list[str], *, depths: tuple[float, ...] | None = None) -> None:
         self._modes = list(modes)
+        self._depths = depths
         self.received_shapes: list[tuple[int, int]] = []
         self.closed = False
 
@@ -41,6 +42,7 @@ class _FakeLandmarkProvider:
             frame_id=frame_id,
             face_count=1,
             points=_FACE_FRACTION,
+            depths=self._depths,
             width=width,
             height=height,
         )
@@ -165,6 +167,50 @@ def test_policy_reads_back_the_latest_update_policy_call() -> None:
     zoomer.update_policy(updated)
 
     assert zoomer.policy == updated
+
+
+def test_a_full_frame_detection_leaves_the_depth_unscaled() -> None:
+    fake = _FakeLandmarkProvider(["single"], depths=(-0.04, 0.0, 0.02, 0.06))
+    zoomer = TrackingZoomLandmarker(fake)
+
+    result = zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+
+    assert result.depths == pytest.approx((-0.04, 0.0, 0.02, 0.06))
+
+
+def test_a_zoomed_detection_scales_the_depth_by_the_window_width() -> None:
+    """§8.1.1: z は幅で正規化されるため、写像は窓の *幅* 比だけで決まる。"""
+    fake = _FakeLandmarkProvider(["single", "single"], depths=(-0.04, 0.0, 0.02, 0.06))
+    zoomer = TrackingZoomLandmarker(
+        fake,
+        policy=TrackingZoomPolicy(margin_ratio=0.0, min_window_size=0.2, target_px=1),
+    )
+    zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+
+    result = zoomer.detect_video(_blank(800, 1000), frame_id=2, timestamp_ms=33)
+
+    # 窓は bbox (0.4,0.4)-(0.6,0.6) と等しく、幅比は 0.2。高さ比 0.2 は使わない。
+    assert result.depths == pytest.approx((-0.008, 0.0, 0.004, 0.012))
+
+
+def test_a_missing_depth_stays_missing_through_the_zoom() -> None:
+    fake = _FakeLandmarkProvider(["single"], depths=None)
+    zoomer = TrackingZoomLandmarker(fake)
+
+    result = zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+
+    assert result.has_single_face is True
+    assert result.depths is None
+
+
+def test_a_lost_face_reports_no_depth() -> None:
+    fake = _FakeLandmarkProvider(["none"], depths=(-0.04, 0.0, 0.02, 0.06))
+    zoomer = TrackingZoomLandmarker(fake)
+
+    result = zoomer.detect_video(_blank(800, 1000), frame_id=1, timestamp_ms=0)
+
+    assert result.face_count == 0
+    assert result.depths is None
 
 
 def test_close_closes_the_wrapped_provider() -> None:

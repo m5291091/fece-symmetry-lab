@@ -282,3 +282,71 @@ def test_skin_surface_reference_is_separate_from_the_geometry_overall() -> None:
     assert changed.skin_quality.score is not None
     assert changed.skin_quality.score < baseline.skin_quality.score
     assert changed.overall_distance_raw == pytest.approx(baseline.overall_distance_raw, abs=1e-6)
+
+
+# --------------------------------------------------------------------------
+# 推定奥行き z の中立性（§8.1.1）
+# --------------------------------------------------------------------------
+
+
+def _depths(points) -> tuple[float, ...]:
+    """指標が z を読んでいれば必ず値が動く、非対称で非自明な奥行き。"""
+    return tuple(0.05 * (x - 0.5) - 0.02 * y for x, y in points)
+
+
+def test_carrying_a_depth_does_not_move_any_measured_value() -> None:
+    """§8.1.1: §8.3〜§8.6 は xy だけで定義される。z の有無で値が変わらない。"""
+    rgb_image = np.full((480, 640, 3), (150, 120, 105), dtype=np.uint8)
+    depths = _depths(SYMMETRIC_POINTS)
+
+    without_depth = _drive_to_ok(_analyzer(), rgb_image=rgb_image)
+
+    with_depth_analyzer = _analyzer()
+    outcome = None
+    for index in range(1, 6):
+        frame = build_landmark_frame(
+            frame_id=index,
+            face_count=1,
+            points=SYMMETRIC_POINTS,
+            depths=depths,
+            pose=FacePose(yaw_deg=0.0, pitch_deg=0.0, roll_deg=0.0),
+            width=640,
+            height=480,
+        )
+        outcome = with_depth_analyzer.analyze(frame, at=index * 0.1, rgb_image=rgb_image)
+
+    assert outcome == without_depth
+
+
+def test_an_asymmetric_face_measures_the_same_distance_with_and_without_depth() -> None:
+    """対称な顔だけで比べると 0 同士の一致になるため、ズレのある顔でも確かめる。"""
+    skewed = tuple(
+        (x + 0.01, y) if index in {8, 10, 12} else (x, y)
+        for index, (x, y) in enumerate(SYMMETRIC_POINTS)
+    )
+
+    def measure(depths: tuple[float, ...] | None):
+        analyzer = _analyzer()
+        outcome = None
+        for index in range(1, 6):
+            outcome = analyzer.analyze(
+                build_landmark_frame(
+                    frame_id=index,
+                    face_count=1,
+                    points=skewed,
+                    depths=depths,
+                    pose=FacePose(yaw_deg=0.0, pitch_deg=0.0, roll_deg=0.0),
+                    width=640,
+                    height=480,
+                ),
+                at=index * 0.1,
+            )
+        assert outcome is not None
+        return outcome
+
+    without_depth = measure(None)
+    with_depth = measure(_depths(skewed))
+
+    assert without_depth.overall_distance_raw is not None
+    assert without_depth.overall_distance_raw > 0.0
+    assert with_depth == without_depth

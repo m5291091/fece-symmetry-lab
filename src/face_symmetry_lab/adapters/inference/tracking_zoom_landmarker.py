@@ -26,6 +26,7 @@ from face_symmetry_lab.domain.tracking_zoom import (
     TrackingZoomPolicy,
     bounding_box_of,
     next_zoom_window,
+    remap_depths,
     remap_points,
     resize_scale_for,
 )
@@ -76,6 +77,8 @@ class TrackingZoomLandmarker:
             pose=detected.pose,
             width=width,
             height=height,
+            # 奥行きは幅比だけで戻す（§8.1.1）。切り出し窓の高さも拡大率も効かない。
+            depths=remap_depths(detected.depths, crop_box),
         )
         self._last_bbox = bounding_box_of(remapped)
         return result

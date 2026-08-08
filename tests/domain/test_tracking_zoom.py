@@ -7,6 +7,7 @@ from face_symmetry_lab.domain.tracking_zoom import (
     TrackingZoomPolicy,
     bounding_box_of,
     next_zoom_window,
+    remap_depths,
     remap_point,
     remap_points,
     resize_scale_for,
@@ -93,6 +94,28 @@ def test_remap_points_preserves_order_and_count() -> None:
     remapped = remap_points(points, window)
 
     assert remapped == ((0.0, 0.0), (0.5, 0.0), (0.0, 0.5))
+
+
+def test_remap_depths_scales_by_the_window_width_without_translating() -> None:
+    """§8.1.1: z は幅で正規化されるので、写像は幅比の乗算だけである。"""
+    window = BoundingBox(0.25, 0.20, 0.75, 0.80)  # 幅 0.5、高さ 0.6
+
+    assert remap_depths((-0.04, 0.0, 0.06), window) == pytest.approx((-0.02, 0.0, 0.03))
+
+
+def test_remap_depths_leaves_a_full_frame_window_untouched() -> None:
+    assert remap_depths((-0.04, 0.06), FULL_FRAME) == pytest.approx((-0.04, 0.06))
+
+
+def test_remap_depths_keeps_a_missing_depth_missing() -> None:
+    """欠測を 0 で埋めない（不変条件 11）。"""
+    assert remap_depths(None, BoundingBox(0.25, 0.25, 0.75, 0.75)) is None
+
+
+def test_remap_depths_preserves_order_and_count() -> None:
+    window = BoundingBox(0.0, 0.0, 0.5, 0.5)
+
+    assert remap_depths((0.2, 0.4, 0.6), window) == pytest.approx((0.1, 0.2, 0.3))
 
 
 def test_resize_scale_for_upscales_a_small_crop_up_to_the_target() -> None:

@@ -186,3 +186,39 @@ def test_the_deviation_overlay_rejects_an_out_of_range_index() -> None:
 
     with pytest.raises(LandmarkError):
         draw_symmetry_deviation(image, measured=points, symmetrized=points, indices=(3,))
+
+
+# --------------------------------------------------------------------------
+# 推定奥行き z の中立性（§8.1.1）
+# --------------------------------------------------------------------------
+
+_MIDLINE_POINTS = ((0.5, 0.2), (0.5, 0.5), (0.5, 0.8), (0.3, 0.4), (0.7, 0.6))
+_MIDLINE_DEPTHS = (-0.05, 0.0, 0.05, 0.02, -0.02)
+
+
+def _midline_frame(depths=None):
+    return build_landmark_frame(
+        frame_id=20,
+        face_count=1,
+        points=_MIDLINE_POINTS,
+        depths=depths,
+        width=20,
+        height=20,
+    )
+
+
+def test_the_landmark_overlay_ignores_the_depth() -> None:
+    without_depth = draw_landmark_points(_blank(), _midline_frame(), radius=0)
+    with_depth = draw_landmark_points(_blank(), _midline_frame(_MIDLINE_DEPTHS), radius=0)
+
+    assert np.array_equal(with_depth, without_depth)
+
+
+def test_the_midline_overlay_ignores_the_depth() -> None:
+    without_depth = draw_face_midline(_blank(), _midline_frame(), midline_indices=(0, 1, 2))
+    with_depth = draw_face_midline(
+        _blank(), _midline_frame(_MIDLINE_DEPTHS), midline_indices=(0, 1, 2)
+    )
+
+    assert with_depth.sum() > 0
+    assert np.array_equal(with_depth, without_depth)

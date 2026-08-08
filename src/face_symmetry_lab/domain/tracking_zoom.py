@@ -118,6 +118,24 @@ def remap_points(
     return tuple(remap_point(point, window) for point in points)
 
 
+def remap_depths(
+    depths: tuple[float, ...] | None,
+    window: BoundingBox,
+) -> tuple[float, ...] | None:
+    """``window`` を基準に正規化された奥行きを、全フレーム比へ戻す（§8.1.1）。
+
+    `z` は `x` と同じ係数 —— 画像の幅 —— で正規化されるので、写像は窓の *幅*
+    比を掛けるだけである。xy と違って平行移動を持たないのは、`z` の原点が
+    画像の端ではなく頭部中心付近にあるためである。切り出しの拡大率は切り出し
+    画像と検出結果の双方へ等しく効くので、ここには現れない。
+
+    奥行きが欠測（``None``）なら欠測のまま返す。0 で埋めない（不変条件 11）。
+    """
+    if depths is None:
+        return None
+    return tuple(depth * window.width for depth in depths)
+
+
 def resize_scale_for(
     crop_width_px: int,
     crop_height_px: int,

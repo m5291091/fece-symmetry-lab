@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -112,13 +113,38 @@ def _extract_pose(result: Any) -> FacePose | None:
         return None
 
 
+def _extract_depths(landmarks: list[Any]) -> tuple[float, ...] | None:
+    """推定奥行き `z` を読む。1 点でも欠ければフレームごと欠測にする（§8.1.1）。
+
+    `z` は MediaPipe が推定した相対奥行きであって実測値ではない。取れない
+    フレームは 0 で埋めずに ``None`` を返し、xy の経路には手を触れない
+    （不変条件 11、不変条件 12）。asset や MediaPipe の版によって `z` を持たない
+    出力があり得るため、属性の不在も欠測として扱う。
+    """
+    depths: list[float] = []
+    for landmark in landmarks:
+        raw = getattr(landmark, "z", None)
+        if raw is None:
+            return None
+        try:
+            depth = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isfinite(depth):
+            return None
+        depths.append(depth)
+    return tuple(depths)
+
+
 def _to_landmark_frame(result: Any, frame_id: int, width: int, height: int) -> LandmarkFrame:
     """MediaPipe の結果を変換する。顔の順位付けも選択も一切行わない。"""
     faces = list(getattr(result, "face_landmarks", []) or [])
     points: tuple[tuple[float, float], ...] = ()
+    depths: tuple[float, ...] | None = None
     pose: FacePose | None = None
     if len(faces) == 1:
         points = tuple((float(point.x), float(point.y)) for point in faces[0])
+        depths = _extract_depths(faces[0])
         pose = _extract_pose(result)
 
     try:
@@ -129,6 +155,7 @@ def _to_landmark_frame(result: Any, frame_id: int, width: int, height: int) -> L
             pose=pose,
             width=width,
             height=height,
+            depths=depths,
         )
     except LandmarkError as error:
         raise LandmarkDetectionError("ランドマーク出力が不正です。") from error
