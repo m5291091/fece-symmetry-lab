@@ -6,18 +6,18 @@
 |---|---|---|
 | `tests/domain/test_models.py` | `domain.models` の分析状態・左右差距離DTO（0以上・上限なし・負値拒否） | FR-008, FR-011, NFR-013 |
 | `tests/domain/test_demographics.py` | 18〜75歳の連続年齢、性別2確率、時刻、model metadata検証 | FR-022, FR-023, AC-AGE-01 |
-| `tests/domain/test_landmarks.py` | landmark DTO の検証と画素座標変換 | FR-008, FR-009, NFR-013 |
-| `tests/domain/test_overlay.py` | ランドマーク・TLS中心線・対称化ズレ描画の純関数性・境界クランプ・不正入力拒否 | FR-013, FR-034 |
+| `tests/domain/test_landmarks.py` | landmark DTO の検証と画素座標変換、推定奥行き`z`（点数一致・非有限拒否・単一顔限定・欠測を0で埋めないこと、`to_pixel_array`が`z`の有無に関わらず`(N,2)`のままであること、`to_pixel_array_3d`が`z`へ*幅*を掛け xy 列が2D版と一致すること、欠測時の拒否） | FR-008, FR-009, NFR-013, §8.1.1 |
+| `tests/domain/test_overlay.py` | ランドマーク・TLS中心線・対称化ズレ描画の純関数性・境界クランプ・不正入力拒否、推定奥行き`z`の中立性（点描画・中心線ともに`z`の有無で画素が完全一致すること） | FR-013, FR-034, §8.1.1 |
 | `tests/domain/test_skin_quality.py` | camera色補正、頬の色調・texture参考値、欠測、未校正状態 | FR-025, AC-APPEARANCE-01, NFR-013 |
 | `tests/domain/test_export.py` | export record v3.0の有限値・欠測・距離列（`score_*`廃止、負値拒否、上限なし）・肌表面／年齢・性別contract | FR-017, FR-023, FR-025, NFR-013, NFR-020 |
 | `tests/domain/test_metrics.py` | 指標設定の検証（対応マップのみ。感度・重みfieldの不在、`all_pairs`のプールと`overall_min_pairs`） | FR-011, FR-018, NFR-013, AC-SCORE-04, §15.2 |
 | `tests/domain/test_geometry.py` | 正規化の不変性と TLS 中心線・鏡映 | FR-011, AC-SCORE-02, AC-SCORE-03 |
-| `tests/domain/test_warp_mesh.py` | 境界アンカー生成、変位ガード（両眼間隔比・拒否）、範囲clamp、退化三角形判定、不正入力拒否 | FR-035, AC-SYMM-02, §8.6.4 |
+| `tests/domain/test_warp_mesh.py` | 境界アンカー生成、変位ガード（両眼間隔比・拒否）、範囲clamp、退化三角形判定、符号付き面積と向き反転判定（両側が1px²超でも検出・向きが一致すれば微小でも非反転・変位ガードとの独立）、不正入力拒否 | FR-035, AC-SYMM-02, §8.6.4 |
 | `tests/domain/test_symmetrization.py` | 正規化逆変換の往復一致、対称化点＝ペア中点／正中線への射影、対応未定義点の不変、ズレ＝§8.5距離の半分、入力非破壊 | FR-034, AC-SYMM-01, §8.6.2 |
 | `tests/domain/test_symmetry.py` | 部位別RMS距離と全ペアプールの全体距離、単調性、不変性、欠測（部位欠測が全体を欠測にしないこと）、上限なし | FR-011, AC-SCORE-01〜04 |
 | `tests/domain/test_pose.py` | 極分解と intrinsic Y-X-Z の符号 contract | FR-009, §8.2.1, OD-04 |
 | `tests/domain/test_smoothing.py` | 時間ベース EMA と reset 条件、`tau_seconds`読み出し | FR-012, §8.7, §8.8 |
-| `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何 | FR-026, §14.3a, AC-ZOOM-01 |
+| `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何、奥行き`z`の写像（窓の*幅*比だけで倍率が決まり平行移動を持たないこと・全フレーム窓で不変・欠測の維持） | FR-026, §14.3a, §8.1.1, AC-ZOOM-01 |
 | `tests/domain/test_frame_adjustments.py` | 明るさgainの乗算・clip、背景合成のmask blend・検証、mean_luminance | FR-027, FR-028, §14.3b, AC-DISPLAY-01 |
 | `tests/domain/test_auto_tuning.py` | 明るさ（生映像の輝度から絶対gainを直接算出）・追跡ズーム・cadence（analysis/age_interval_ms・history_capacity）の自動調整heuristicの範囲clamp・不正入力拒否（感度調整は§8.6で廃止） | FR-026, FR-028, FR-029, FR-030, §14.3b, §14.3c, §14.3d, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | `tests/application/test_image_input.py` | JPEG / PNG uploadの形式・容量・画素・animation・推論用顔crop検証 | FR-006, FR-007, FR-022, AC-INPUT-01 |
@@ -29,19 +29,19 @@
 | `tests/application/test_demographic_relay.py` | 年齢・性別中継役単体（worker不在時の無害化、due判定前のcrop費用回避、複数顔の非提出、表示OFF時にworkerへ触れないこと、新規推論と再表示の`is_cached`区別と観測時刻の保持、reset/close/interval伝播） | FR-022〜024, §8.8, §14.3, §15.2 |
 | `tests/application/test_demographic_worker.py` | 年齢・性別推定workerのcapacity-1・独自cadence・segment世代破棄・失敗分離・`set_interval_ms`によるcadence編集 | FR-022〜024, §14.3, §15.2 |
 | `tests/application/test_still_image.py` | 静止画ランドマークの stateless 検出、中心線切替、プレビュー生成 | FR-006, FR-008, FR-013 |
-| `tests/application/test_symmetrization.py` | 対称化の一発処理（stateless・再現性、元画像非破壊、画素座標、複数顔・寸法なし・退化入力の拒否）、warper任意注入（未注入時は生成せず沈黙・対称化点を変形先として渡す・変位ガード超過と画像化失敗のfail-soft） | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
+| `tests/application/test_symmetrization.py` | 対称化の一発処理（stateless・再現性、元画像非破壊、画素座標、複数顔・寸法なし・退化入力の拒否）、warper任意注入（未注入時は生成せず沈黙・対称化点を変形先として渡す・変位ガード超過と画像化失敗のfail-soft・実warperを通した三角形読み飛ばし時も画像が出ること） | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
 | `tests/application/test_quality.py` | 品質ゲート、理由コード、OK/HOLD ヒステリシス | FR-010, §6.2〜6.4, AC-STATE-01 |
-| `tests/application/test_analyzer.py` | ゲート→幾何距離／補正後の肌表面参考値→全体距離のEMAの統合と失敗分離、metric bundleが差し替え不可であること、`tau_seconds`読み出し | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01, §15.2 |
+| `tests/application/test_analyzer.py` | ゲート→幾何距離／補正後の肌表面参考値→全体距離のEMAの統合と失敗分離、metric bundleが差し替え不可であること、`tau_seconds`読み出し、推定奥行き`z`の中立性（対称な顔・ズレのある顔のいずれでも`AnalysisOutcome`全体が`z`の有無で完全一致すること＝§8.3〜§8.6が面内だけで定義されていることの回帰） | FR-011, FR-012, FR-025, AC-FACE-01, AC-APPEARANCE-01, §15.2, §8.1.1 |
 | `tests/application/test_session.py` | session履歴上限、segment、設定fingerprint（距離列・part_pair_counts）、肌表面・年齢・性別の合流、`reset`がmetric bundleを差し替えないこと・history_capacity resize、`resize_history_capacity`による非破壊resize（segment/revision不変） | FR-016, FR-017, FR-020, FR-023, FR-025, NFR-012, §15.2, §14.3d |
 | `tests/runtime/test_frame_scheduler.py` | capacity 1 の latest-frame-wins gate | NFR-006, NFR-007 |
 | `tests/runtime/test_display_cache.py` | 間引きフレームが再利用する幾何・mask共用のTTL slot（期限内の再読み出し、期限切れでの破棄、明示clear、並行store/readの一貫性） | FR-013, §1.2(17), AC-DISPLAY-01 |
 | `tests/adapters/test_opencv_demographic_estimator.py` | 派生ONNX用BGR前処理、連続年齢・性別contract、失敗分離 | FR-022〜024, AC-AGE-02 |
 | `tests/adapters/test_runtime_errors.py` | ローカル推論runtimeの起動失敗メッセージ（共有ライブラリ欠落時に導入すべきpackage名を示す・その他は原文・空例外は型名・1行に収める・両MediaPipe adapterが同じ説明を返すこと） | §14.4, §5.3, §21.5 |
-| `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close | FR-008, FR-009, AC-FACE-01 |
-| `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播、`policy`読み出し（fake provider） | FR-026, FR-008, §14.3a, AC-ZOOM-01 |
+| `tests/adapters/test_mediapipe_landmarker.py` | Face Landmarker contract（VIDEO / IMAGE）、単一顔方針、frame order、close、生resultからの推定奥行き`z`の取り込み（VIDEO/IMAGE両方へ到達・`z`欠落や非有限値はフレームごと欠測として0で埋めないこと・その場合もxy経路が従来どおり動くこと・複数顔は奥行きを持たないこと） | FR-008, FR-009, AC-FACE-01, §8.1.1 |
+| `tests/adapters/test_tracking_zoom_landmarker.py` | 追跡ズームのcrop/拡大wiring、見失い復帰、多顔recheck、close伝播、`policy`読み出し、奥行き`z`の写像wiring（全フレーム時は不変・ズーム時は窓の幅比で縮小・欠測と顔喪失時は欠測のまま）（fake provider） | FR-026, FR-008, §14.3a, §8.1.1, AC-ZOOM-01 |
 | `tests/adapters/test_mediapipe_segmenter.py` | Image Segmenter contract（VIDEO）、frame order、shape/finite検証、close | FR-027, §14.3b, AC-DISPLAY-01 |
 | `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、取得再試行、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
-| `tests/adapters/test_piecewise_warp.py` | Delaunay＋区分アフィンの画素変形（恒等メッシュでの完全一致、元画像非破壊、変位時の画素移動と方向、境界アンカーの固定、三角形のindex解決、重複点・辺上の点、サイズ/チャンネル不一致の拒否） | FR-035, AC-SYMM-02, §8.6.4 |
+| `tests/adapters/test_piecewise_warp.py` | Delaunay＋区分アフィンの画素変形（恒等メッシュでの完全一致、元画像非破壊、変位時の画素移動と方向、境界アンカーの固定、三角形のindex解決、重複点・辺上の点、サイズ/チャンネル不一致の拒否）、向きが反転した三角形の読み飛ばし（内部の画素が元のまま・変位ガード内で発生・両側が細長くない場合・残りの三角形は従来どおり変形） | FR-035, AC-SYMM-02, §8.6.4 |
 | `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件 | FR-011, FR-020, AC-SCORE-04 |
 | `tests/adapters/test_session_exporter.py` | CSV / JSON の同値性、manifest、ファイル名 | FR-017, AC-EXPORT-01 |
 | `tests/model/test_real_landmarker.py` | 実 `.task` asset の load・検出・スコア smoke（未配置時は skip） | FR-002, FR-009, FR-011, §21.1 |
