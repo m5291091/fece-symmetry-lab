@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from face_symmetry_lab.adapters.imaging.piecewise_warp import OpenCvPiecewiseWarper
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.landmarks import build_landmark_frame
 from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
@@ -205,6 +206,26 @@ def test_an_over_displaced_face_refuses_the_image_but_keeps_the_points() -> None
     assert view.warp_unavailable_reason is not None
     assert "変形量" in view.warp_unavailable_reason
     assert warper.meshes == []  # 画素処理に入る前に拒否される
+    assert view.max_deviation is not None
+
+
+def test_a_real_warp_still_produces_an_image_when_triangles_are_skipped() -> None:
+    """AC-SYMM-02: 三角形の読み飛ばしは fail-soft を壊さない。
+
+    実 adapter を通す唯一の test である。向きの判定は読み飛ばす条件を増やす
+    ので、それが「画像が出ない」へ退化していないことを、fake ではなく本物の
+    区分アフィンで確かめる。
+    """
+    view = symmetrize_frame(
+        _image(),
+        _frame(_skewed()),
+        config=_config(),
+        warper=OpenCvPiecewiseWarper(),
+    )
+
+    assert view.warped is not None
+    assert view.warp_unavailable_reason is None
+    assert view.warped.shape == (HEIGHT, WIDTH, 3)
     assert view.max_deviation is not None
 
 

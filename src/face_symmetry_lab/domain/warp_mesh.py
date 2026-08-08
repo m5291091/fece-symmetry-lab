@@ -97,19 +97,47 @@ def border_anchors(width: int, height: int) -> NDArray[np.float64]:
     )
 
 
-def triangle_area(points: NDArray[np.float64]) -> float:
-    """(3, 2) 配列で与えられた三角形 1 つの面積の絶対値。"""
+def signed_triangle_area(points: NDArray[np.float64]) -> float:
+    """(3, 2) 配列で与えられた三角形 1 つの符号付き面積。
+
+    符号は頂点の巡回方向、絶対値は大きさを表す。変形の前後で向きが保たれたか
+    を問えるのは前者だけである。
+    """
     array = np.asarray(points, dtype=np.float64)
     if array.shape != (3, 2):
         raise WarpMeshError("三角形は (3, 2) の配列である必要があります。")
     first = array[1] - array[0]
     second = array[2] - array[0]
-    return float(abs(first[0] * second[1] - first[1] * second[0]) / 2.0)
+    return float(first[0] * second[1] - first[1] * second[0]) / 2.0
+
+
+def triangle_area(points: NDArray[np.float64]) -> float:
+    """(3, 2) 配列で与えられた三角形 1 つの面積の絶対値。"""
+    return abs(signed_triangle_area(points))
 
 
 def is_degenerate_triangle(points: NDArray[np.float64]) -> bool:
     """三角形が細すぎて安定したアフィン変換を定義できないかどうか。"""
     return triangle_area(points) < MIN_TRIANGLE_AREA_PX
+
+
+def is_orientation_flipped(
+    source: NDArray[np.float64],
+    target: NDArray[np.float64],
+) -> bool:
+    """三角形が変形元と変形先で巡回方向を変える（裏返る）かどうか（§8.6.4）。
+
+    退化とは別の破綻である。裏返りは符号付き面積の符号を反転させるが絶対値は
+    縮めないので、`is_degenerate_triangle` は素通しする。変位ガードとも別で、
+    あちらは 1 点の *絶対* 変位の上限、こちらは隣接する点どうしの *相対* 変位が
+    点の間隔を超えた帰結であり、ガードの内側でも起きる。対称化の変位は各ペアの
+    実測ズレの半分で決まるため、隣り合うランドマークが別々のズレを持てば相対
+    変位が生じ、点の間隔が数画素しかない密な領域では符号が反転する。
+
+    裏返った三角形をそのまま変形すると、逆向きのアフィン写像で画素を転送し、
+    その領域の像が局所的に破綻する。
+    """
+    return signed_triangle_area(source) * signed_triangle_area(target) < 0.0
 
 
 def build_warp_mesh(
@@ -127,9 +155,14 @@ def build_warp_mesh(
     受け付けられず、また端から 1 画素外にあるランドマークは検出の副産物で
     あって失敗の理由ではないためである。
 
-    変位ガードが働いたときは `WarpMeshError` を送出する。その先では区分写像が
-    自分自身へ折り重なり、出力はもはや顔ではなくなる。壊れた結果を見せるより、
-    拒否する方が誠実である。
+    変位ガードが働いたときは `WarpMeshError` を送出する。1 点がそこまで動くのは
+    検出が破綻したときだけであり、その点群で変形すれば出力はもはや人物ですら
+    なくなる。壊れた結果を見せるより、拒否する方が誠実である。
+
+    ガードが見るのは 1 点の *絶対* 変位だけである。区分写像が自分自身へ折り重なる
+    かどうかは、隣接する点どうしの *相対* 変位が点の間隔を超えるかで決まる別の量で、
+    ガードの内側でも起きる。そちらは点集合ではなく三角形ごとの性質なので、ここでは
+    判定できない。変形時に `is_orientation_flipped` が個別に読み飛ばす（§8.6.4）。
     """
     source_array = _as_points(source, "変形元")
     target_array = _as_points(target, "変形先")

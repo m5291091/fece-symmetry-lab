@@ -8,6 +8,8 @@ from face_symmetry_lab.domain.warp_mesh import (
     border_anchors,
     build_warp_mesh,
     is_degenerate_triangle,
+    is_orientation_flipped,
+    signed_triangle_area,
     triangle_area,
 )
 
@@ -200,3 +202,70 @@ def test_a_normal_triangle_is_not_degenerate() -> None:
 def test_a_wrongly_shaped_triangle_is_refused() -> None:
     with pytest.raises(WarpMeshError):
         triangle_area(np.zeros((4, 2)))
+
+
+# --- 三角形の向きの反転 ------------------------------------------------------
+
+#: 線分 (70, 60)-(90, 60) をまたいで動く点。またぐ前後で三角形は裏返るが、
+#: 面積の絶対値はどちらも 40px² のままである。
+_ABOVE_THE_EDGE = np.array([[70.0, 60.0], [90.0, 60.0], [80.0, 56.0]])
+_BELOW_THE_EDGE = np.array([[70.0, 60.0], [90.0, 60.0], [80.0, 64.0]])
+
+
+def test_the_signed_area_keeps_the_winding_while_the_area_discards_it() -> None:
+    triangle = np.array([[0.0, 0.0], [4.0, 0.0], [0.0, 6.0]])
+    reversed_winding = triangle[::-1]
+
+    assert signed_triangle_area(triangle) == pytest.approx(12.0)
+    assert signed_triangle_area(reversed_winding) == pytest.approx(-12.0)
+    assert triangle_area(reversed_winding) == pytest.approx(12.0)
+
+
+def test_a_triangle_whose_winding_reverses_is_flipped() -> None:
+    """§8.6.4: 裏返った三角形は逆向きのアフィン写像で画素を転送してしまう。"""
+    assert is_orientation_flipped(_ABOVE_THE_EDGE, _BELOW_THE_EDGE) is True
+
+
+def test_a_flip_is_caught_even_when_neither_triangle_is_a_sliver() -> None:
+    """実測 421 件のうち 261 件は、両側とも 1px² を超える本物の反転だった。"""
+    assert triangle_area(_ABOVE_THE_EDGE) > 1.0
+    assert triangle_area(_BELOW_THE_EDGE) > 1.0
+    assert is_degenerate_triangle(_ABOVE_THE_EDGE) is False
+    assert is_degenerate_triangle(_BELOW_THE_EDGE) is False
+
+    assert is_orientation_flipped(_ABOVE_THE_EDGE, _BELOW_THE_EDGE) is True
+
+
+def test_a_matching_winding_is_not_flipped_however_small_the_triangle() -> None:
+    """「面積が小さすぎる」と「向きが反転している」は別の破綻である。"""
+    source = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 0.02]])
+    target = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 0.01]])
+
+    assert is_degenerate_triangle(source) is False  # 0.010px² ≥ 1e-3px²
+    assert is_degenerate_triangle(target) is False  # 0.005px² ≥ 1e-3px²
+    assert is_orientation_flipped(source, target) is False
+
+
+def test_an_unmoved_triangle_is_never_flipped() -> None:
+    assert is_orientation_flipped(_ABOVE_THE_EDGE, _ABOVE_THE_EDGE.copy()) is False
+
+
+def test_the_displacement_guard_does_not_notice_a_flip() -> None:
+    """§8.6.4: ガードは 1 点の *絶対* 変位、裏返りは隣接点の *相対* 変位で決まる。
+
+    前者は後者を含意しない。この点は両眼間隔の 6.7% しか動いていないので
+    ガードは働かないが、三角形は裏返っている。
+    """
+    source = np.vstack([_POINTS, _ABOVE_THE_EDGE])
+    target = np.vstack([_POINTS, _BELOW_THE_EDGE])
+
+    mesh = build_warp_mesh(source, target, width=WIDTH, height=HEIGHT, interocular_px=120.0)
+
+    assert mesh.max_displacement_px == pytest.approx(8.0)
+    assert mesh.max_displacement_px < MAX_WARP_DISPLACEMENT_RATIO * 120.0
+    assert is_orientation_flipped(source[-3:], target[-3:]) is True
+
+
+def test_a_wrongly_shaped_triangle_is_refused_by_the_orientation_check() -> None:
+    with pytest.raises(WarpMeshError):
+        is_orientation_flipped(np.zeros((4, 2)), np.zeros((4, 2)))

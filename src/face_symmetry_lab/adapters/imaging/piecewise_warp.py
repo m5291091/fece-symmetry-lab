@@ -12,8 +12,8 @@
 §8.6.4 の手順は次のとおり。まず *変形先* の点を三角形分割し、出力が隙間も重なり
 も無く敷き詰められるようにする。次に同じ index の三つ組を変形元へ適用し、三角形
 ごとに専用のアフィン写像で画素を転送する。メッシュが支えられない三角形（退化
-しているもの、頂点が index へ解決できないもの）は飛ばし、推測せずに元の画素を
-残す。
+しているもの、変形元と変形先で向きが反転しているもの、頂点が index へ解決できない
+もの）は飛ばし、推測せずに元の画素を残す。
 """
 
 from __future__ import annotations
@@ -24,7 +24,11 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from face_symmetry_lab.domain.warp_mesh import WarpMesh, is_degenerate_triangle
+from face_symmetry_lab.domain.warp_mesh import (
+    WarpMesh,
+    is_degenerate_triangle,
+    is_orientation_flipped,
+)
 
 
 class PiecewiseWarpError(ValueError):
@@ -57,6 +61,10 @@ class OpenCvPiecewiseWarper:
             source_triangle = mesh.source[list(triangle)]
             target_triangle = mesh.target[list(triangle)]
             if is_degenerate_triangle(source_triangle) or is_degenerate_triangle(target_triangle):
+                continue
+            if is_orientation_flipped(source_triangle, target_triangle):
+                # 裏返った三角形は、逆向きのアフィン写像で画素を転送してしまう。
+                # 読み飛ばした領域は、周囲の三角形の変形に従って埋まる（§8.6.4）。
                 continue
             _transfer_triangle(rgb_image, warped, source_triangle, target_triangle)
         return warped
