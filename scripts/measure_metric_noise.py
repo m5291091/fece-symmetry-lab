@@ -22,11 +22,13 @@
     I: 3 方式比較   現行2D / 2D Procrustes / 3D Procrustes を同じ材料で並べる
     J: 部位別ゲイン テストE の領域変位場を口・目・輪郭・鼻へ当て、応答の部位依存を見る
     K: 3D 座標平均  テストC の座標 EMA を 3D 正規化座標へ広げ、d_3d の床を測り直す
+    L: 表示の分解能 A〜K の d を §8.6.3 の表示式へ通し、利用者が見る数字を測る
 
 A〜D は前回の測定と比較するため、出力形式も数値の定義も変えていない。E 以降は
 「d_3d は安定だが感度もあるのか」を確かめるために後から足した診断である。I〜K は
-「3D 化が要るのか、Procrustes だけで足りるのか」を分離するために足した。A〜H の
-数値と出力形式は I〜K を足しても変えていない。
+「3D 化が要るのか、Procrustes だけで足りるのか」を分離するために足した。L は
+「その d を現行の表示式へ載せると、利用者の目に何が映るのか」を測る。A〜K の
+数値と出力形式は L を足しても変えていない。
 
 `src/` は読むだけで一切変更しない。画像と landmark 座標は JSON へ書き出さず、
 統計量だけを残す（AGENTS.md 不変条件 1）。変形画像はメモリ上だけで扱い、
@@ -170,7 +172,7 @@ NEAR_3D_POSITION: float = 0.8
 #: 同じ目盛りで「② は ① 寄り」と読む上限。
 NEAR_2D_POSITION: float = 0.2
 
-JSON_SCHEMA: str = "measure-metric-noise/1.4.0"
+JSON_SCHEMA: str = "measure-metric-noise/1.5.0"
 
 
 # --------------------------------------------------------------------------
@@ -1040,9 +1042,24 @@ def both_units(value: float) -> str:
     return f"{value:8.5f} ({value * IPD_MM:6.3f}mm)"
 
 
+def percent_value(distance: float) -> float:
+    """§8.6.3 の表示値を、書式化せずに数値で返す。
+
+    `percent` と `ui.scores.format_symmetry` の中身そのものである。セクション L は
+    表示値の分布を統計として扱うので、文字列ではなく数値が要る。ここで新しい
+    表示式を作らないよう、読み替えの定義はこの 1 か所に置く。
+    """
+    return min(100.0, max(0.0, (1.0 - distance) * 100.0))
+
+
+def percent_values(distances: NDArray[np.float64]) -> NDArray[np.float64]:
+    """同じ読み替えを系列へ当てる。要素ごとの結果は `percent_value` と一致する。"""
+    return np.clip((1.0 - np.asarray(distances, dtype=np.float64)) * 100.0, 0.0, 100.0)
+
+
 def percent(distance: float) -> str:
     """UI の `format_symmetry` と同じ読み替え。"""
-    return f"{min(100.0, max(0.0, (1.0 - distance) * 100.0)):6.2f}%"
+    return f"{percent_value(distance):6.2f}%"
 
 
 def print_spread(label: str, stats: dict[str, float]) -> None:
@@ -3657,6 +3674,590 @@ def _smoothing_3d_verdict(rows: list[dict[str, Any]], raw_floor: float) -> list[
 
 
 # --------------------------------------------------------------------------
+# セクション L — 表示スケールの実効分解能
+# --------------------------------------------------------------------------
+DISPLAY_SCALE_NOTE = """
+  A〜K は d（両眼間距離比）を測っている。ここで測るのは、その d を §8.6.3 の
+  表示式へ通した後の値である。
+
+      symmetry_percent = clamp(100 × (1 - d), 0, 100)
+
+  新しい表示式は作らない。`ui.scores.format_symmetry` と同じ読み替えを、
+  フレームごとに当てて分布を見るだけである。
+
+  単位について
+
+    表示は d の線形変換なので、1pt（表示の 1 パーセントポイント）= 0.01 IOD で
+    ある。この対応は厳密で、IPD の仮定に依存しない。本セクションの分布・チラつ
+    き・EMA の数値は、すべて IPD_MM を変えても動かない。
+
+    IPD_MM が効くのは 2 か所だけである。1) 文献値（mm）を pt へ並べる参照行、
+    2) 注入 δ が mm で指定されていること。前者は参照値なので pt 表記を併記し、
+    後者は δ を IOD へも書いて、mm 換算に依存せず読めるようにしてある。
+
+  測る 5 つ
+
+    1) 分布        フレームごとの表示値が、どの幅に散らばるか
+    2) チラつき    隣接フレームで表示値が何 pt 跳ねるか
+    3) EMA 通過後  §8.7 の平滑化を通すと 1) と 2) がどう変わるか
+    4) 注入の応答  はっきり分かる非対称を入れたとき、表示値が何 pt 動くか
+    5) 要約        2D と 3D を同じ軸で並べる
+"""
+
+#: §8.7 の既定時定数。表示へ載る値はこの平滑化を通った後なので、L はこれを使う。
+APP_DEFAULT_TAU: float = 0.4
+
+#: セクション L が読む分位。1) の表と 5) の要約で同じものを使う。
+DISPLAY_QUANTILES: tuple[float, ...] = (5.0, 25.0, 50.0, 75.0, 95.0)
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayVariant:
+    """表示値の 1 系列。生値、または §8.7 を通した後のもの。単位は pt。"""
+
+    key: str
+    label: str
+    values: NDArray[np.float64]
+    #: EMA の立ち上がりを除いた後の枚数。
+    frames: int
+    #: EMA が定常に達しているか。生値では常に True。
+    warmed: bool
+    #: この系列のフレーム間隔（秒）。
+    delta_seconds: float
+
+
+def display_stats(values: NDArray[np.float64]) -> dict[str, float] | None:
+    """表示値 1 本の分布。欠測は落とす。"""
+    array = np.asarray(values, dtype=np.float64).ravel()
+    array = array[np.isfinite(array)]
+    if array.size == 0:
+        return None
+    low, quarter, middle, upper, high = (
+        float(np.percentile(array, value)) for value in DISPLAY_QUANTILES
+    )
+    return {
+        "count": float(array.size),
+        "min": float(array.min()),
+        "p05": low,
+        "p25": quarter,
+        "median": middle,
+        "p75": upper,
+        "p95": high,
+        "max": float(array.max()),
+        "std": float(array.std(ddof=1)) if array.size > 1 else 0.0,
+        "span_p05_p95": high - low,
+    }
+
+
+def display_flicker(values: NDArray[np.float64]) -> dict[str, float] | None:
+    """隣接フレームの表示値の差 |Δ|。片方が欠測の組は落とす。"""
+    steps = np.abs(np.diff(np.asarray(values, dtype=np.float64).ravel()))
+    steps = steps[np.isfinite(steps)]
+    if steps.size == 0:
+        return None
+    return {
+        "count": float(steps.size),
+        "median": float(np.median(steps)),
+        "p95": float(np.percentile(steps, 95)),
+        "max": float(steps.max()),
+    }
+
+
+def display_levels(values: NDArray[np.float64]) -> dict[str, int]:
+    """表示値を丸めたときに、実際に何種類の数字が出るか。
+
+    利用者が読むのは丸めた後の文字列である。分布の幅が丸め幅より狭ければ、
+    どのフレームでも同じ数字が出る。`format_symmetry` は小数 2 桁で表示するが、
+    読み手が覚えるのは整数部分なので両方を数える。
+    """
+    array = np.asarray(values, dtype=np.float64).ravel()
+    array = array[np.isfinite(array)]
+    if array.size == 0:
+        return {"integer": 0, "two_decimals": 0}
+    return {
+        "integer": int(np.unique(np.rint(array)).size),
+        "two_decimals": int(np.unique(np.rint(array * 100.0)).size),
+    }
+
+
+def app_cadence_indices(times: NDArray[np.float64]) -> NDArray[np.intp]:
+    """解析 5Hz（`APP_DELTA_SECONDS`）へ間引いたときに残る添字。
+
+    アプリは撮影 fps ではなく §14.3d の解析周期で d を更新する。EMA の効きを
+    決めるのは 1 ステップあたりの alpha なので、同じ tau でも撮影 30fps と解析
+    5Hz では残るチラつきが違う。利用者が実際に見るのは後者である。
+
+    0.2 秒ごとの目標時刻に *いちばん近い* フレームを選ぶ。「0.2 秒以上空いた
+    最初のフレーム」で選ぶと、撮影間隔が 0.2 秒をわずかに割る素材（30.003fps
+    では 6 フレームで 0.19998 秒）で 1 フレームぶん余計に待ち、実効 4.3Hz に
+    なってしまう。テイクごとに間引き間隔が変わると、チラつきを比べられない。
+    """
+    if len(times) < 2:
+        return np.arange(len(times), dtype=np.intp)
+    targets = np.arange(float(times[0]), float(times[-1]) + 1e-12, APP_DELTA_SECONDS)
+    boundaries = np.searchsorted(times, targets)
+    kept: list[int] = []
+    for target, boundary in zip(targets, boundaries, strict=True):
+        after = int(min(boundary, len(times) - 1))
+        before = int(max(after - 1, 0))
+        nearest = before if abs(times[before] - target) <= abs(times[after] - target) else after
+        if not kept or nearest > kept[-1]:
+            kept.append(nearest)
+    return np.asarray(kept, dtype=np.intp)
+
+
+def display_variants(
+    distances: NDArray[np.float64],
+    times: NDArray[np.float64],
+    fallback_delta: float,
+) -> list[DisplayVariant]:
+    """1 つの指標について、生値と §8.7 通過後の表示値をそろえる。
+
+    平滑化は現行実装（`domain.smoothing.TimeBasedEma`）を d へ当ててから表示へ
+    読み替える。§8.7 が EMA の対象と定めているのは d であって表示値ではない。
+    """
+    steps = np.diff(times)
+    delta = float(np.median(steps)) if steps.size else fallback_delta
+    variants = [
+        DisplayVariant(
+            key="raw_capture",
+            label=f"生値（撮影 {1.0 / delta:.1f}Hz）" if delta > 0.0 else "生値",
+            values=percent_values(distances),
+            frames=len(distances),
+            warmed=True,
+            delta_seconds=delta,
+        )
+    ]
+    if len(distances) < 2 or delta <= 0.0:
+        return variants
+
+    picked = app_cadence_indices(times)
+    app_times = times[picked]
+    app_distances = distances[picked]
+    app_steps = np.diff(app_times)
+    app_delta = float(np.median(app_steps)) if app_steps.size else delta
+    if picked.size >= 2:
+        variants.append(
+            DisplayVariant(
+                key="raw_app",
+                label=f"生値（解析 {1.0 / app_delta:.1f}Hz 相当）",
+                values=percent_values(app_distances),
+                frames=int(picked.size),
+                warmed=True,
+                delta_seconds=app_delta,
+            )
+        )
+
+    smoothed = ema_scalar(
+        distances,
+        times,
+        tau_seconds=APP_DEFAULT_TAU,
+        max_gap_seconds=max(2.0, 5.0 * delta),
+    )
+    burn, warmed = _burn_in(len(distances), APP_DEFAULT_TAU, delta)
+    variants.append(
+        DisplayVariant(
+            key="ema_capture",
+            label=f"EMA（撮影 {1.0 / delta:.1f}Hz）",
+            values=percent_values(smoothed[burn:]),
+            frames=len(distances) - burn,
+            warmed=warmed,
+            delta_seconds=delta,
+        )
+    )
+
+    if picked.size >= 2:
+        app_smoothed = ema_scalar(
+            app_distances,
+            app_times,
+            tau_seconds=APP_DEFAULT_TAU,
+            max_gap_seconds=max(2.0, 5.0 * app_delta),
+        )
+        app_burn, app_warmed = _burn_in(int(picked.size), APP_DEFAULT_TAU, app_delta)
+        variants.append(
+            DisplayVariant(
+                key="ema_app",
+                label=f"EMA（解析 {1.0 / app_delta:.1f}Hz 相当）",
+                values=percent_values(app_smoothed[app_burn:]),
+                frames=int(picked.size) - app_burn,
+                warmed=app_warmed,
+                delta_seconds=app_delta,
+            )
+        )
+    return variants
+
+
+def usable_injection_outcomes(measured: InjectionReport) -> list[InjectionOutcome]:
+    """判定に使える δ の行。折り返した δ と測れなかった δ を除く。
+
+    除外の条件はテストE の判定（`_injection_verdict`）と同じである。
+    """
+    return [
+        item
+        for item in measured.outcomes
+        if item.delta_mm > 0.0 and item.reason is None and item.delta_mm <= measured.fold_mm
+    ]
+
+
+def display_shift(baseline: float | None, value: float | None) -> float | None:
+    """d が baseline から value へ動いたときの、表示値の変化（pt）。
+
+    負は「表示が下がる」、つまりより非対称に見える向きである。
+    """
+    if baseline is None or value is None:
+        return None
+    return percent_value(value) - percent_value(baseline)
+
+
+def _pt_or_dash(value: float | None) -> str:
+    return "—" if value is None else f"{value:+.3f}"
+
+
+def _display_row(variant: DisplayVariant) -> dict[str, Any]:
+    """1 系列ぶんの統計を JSON 用にまとめる。"""
+    return {
+        "series": variant.key,
+        "label": variant.label,
+        "frames": variant.frames,
+        "warmed_up": variant.warmed,
+        "delta_seconds": variant.delta_seconds,
+        "distribution_pt": display_stats(variant.values),
+        "flicker_pt": display_flicker(variant.values),
+        "levels": display_levels(variant.values),
+    }
+
+
+def section_l(
+    capture: Capture,
+    series: Series,
+    injections: dict[str, InjectionReport] | None,
+    report: dict[str, Any],
+) -> None:
+    heading("L", "表示スケールの実効分解能")
+    print(DISPLAY_SCALE_NOTE)
+
+    if series.count == 0:
+        print("  測定できたフレームがありません。")
+        report["display_resolution"] = {"section": "L", "frames": 0}
+        return
+
+    solid_mask = np.isfinite(series.distances3d)
+    metrics: list[tuple[str, str, NDArray[np.float64], NDArray[np.float64]]] = [
+        ("current_2d", "現行 2D", series.distances, series.times),
+    ]
+    if int(solid_mask.sum()) >= 2:
+        metrics.append(
+            ("symmetry_3d", "3D", series.distances3d[solid_mask], series.times[solid_mask])
+        )
+    else:
+        print(f"  ※ z を取れたフレームが {int(solid_mask.sum())} 枚しかないので、3D 側は出さない。")
+
+    print(f"  対象フレーム: 2D {series.count} 枚 / 3D {int(solid_mask.sum())} 枚")
+    if series.count < MIN_USEFUL_FRAMES:
+        print(f"  ※ {MIN_USEFUL_FRAMES} 枚未満なので、以下の統計は目安にとどまる。")
+    print()
+    print("  参照スケール（この 3 行だけが IPD_MM の仮定に依存する）")
+    print(f"     1pt              = 0.01 IOD = {0.01 * IPD_MM:.3f}mm（IPD {IPD_MM:.0f}mm 換算）")
+    print(
+        f"     文献 対称成人     {NORMAL_D * IPD_MM:.2f}mm → 表示 {percent(NORMAL_D)}"
+        f"   非対称成人 {CLINICAL_D * IPD_MM:.2f}mm → 表示 {percent(CLINICAL_D)}"
+    )
+    print(
+        f"     文献の信号全幅   {SIGNAL_SPAN * IPD_MM:.2f}mm = {SIGNAL_SPAN * 100.0:.2f}pt"
+        "  ← 「対称な成人 ↔ 非対称な成人」の全幅"
+    )
+    print()
+
+    variants: dict[str, list[DisplayVariant]] = {}
+    metric_report: dict[str, Any] = {}
+
+    print("  1) 表示値の分布（pt = 表示のパーセントポイント。生値、フレームごと）")
+    print(
+        f"     {'方式':<8} {'枚数':>5} {'最小':>8} {'p05':>8} {'p25':>8} {'中央値':>8}"
+        f" {'p75':>8} {'p95':>8} {'最大':>8} {'標準偏差':>9} {'p95-p05':>9}"
+    )
+    print("     " + "-" * 96)
+    for key, label, distances, times in metrics:
+        variants[key] = display_variants(distances, times, capture.delta_seconds)
+        stats = display_stats(variants[key][0].values)
+        if stats is None:
+            continue
+        print(
+            f"     {label:<8} {int(stats['count']):5d} {stats['min']:8.2f} {stats['p05']:8.2f}"
+            f" {stats['p25']:8.2f} {stats['median']:8.2f} {stats['p75']:8.2f}"
+            f" {stats['p95']:8.2f} {stats['max']:8.2f} {stats['std']:9.3f}"
+            f" {stats['span_p05_p95']:9.3f}"
+        )
+    print()
+
+    print("  2) 隣接フレーム間のチラつき |Δ|（pt）と、実際に出る数字の種類")
+    print(
+        f"     {'方式':<8} {'比較数':>6} {'|Δ|中央値':>10} {'|Δ|p95':>9} {'|Δ|最大':>9}"
+        f" {'整数%の種類':>12} {'小数2桁の種類':>14}"
+    )
+    print("     " + "-" * 76)
+    for key, label, _, _ in metrics:
+        raw = variants[key][0]
+        flicker = display_flicker(raw.values)
+        levels = display_levels(raw.values)
+        if flicker is None:
+            continue
+        print(
+            f"     {label:<8} {int(flicker['count']):6d} {flicker['median']:10.3f}"
+            f" {flicker['p95']:9.3f} {flicker['max']:9.3f}"
+            f" {levels['integer']:12d} {levels['two_decimals']:14d}"
+        )
+    print()
+    print("     整数 % の種類 = このテイクの全フレームを整数へ丸めたときに出る数字の数。")
+    print("     1 なら、テイク中どのフレームでも同じ整数が表示される。")
+    print()
+
+    print(f"  3) §8.7 の平滑化（tau = {APP_DEFAULT_TAU} 秒）を通した同じ統計")
+    print("     解析 5Hz 相当の行は、撮影フレームを §14.3d の解析周期へ間引いてから当てた。")
+    print("     利用者が実際に見る更新間隔はこちらである。")
+    print()
+    print(
+        f"     {'方式':<8} {'系列':<22} {'枚数':>5} {'中央値':>8} {'標準偏差':>9}"
+        f" {'p95-p05':>9} {'|Δ|中央値':>10} {'|Δ|p95':>9} {'整数%の種類':>12}"
+    )
+    print("     " + "-" * 100)
+    for key, label, _, _ in metrics:
+        rows: list[dict[str, Any]] = []
+        for variant in variants[key]:
+            stats = display_stats(variant.values)
+            flicker = display_flicker(variant.values)
+            levels = display_levels(variant.values)
+            rows.append(_display_row(variant))
+            if stats is None:
+                continue
+            marker = " " if variant.warmed else "*"
+            step_median = None if flicker is None else flicker["median"]
+            step_p95 = None if flicker is None else flicker["p95"]
+            print(
+                f"    {marker}{label:<8} {variant.label:<22} {int(stats['count']):5d}"
+                f" {stats['median']:8.2f} {stats['std']:9.3f} {stats['span_p05_p95']:9.3f}"
+                f" {'—' if step_median is None else f'{step_median:.3f}':>10}"
+                f" {'—' if step_p95 is None else f'{step_p95:.3f}':>9}"
+                f" {levels['integer']:12d}"
+            )
+        metric_report[key] = {"label": label, "series": rows}
+    print()
+    if any(not variant.warmed for row in variants.values() for variant in row):
+        print("     * その系列では EMA が定常に達していない（フレーム数が足りない）。")
+    print("     読み方: EMA は分布の幅と |Δ| を下げるが、中央値はほとんど動かさない。")
+    print("             |Δ| が丸め幅より十分小さければ、平滑化しなくても数字は止まって見える。")
+    print()
+
+    injection_report = _print_display_injection(injections)
+    summary = _print_display_summary(metric_report, injection_report)
+
+    report["display_resolution"] = {
+        "section": "L",
+        "formula": "clamp(100 * (1 - d), 0, 100)",
+        "pt_per_iod": 100.0,
+        "pt_mm_at_ipd": 0.01 * IPD_MM,
+        "app_tau_seconds": APP_DEFAULT_TAU,
+        "app_delta_seconds": APP_DELTA_SECONDS,
+        "frames_2d": series.count,
+        "frames_3d": int(solid_mask.sum()),
+        "reference_pt": {
+            "normal_adult": percent_value(NORMAL_D),
+            "clinical_adult": percent_value(CLINICAL_D),
+            "signal_span_pt": SIGNAL_SPAN * 100.0,
+        },
+        "metrics": metric_report,
+        "injection": injection_report,
+        "summary": summary,
+    }
+
+
+def _print_display_injection(
+    injections: dict[str, InjectionReport] | None,
+) -> dict[str, Any] | None:
+    """4) 注入が表示値を何 pt 動かすか。セクション E / J と同じ測定を読み替える。"""
+    print("  4) 注入が表示値を何 pt 動かすか")
+    if not injections:
+        print("     注入測定を実行できていません（セクション J と同じ測定を共有する）。")
+        print()
+        return None
+
+    measured = [injections[label] for label in PART_LABELS.values() if label in injections]
+    if not measured:
+        print("     測定できた部位がありません。")
+        print()
+        return None
+
+    deltas = [value for value in INJECTION_DELTAS_MM if value > 0.0]
+    print(f"     テストE / J と同じ領域変位場（Gauss、sigma = {REGION_SIGMA_IOD:.2f} IOD）。")
+    print(
+        "     δ = "
+        + ", ".join(
+            f"{value:.0f}mm ({value / IPD_MM * 100.0:.2f}pt 相当の幾何)" for value in deltas
+        )
+    )
+    print("     Δpt = 注入後の表示値 から 基準の表示値を引いた差。負は「より非対称に見える」向き。")
+    print("     * は三角形が裏返る δ（変形画像が「δ ずれた顔」ではない）。— は測れなかった δ。")
+    print()
+
+    rows: list[dict[str, Any]] = []
+    # 値の読み出しはテストE / J と同じ `_AXIS_READERS` を使う。方式の定義を
+    # ここで書き直すと、L だけ別の量を表示値へ通してしまう。
+    for metric_key, slope_axis, axis_label in (
+        ("current_2d", "2d", "現行 2D"),
+        ("symmetry_3d", "3d", "3D"),
+    ):
+        baseline_read, truth_read, detected_read = _AXIS_READERS[slope_axis]
+        print(f"     ● {axis_label}")
+        print(
+            f"       {'部位':<6} {'基準表示':>9} | "
+            + " ".join(f"{f'δ={value:.0f}mm':>9}" for value in deltas)
+            + f" | {'真値δ最大':>10} {'裏返りδ':>9}"
+        )
+        print("       " + "-" * 88)
+        for item in measured:
+            baseline = baseline_read(item)
+            if baseline is None:
+                print(f"       {item.field_name:<6} {'—':>9}")
+                continue
+            cells: list[str] = []
+            shifts: dict[str, float | None] = {}
+            for value in deltas:
+                outcome = next(
+                    (row for row in item.outcomes if row.delta_mm == value),
+                    None,
+                )
+                if outcome is None or outcome.reason is not None:
+                    cells.append(f"{'—':>9}")
+                    shifts[f"{value:.0f}"] = None
+                    continue
+                shift = display_shift(baseline, detected_read(outcome))
+                folded = "*" if outcome.delta_mm > item.fold_mm else " "
+                cells.append(f"{_pt_or_dash(shift) + folded:>9}")
+                shifts[f"{value:.0f}"] = shift
+            usable = usable_injection_outcomes(item)
+            widest = usable[-1] if usable else None
+            truth_shift = None if widest is None else display_shift(baseline, truth_read(widest))
+            print(
+                f"       {item.field_name:<6} {percent_value(baseline):8.2f}% | "
+                + " ".join(cells)
+                + f" | {_pt_or_dash(truth_shift):>10} {item.fold_mm:8.2f}mm"
+            )
+            rows.append(
+                {
+                    "axis": metric_key,
+                    "part": item.part,
+                    "label": item.field_name,
+                    "baseline_display_pt": percent_value(baseline),
+                    "fold_threshold_mm": item.fold_mm,
+                    "detected_shift_pt": shifts,
+                    "widest_usable_delta_mm": None if widest is None else widest.delta_mm,
+                    "truth_shift_pt_at_widest": truth_shift,
+                    "detected_shift_pt_at_widest": (
+                        None if widest is None else display_shift(baseline, detected_read(widest))
+                    ),
+                }
+            )
+        print()
+
+    print("     真値δ最大 = 折り返さない最大の δ を landmark へ直接入れたときの Δpt。")
+    print("     検出側との差が、検出器とパイプラインが吸収した分である。")
+    print()
+    return {
+        "sigma_iod": REGION_SIGMA_IOD,
+        "deltas_mm": deltas,
+        "frames": measured[0].frames,
+        "rows": rows,
+    }
+
+
+#: 5) の行。(表の見出し, JSON の key, 読む系列, 統計の区画, 統計の名前)。
+#: 3) がすでに全系列ぶんの統計を作っているので、ここは読み出すだけにする。
+DISPLAY_SUMMARY_AXES: tuple[tuple[str, str, str, str, str], ...] = (
+    ("表示値の中央値", "median_pt", "raw_capture", "distribution_pt", "median"),
+    ("ノイズ床（標準偏差）", "noise_floor_pt", "raw_capture", "distribution_pt", "std"),
+    ("分布の全幅 p95-p05", "span_p05_p95_pt", "raw_capture", "distribution_pt", "span_p05_p95"),
+    ("隣接フレーム |Δ| 中央値", "flicker_median_pt", "raw_capture", "flicker_pt", "median"),
+    ("隣接フレーム |Δ| p95", "flicker_p95_pt", "raw_capture", "flicker_pt", "p95"),
+    ("解析5Hz 生値 |Δ| 中央値", "flicker_median_pt_app", "raw_app", "flicker_pt", "median"),
+    ("解析5Hz EMA 後 |Δ| 中央値", "flicker_median_pt_ema_app", "ema_app", "flicker_pt", "median"),
+    (
+        "解析5Hz EMA 後 p95-p05",
+        "span_p05_p95_pt_ema_app",
+        "ema_app",
+        "distribution_pt",
+        "span_p05_p95",
+    ),
+    ("整数 % の種類数（生値）", "display_levels_integer", "raw_capture", "levels", "integer"),
+)
+
+
+def _summary_value(metric: dict[str, Any], series_key: str, block: str, field: str) -> float | None:
+    """3) が作った系列の統計から 1 つ読む。無い組み合わせは None。"""
+    row = next((item for item in metric["series"] if item["series"] == series_key), None)
+    if row is None:
+        return None
+    data = row.get(block)
+    if not isinstance(data, dict) or field not in data:
+        return None
+    return float(data[field])
+
+
+def _print_display_summary(
+    metric_report: dict[str, Any],
+    injection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """5) 2D と 3D を同じ軸で並べる。単位はすべて pt（種類数を除く）。"""
+    print("  5) 要約 — 2D と 3D を同じ軸で（種類数以外はすべて pt）")
+
+    columns = [(key, str(metric_report[key]["label"])) for key in metric_report]
+    summary: dict[str, Any] = {key: {} for key, _ in columns}
+    width = 30 + 14 * len(columns)
+
+    print(f"     {'軸':<30}" + "".join(f"{label:>14}" for _, label in columns))
+    print("     " + "-" * width)
+    for axis_label, json_key, series_key, block, field in DISPLAY_SUMMARY_AXES:
+        cells: list[str] = []
+        for key, _ in columns:
+            value = _summary_value(metric_report[key], series_key, block, field)
+            summary[key][json_key] = value
+            cells.append("—" if value is None else f"{value:.3f}")
+        print(f"     {axis_label:<30}" + "".join(f"{cell:>14}" for cell in cells))
+
+    # 注入 4 部位の応答は、折り返さない最大の δ での Δpt を部位ごとに読む。
+    if injection is not None:
+        for key, _ in columns:
+            responses = [
+                float(row["detected_shift_pt_at_widest"])
+                for row in injection["rows"]
+                if row["axis"] == key and row["detected_shift_pt_at_widest"] is not None
+            ]
+            summary[key]["injection_shift_pt"] = (
+                {
+                    "parts": len(responses),
+                    "min": min(responses),
+                    "max": max(responses),
+                    "median": float(np.median(responses)),
+                }
+                if responses
+                else None
+            )
+        cells = []
+        for key, _ in columns:
+            item = summary[key].get("injection_shift_pt")
+            cells.append("—" if item is None else f"{item['min']:+.2f}〜{item['max']:+.2f}")
+        print("     " + "-" * width)
+        print(f"     {'注入 4 部位の応答 Δpt':<30}" + "".join(f"{cell:>14}" for cell in cells))
+        deltas = ", ".join(f"{value:.0f}mm" for value in injection["deltas_mm"])
+        print(f"     （折り返さない最大の δ での値。δ の刻みは {deltas}）")
+
+    print()
+    print(f"     参考  文献の信号全幅（対称な成人 ↔ 非対称な成人） {SIGNAL_SPAN * 100.0:.2f}pt")
+    print("     テイク間の中央値差は 1 回の実行では測れない。両テイクを別々に回して、")
+    print("     この表の「表示値の中央値」を引くこと。")
+    return summary
+
+
+# --------------------------------------------------------------------------
 # 合成フレーム（--self-test）
 # --------------------------------------------------------------------------
 def synthetic_capture(
@@ -3866,6 +4467,7 @@ def run_self_test() -> list[Check]:
 
     checks.append(_check_app_tau())
     checks.append(_check_mode_wiring())
+    checks.extend(_check_display_scale())
     checks.extend(_check_object_symmetry_3d())
     checks.extend(_check_object_symmetry_2d())
     checks.append(_check_domain_matches_probe())
@@ -3887,6 +4489,107 @@ def _check_app_tau() -> Check:
             f"（逆算 alpha={round_trip:.5f}）"
         ),
     )
+
+
+def _check_display_scale() -> list[Check]:
+    """セクション L の表示値が、UI に出るものと同じで、統計が既知の系列と合うこと。
+
+    L は「現行の表示式がどう見えるか」を測る。診断側で表示式を作り直していたら
+    測っているものが変わってしまうので、`ui.scores.format_symmetry` の出力と
+    直接突き合わせる。UI の import はここだけで行う（通常の実行では診断
+    スクリプトの import graph に UI を入れない）。
+    """
+    from face_symmetry_lab.ui.scores import format_symmetry
+
+    checks: list[Check] = []
+    grid = np.concatenate(
+        [
+            np.linspace(-0.2, 1.2, 71),
+            np.asarray([0.0, 0.0176, 0.0184, 0.0416, 0.0728, 1.0], dtype=np.float64),
+        ]
+    )
+    mismatches = [
+        (float(value), f"{percent_value(float(value)):.2f}%", format_symmetry(float(value)))
+        for value in grid
+        if f"{percent_value(float(value)):.2f}%" != format_symmetry(float(value))
+    ]
+    vectorised = float(np.abs(percent_values(grid) - [percent_value(float(v)) for v in grid]).max())
+    checks.append(
+        Check(
+            name="表示値が UI の format_symmetry と一致",
+            passed=not mismatches and vectorised < 1e-12,
+            detail=(
+                f"{len(grid)} 点で一致（clamp の外側を含む）"
+                if not mismatches
+                else f"不一致 {len(mismatches)} 件: {mismatches[0]}"
+            )
+            + f" / 系列版との最大差 {vectorised:.3e}",
+        )
+    )
+
+    # 1pt = 0.01 IOD が厳密であること。L の pt 表記が IPD の仮定に依存しない根拠。
+    step = 0.01
+    inside = np.linspace(0.0, 0.9, 91)
+    gaps = np.asarray(
+        [percent_value(float(value)) - percent_value(float(value) + step) for value in inside]
+    )
+    checks.append(
+        Check(
+            name="1pt = 0.01 IOD（表示は d の線形変換）",
+            passed=bool(np.abs(gaps - 1.0).max() < 1e-9),
+            detail=f"d を 0.01 増やしたときの表示差 最大偏差 {float(np.abs(gaps - 1.0).max()):.3e}",
+        )
+    )
+
+    # 既知の系列で分布・チラつき・種類数が合うこと。d = 0.02 ± 0.001 の交互列なら
+    # 表示は 98.0 ∓ 0.1 で、|Δ| は常に 0.2pt、整数へ丸めると 1 種類しか出ない。
+    alternating = 0.02 + 0.001 * np.asarray([1.0, -1.0] * 20)
+    display = percent_values(alternating)
+    stats = display_stats(display)
+    flicker = display_flicker(display)
+    levels = display_levels(display)
+    assert stats is not None and flicker is not None
+    checks.append(
+        Check(
+            name="表示値の分布・チラつき・種類数が既知の系列と合う",
+            passed=abs(stats["median"] - 98.0) < 1e-9
+            and abs(stats["span_p05_p95"] - 0.2) < 1e-9
+            and abs(flicker["median"] - 0.2) < 1e-9
+            and levels["integer"] == 1
+            and levels["two_decimals"] == 2,
+            detail=(
+                f"中央値 {stats['median']:.3f}pt（期待 98.000） / "
+                f"p95-p05 {stats['span_p05_p95']:.3f}pt（期待 0.200） / "
+                f"|Δ| 中央値 {flicker['median']:.3f}pt（期待 0.200） / "
+                f"整数 {levels['integer']} 種・小数2桁 {levels['two_decimals']} 種（期待 1 / 2）"
+            ),
+        )
+    )
+
+    # 解析 5Hz への間引きが、撮影 fps の端数に振り回されないこと。30.003fps では
+    # 6 フレームが 0.19998 秒で、「0.2 秒以上空いた最初」で選ぶと 4.3Hz に落ちる。
+    cadence: list[str] = []
+    passed = True
+    for fps in (30.0, 29.971116133930078, 30.003000300030003, 24.0):
+        times = np.arange(600, dtype=np.float64) / fps
+        picked = app_cadence_indices(times)
+        chosen = times[picked]
+        # 選ばれた各フレームが、いちばん近い 0.2 秒刻みからどれだけ離れているか。
+        # 撮影 fps が 0.2 秒を割り切らない限り、半フレーム以内には収まるはず。
+        error = float(
+            np.abs(chosen - np.round(chosen / APP_DELTA_SECONDS) * APP_DELTA_SECONDS).max()
+        )
+        expected = int(times[-1] / APP_DELTA_SECONDS) + 1
+        passed = passed and picked.size == expected and error <= 0.5 / fps + 1e-12
+        cadence.append(f"{fps:.3f}fps → {picked.size} 点 / 目標時刻との最大差 {error * 1000:.1f}ms")
+    checks.append(
+        Check(
+            name="解析 5Hz への間引きが撮影 fps に振り回されない",
+            passed=passed,
+            detail=" / ".join(cadence) + "（許容: 目標時刻から半フレーム以内）",
+        )
+    )
+    return checks
 
 
 def _check_mode_wiring() -> Check:
@@ -4216,13 +4919,14 @@ SECTIONS: dict[str, str] = {
     "I": "3 方式の直接比較",
     "J": "部位別の注入ゲイン",
     "K": "3D 座標の平均",
+    "L": "表示スケールの実効分解能",
 }
 
 #: 鏡像側の検出を必要とするセクション。要らないときは検出を半分に減らせる。
 MIRROR_SECTIONS: frozenset[str] = frozenset({"A", "F", "I"})
 
 #: 変形画像の再検出（注入測定）を必要とするセクション。
-INJECTION_SECTIONS: frozenset[str] = frozenset({"I", "J"})
+INJECTION_SECTIONS: frozenset[str] = frozenset({"I", "J", "L"})
 
 
 def build_arguments(argv: list[str] | None) -> argparse.Namespace:
@@ -4381,9 +5085,18 @@ def main(argv: list[str] | None = None) -> int:
         section_h(series, report)
 
     injections: dict[str, InjectionReport] | None = None
-    if INJECTION_SECTIONS & set(selected):
+    sharing = sorted(INJECTION_SECTIONS & set(selected))
+    if sharing:
         print()
-        print("[I/J] 部位ごとの注入測定（両セクションで共有するので 1 度だけ実行する）…")
+        # L を足しても A〜K の出力を変えないため、L が入らない選択では従来の 1 行を
+        # そのまま出す。測定内容は同じで、共有する相手が増えただけである。
+        if "L" in sharing:
+            print(
+                f"[{'/'.join(sharing)}] 部位ごとの注入測定"
+                "（各セクションで共有するので 1 度だけ実行する）…"
+            )
+        else:
+            print("[I/J] 部位ごとの注入測定（両セクションで共有するので 1 度だけ実行する）…")
         injections = collect_part_injections(arguments, capture)
     if "I" in selected:
         section_i(capture, series, injections, report)
@@ -4391,6 +5104,8 @@ def main(argv: list[str] | None = None) -> int:
         section_j(injections, report)
     if "K" in selected:
         section_k(capture, series, report)
+    if "L" in selected:
+        section_l(capture, series, injections, report)
 
     failures = 0
     if arguments.self_test:
