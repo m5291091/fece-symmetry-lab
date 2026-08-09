@@ -5,6 +5,8 @@
 再現コード: `scripts/measure_metric_noise.py`（セクション A〜K）
 測定日: 2026-08-08 / 被写体 1 名 / 2 テイク / 各 600 フレーム
 
+**2026-08-09 追記** — 本書の 3D の数値は、当時は診断スクリプト内の実装で出していた。その後 3D object symmetry を `domain`（`requirement.md` §8.5.1 / §8.6.5、`metric_version` `symmetry-3d/1.0.0`）へ実装し、スクリプトはそれを呼ぶ形へ切り替えた。**同じ take01 で A〜K を再実行し、report の数値 1343 件がすべて一致することを確認済み**（差が出たのは `metric_version` 表示行だけ）。本書の値は書き換えていない。
+
 ---
 
 ## 0. 結論

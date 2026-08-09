@@ -58,7 +58,10 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     MediaPipeImageLandmarker,
     _create_detector,
 )
-from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+from face_symmetry_lab.adapters.io.metric_config import (
+    SYMMETRY_3D_METRIC_CONFIG_PATH,
+    load_metric_config,
+)
 from face_symmetry_lab.adapters.io.model_store import (
     DEFAULT_MODELS_DIR,
     InstallStatus,
@@ -70,6 +73,7 @@ from face_symmetry_lab.domain.geometry import (
     GeometryError,
     normalization_transform,
     normalize_landmarks,
+    normalize_landmarks_3d,
 )
 from face_symmetry_lab.domain.landmarks import (
     LandmarkError,
@@ -80,6 +84,12 @@ from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.pose import FacePose
 from face_symmetry_lab.domain.smoothing import TimeBasedEma
 from face_symmetry_lab.domain.symmetry import SymmetryError, compute_symmetry
+from face_symmetry_lab.domain.symmetry_3d import (
+    Symmetry3DError,
+    axis_split,
+    compute_symmetry_3d,
+    object_symmetry_residual,
+)
 from face_symmetry_lab.domain.warp_mesh import (
     MAX_WARP_DISPLACEMENT_RATIO,
     WarpMeshError,
@@ -93,6 +103,10 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from scripts.symmetry_level3_probe import FACE3D, distance_3d, yaw_matrix  # noqa: E402
 
 CONFIG: MetricConfig = load_metric_config()
+#: §8.5.1 の 3D object symmetry 用 bundle。ペア表・眼アンカー・landmark map は
+#: `CONFIG` と同一で、`metric_version` だけが違う（FR-036）。3D 側の数値がどの
+#: 版から出たかを report へ残すために、別に読んでおく。
+CONFIG_3D: MetricConfig = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
 
 #: 成人の両眼間距離のおよその値。d は「両眼間距離 = 1」で正規化されているので、
 #: これを掛けると mm 換算になる。実測 IPD があればそちらを使うこと。
@@ -156,7 +170,7 @@ NEAR_3D_POSITION: float = 0.8
 #: 同じ目盛りで「② は ① 寄り」と読む上限。
 NEAR_2D_POSITION: float = 0.2
 
-JSON_SCHEMA: str = "measure-metric-noise/1.3.0"
+JSON_SCHEMA: str = "measure-metric-noise/1.4.0"
 
 
 # --------------------------------------------------------------------------
@@ -631,6 +645,11 @@ Z_SCALE_NOTE = """
      いちばん測りたい「d_3d と |yaw| の相関」へ姿勢が裏口から戻ってくる。
      yaw = 0 では両者は一致する。差が気になる場合のために、2D 投影スケール
      での値も 3) に併記してある。
+
+  4. 1.〜3. は `domain.geometry.normalize_landmarks_3d` と
+     `domain.symmetry_3d`（requirement.md §8.5.1）の実装であり、本スクリプトは
+     それを呼ぶ。診断だけが持つ写しは無い。独立実装
+     （`symmetry_level3_probe.distance_3d`）との一致は --self-test が毎回見る。
 """
 
 
@@ -646,50 +665,52 @@ def to_pixel_3d(
     return np.asarray(raw, dtype=np.float64) * np.array([width, height, width], dtype=np.float64)
 
 
-def _eye_anchor_depth(points3d: NDArray[np.float64]) -> float:
-    """両眼アンカーの中点の z。§8.3 の `center` を z 方向へ広げたもの。"""
-    left = float(points3d[list(CONFIG.left_eye_corners), 2].mean())
-    right = float(points3d[list(CONFIG.right_eye_corners), 2].mean())
-    return (left + right) / 2.0
+def normalized_3d_of(points3d: NDArray[np.float64]) -> NDArray[np.float64] | None:
+    """§8.5.1 の正規化（上記 2. と 3.）。単位は 3D の両眼間距離。
 
-
-def normalized_3d_of(
-    points3d: NDArray[np.float64],
-    *,
-    scale_from_3d: bool = True,
-) -> NDArray[np.float64] | None:
-    """§8.3 の相似変換を 3D へ広げる（上記 2. と 3.）。単位は両眼間距離。"""
-    if points3d.ndim != 2 or points3d.shape[1] != 3 or not np.isfinite(points3d).all():
-        return None
-    flat = points3d[:, :2]
+    `domain.geometry.normalize_landmarks_3d` をそのまま呼ぶ。診断が独自の写しを
+    持っていた頃は、スケール規約の変更が片方だけへ効く危険があった。
+    """
     try:
-        transform = normalization_transform(
-            flat,
-            left_eye_corners=CONFIG.left_eye_corners,
-            right_eye_corners=CONFIG.right_eye_corners,
+        return normalize_landmarks_3d(
+            points3d,
+            left_eye_corners=CONFIG_3D.left_eye_corners,
+            right_eye_corners=CONFIG_3D.right_eye_corners,
         )
     except GeometryError:
         return None
 
-    scale = transform.scale
-    if scale_from_3d:
-        left = points3d[list(CONFIG.left_eye_corners)].mean(axis=0)
-        right = points3d[list(CONFIG.right_eye_corners)].mean(axis=0)
-        scale = float(np.linalg.norm(right - left))
-    if scale <= 0.0 or not isfinite(scale):
+
+def distance_3d_of(normalized3d: NDArray[np.float64]) -> float | None:
+    """3D object symmetry の残差 RMS。§8.5.1 の実装（domain）を呼ぶ。
+
+    入力は `normalized_3d_of` を通した**正規化済み**座標である。domain の
+    `compute_symmetry_3d` は正規化から入るので、ここでは重ね合わせ以降だけを
+    使う。正規化を二度掛けないためであり、注入（テストE）や座標平均（セクション
+    K）のように「正規化フレームの上で座標をいじってから測る」経路で意味が変わる。
+    """
+    if normalized3d.ndim != 2 or normalized3d.shape[1] != 3:
         return None
-
-    plane = ((flat - transform.center) @ transform.rotation.T) / scale
-    depth = (points3d[:, 2] - _eye_anchor_depth(points3d)) / scale
-    return np.column_stack([plane, depth])
-
-
-def distance_3d_of(points3d: NDArray[np.float64]) -> float | None:
-    """3D object symmetry の残差 RMS。`symmetry_level3_probe.distance_3d` そのもの。"""
-    if not np.isfinite(points3d).all():
+    if not np.isfinite(normalized3d).all():
         return None
-    value = distance_3d(points3d)
+    residual, _ = object_symmetry_residual(normalized3d, CONFIG_3D.all_pairs)
+    value = axis_split(residual).distance
     return value if isfinite(value) else None
+
+
+def symmetry_3d_of(points3d: NDArray[np.float64]) -> float | None:
+    """生の画素相当 3D 座標から `d_3d` を出す。§8.5.1 の全手順（domain）。
+
+    `normalized_3d_of` → `distance_3d_of` と同じ値になるが、こちらは production が
+    通る経路そのもの（正規化も domain 側）である。
+    """
+    try:
+        result = compute_symmetry_3d(points3d, CONFIG_3D)
+    except Symmetry3DError:
+        return None
+    if result.overall is None or not isfinite(result.overall.distance):
+        return None
+    return result.overall.distance
 
 
 def distance_2d_procrustes_of(normalized: NDArray[np.float64]) -> float | None:
@@ -714,37 +735,19 @@ def distance_2d_procrustes_of(normalized: NDArray[np.float64]) -> float | None:
 
 
 def procrustes_residual(points3d: NDArray[np.float64]) -> NDArray[np.float64] | None:
-    """`distance_3d` と同一手順で重ね合わせ、残差ベクトルを (M, 3) で返す。
+    """重ね合わせの残差ベクトルを (M, 3) で返す。§8.5.1 の実装（domain）を呼ぶ。
 
     テストD の d_3d はこの残差の RMS そのものである（d_3d² = 残差の二乗平均）。
     テストG が xy と z へ分けて読むために、スカラーへ潰す前の形が要る。
-    行の並びは `MEASURED_INDICES` と同じで、`distance_3d` が使う点集合に一致する。
+    行の並びは `MEASURED_INDICES` と同じで、d_3d が使う点集合に一致する。
 
-    `symmetry_level3_probe.distance_3d` を書き換えずに手順を写しているので、
-    両者が一致していることを self-test が毎回確かめる（`_check_residual_matches`）。
+    手順の写しは持たない。domain の `object_symmetry_residual` をそのまま呼ぶ
+    ので、G と D が別の量になりようがない。
     """
     if points3d.ndim != 2 or points3d.shape[1] != 3 or not np.isfinite(points3d).all():
         return None
-    used = list(MEASURED_INDICES)
-    position = {landmark: order for order, landmark in enumerate(used)}
-    original = points3d[used]
-
-    mirrored = original.copy()
-    mirrored[:, 0] *= -1.0
-    swap = np.arange(len(used))
-    for left, right in CONFIG.all_pairs:
-        swap[position[left]], swap[position[right]] = position[right], position[left]
-    mirrored = mirrored[swap]
-
-    centred = original - original.mean(axis=0)
-    mirrored_centred = mirrored - mirrored.mean(axis=0)
-    left_vectors, _, right_vectors = np.linalg.svd(mirrored_centred.T @ centred)
-    rotation = left_vectors @ right_vectors
-    if np.linalg.det(rotation) < 0:
-        left_vectors[:, -1] *= -1.0
-        rotation = left_vectors @ right_vectors
-    aligned = mirrored_centred @ rotation
-    return np.asarray(centred - aligned, dtype=np.float64)
+    residual, _ = object_symmetry_residual(points3d, CONFIG_3D.all_pairs)
+    return residual
 
 
 # --------------------------------------------------------------------------
@@ -901,8 +904,10 @@ def build_series(capture: Capture) -> Series:
         plane = distance_2d_procrustes_of(normal)
         distances2dp.append(float("nan") if plane is None else plane)
 
+        # 距離は生の画素相当座標から domain の §8.5.1 実装で出す（production の
+        # 経路）。正規化座標は、後続セクションが軸ごとに読むために別に持つ。
         solid = normalized_3d_of(item.points3d) if item.points3d is not None else None
-        solid_distance = distance_3d_of(solid) if solid is not None else None
+        solid_distance = symmetry_3d_of(item.points3d) if item.points3d is not None else None
         if solid is None or solid_distance is None:
             normals3d.append(np.full((len(normal), 3), np.nan, dtype=np.float64))
             distances3d.append(float("nan"))
@@ -3863,7 +3868,7 @@ def run_self_test() -> list[Check]:
     checks.append(_check_mode_wiring())
     checks.extend(_check_object_symmetry_3d())
     checks.extend(_check_object_symmetry_2d())
-    checks.append(_check_residual_matches_distance())
+    checks.append(_check_domain_matches_probe())
     checks.extend(_check_injection_gain())
     return checks
 
@@ -4049,29 +4054,37 @@ def _check_object_symmetry_2d() -> list[Check]:
     return [invariance, sensitivity]
 
 
-def _check_residual_matches_distance() -> Check:
-    """テストG の残差が、テストD の d_3d と同じ重ね合わせから出ていること。
+def _check_domain_matches_probe() -> Check:
+    """domain の §8.5.1 実装が、診断の独立実装と同じ値を出すこと。
 
-    `procrustes_residual` は `symmetry_level3_probe.distance_3d` の手順を写した
-    ものである。写し間違いがあると G だけが静かに別の量を報告するので、恒等式
-    `d_3d = RMS(残差)` を毎回確かめる。
+    本スクリプトの 3D 側は `domain.symmetry_3d` を呼ぶようになった。突き合わせ
+    相手として `symmetry_level3_probe.distance_3d`（この調査を始めたときの独立
+    実装）を残してある。両者が食い違ったら、どちらかが静かに別の量を測っている。
+
+    生の画素相当座標から `compute_symmetry_3d` を通す経路（production と同じ）で
+    比べるので、正規化のスケール規約まで含めて一致を見ている。
     """
     worst = 0.0
     for trial in range(8):
         rng = np.random.default_rng(trial)
         sample = FACE3D + rng.normal(0.0, 0.03, size=FACE3D.shape)
-        residual = procrustes_residual(sample)
-        reference = distance_3d(sample)
-        if residual is None:
+        placed = _synthetic_pixel_face(roll_deg=11.0, scale=420.0, points=sample)
+        measured = symmetry_3d_of(placed)
+        normalized = normalized_3d_of(placed)
+        if measured is None or normalized is None:
             return Check(
-                name="G: 残差が d_3d と一致する", passed=False, detail="残差を計算できない"
+                name="D: domain の d_3d が独立実装と一致する",
+                passed=False,
+                detail="d_3d を計算できない配置がある",
             )
-        rms = float(np.sqrt((residual**2).sum(axis=1).mean()))
-        worst = max(worst, abs(rms - reference))
+        worst = max(worst, abs(measured - distance_3d(normalized)))
     return Check(
-        name="G: 残差の RMS が d_3d と一致する",
+        name="D: domain の d_3d が独立実装と一致する",
         passed=worst < 1e-12,
-        detail=f"8 通りの配置で最大差 {worst:.3e}（許容 1e-12）",
+        detail=(
+            f"画素へ置いた 8 通りの配置で、`domain.symmetry_3d.compute_symmetry_3d` と "
+            f"`symmetry_level3_probe.distance_3d` の最大差 {worst:.3e}（許容 1e-12）"
+        ),
     )
 
 
@@ -4322,7 +4335,7 @@ def main(argv: list[str] | None = None) -> int:
     capture = _build_capture(arguments, with_mirror=bool(MIRROR_SECTIONS & set(selected)))
     series = build_series(capture)
 
-    print(f"metric  : {CONFIG.metric_version}")
+    print(f"metric  : {CONFIG.metric_version} / {CONFIG_3D.metric_version}")
     print(f"landmark: {CONFIG.landmark_map_version}")
     print(f"model   : {capture.model_version}")
     print(f"入力    : {capture.source_kind} / {capture.frames_seen} 枚 / {capture.fps:.2f} fps")
@@ -4335,6 +4348,7 @@ def main(argv: list[str] | None = None) -> int:
     report: dict[str, Any] = {
         "schema": JSON_SCHEMA,
         "metric_version": CONFIG.metric_version,
+        "metric_version_3d": CONFIG_3D.metric_version,
         "landmark_map_version": CONFIG.landmark_map_version,
         "model_version": capture.model_version,
         "model_sha256": capture.model_sha256,
