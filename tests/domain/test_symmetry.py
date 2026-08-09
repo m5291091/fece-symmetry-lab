@@ -251,6 +251,31 @@ def test_the_overall_distance_is_missing_below_its_own_pair_minimum() -> None:
     assert result.is_complete is False
 
 
+def test_the_two_dimensional_outputs_are_pinned_to_their_recorded_values() -> None:
+    """AC-SCORE-09 の回帰。3D 指標（§8.5.1）を並走させても 2D の値は動かない。
+
+    ここで固定しているのは「壊れていないこと」ではなく「変わっていないこと」で
+    ある。`domain/geometry.py` は 2 つの指標で共有されるので、3D 側の都合で正規
+    化へ手を入れると、この test が最初に落ちる。値を更新してよいのは、`d` の
+    定義を変えて `metric_version` を上げるときだけである。
+    """
+    points = SYNTHETIC_FACE.copy()
+    points[19, 0] -= 4.0
+    points[7, 1] += 2.0
+    points[13, 0] += 1.5
+    points[25, 1] -= 3.0
+
+    result = compute_symmetry(points, _config())
+
+    assert result.distances == {
+        "contour": pytest.approx(0.028867513459481315, rel=1e-12),
+        "eyes": pytest.approx(0.04330127018922194, rel=1e-12),
+        "nose": pytest.approx(0.02165063509461097, rel=1e-12),
+        "mouth": pytest.approx(0.05773502691896256, rel=1e-12),
+    }
+    assert result.overall == pytest.approx(0.040343576522993925, rel=1e-12)
+
+
 def test_a_complete_result_converts_to_the_shared_distance_model() -> None:
     distance = compute_symmetry(SYNTHETIC_FACE, _config()).to_distance()
 

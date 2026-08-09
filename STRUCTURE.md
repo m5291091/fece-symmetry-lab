@@ -30,8 +30,10 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Runtime ports | `src/face_symmetry_lab/application/ports.py` |
 | Pinned model manifest | `configs/model-manifest.json` |
 | Frozen metric bundle | `configs/metrics/symmetry-2d-v1.json` |
+| 3D object symmetry の凍結 bundle（並走） | `configs/metrics/symmetry-3d-v1.json` |
 | Landmark map derivation | `scripts/derive_landmark_map.py` |
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
+| 3D object symmetry 指標（§8.5.1、並走） | `src/face_symmetry_lab/domain/symmetry_3d.py` |
 | 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
 | 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
 | 対称化画像のピクセルワーピング | `src/face_symmetry_lab/adapters/imaging/piecewise_warp.py` |
@@ -67,8 +69,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Landmark overlay painting | `domain/overlay.py` | `tests/domain/test_overlay.py` | FR-013, FR-034 |
 | Export record DTO | `domain/export.py` | `tests/domain/test_export.py` | FR-017, NFR-020 |
 | Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
-| Normalization / TLS midline | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, AC-SCORE-02 |
+| Normalization / TLS midline / 3D 正規化 | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, FR-036, AC-SCORE-02, §8.5.1 |
 | Symmetry distances | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01, AC-SCORE-04 |
+| 3D object symmetry 距離（並走） | `domain/symmetry_3d.py` | `tests/domain/test_symmetry_3d.py` | FR-036, AC-SCORE-05〜09, §8.5.1, §8.6.5 |
 | 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
 | 変形メッシュ・安全ガード | `domain/warp_mesh.py` | `tests/domain/test_warp_mesh.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
@@ -122,7 +125,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `f83af2d0a0dd5837a0a60f39064481334518c61183519e6f63af819d6efd0bee`_
+_File-list SHA-256: `b77cd8877e43f16c23e1b9b625d37834cdf955ae2b0b1290fd8c0ccebc5c08f2`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -135,6 +138,7 @@ face-symmetry-lab/
 - `configs/`
   - `metrics/`
     - `symmetry-2d-v1.json`
+    - `symmetry-3d-v1.json`
   - `model-manifest.json`
 - `docs/`
   - `adr/`
@@ -146,6 +150,8 @@ face-symmetry-lab/
     - `mediapipe-selfie-segmenter.md`
     - `openvino-age-gender-retail-0013.md`
     - `symmetry-2d-v1.md`
+    - `symmetry-3d-v1.md`
+  - `HANDOFF.md`
   - `beauty-page-plan.md`
   - `implementation-prompts.md`
   - `symmetry-metric-analysis.md`
@@ -178,7 +184,7 @@ face-symmetry-lab/
     - `application/`
       - … (15 files)
     - `domain/`
-      - … (17 files)
+      - … (18 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
@@ -226,6 +232,7 @@ face-symmetry-lab/
     - `test_smoothing.py`
     - `test_symmetrization.py`
     - `test_symmetry.py`
+    - `test_symmetry_3d.py`
     - `test_tracking_zoom.py`
     - `test_warp_mesh.py`
   - `model/`

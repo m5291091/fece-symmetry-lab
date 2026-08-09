@@ -5,6 +5,7 @@ import pytest
 
 from face_symmetry_lab.adapters.io.metric_config import (
     DEFAULT_METRIC_CONFIG_PATH,
+    SYMMETRY_3D_METRIC_CONFIG_PATH,
     load_metric_config,
 )
 from face_symmetry_lab.domain.landmarks import FACE_LANDMARK_COUNT
@@ -74,6 +75,51 @@ def test_the_frozen_eye_anchors_are_not_iris_points() -> None:
 
     assert set(config.left_eye_corners).isdisjoint(iris_indices)
     assert set(config.right_eye_corners).isdisjoint(iris_indices)
+
+
+def test_the_three_dimensional_bundle_loads_through_the_same_reader() -> None:
+    """FR-036: bundle が 2 件並存する。読み込み手順は同じである。"""
+    config = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
+
+    assert config.metric_version == "symmetry-3d/1.0.0"
+    assert config.landmark_count == FACE_LANDMARK_COUNT
+    assert set(config.parts) == set(PART_NAMES)
+
+
+def test_the_two_bundles_share_the_landmark_map() -> None:
+    """§8.5.1: 変わるのは距離の定義だけで、対応表と眼 anchor は同じである。"""
+    flat = load_metric_config()
+    solid = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
+
+    assert solid.landmark_map_version == flat.landmark_map_version
+    assert solid.all_pairs == flat.all_pairs
+    assert solid.left_eye_corners == flat.left_eye_corners
+    assert solid.right_eye_corners == flat.right_eye_corners
+    assert solid.metric_version != flat.metric_version
+
+
+def test_the_three_dimensional_bundle_keeps_the_midline_column_it_never_reads() -> None:
+    """§8.4: 3D 指標は正中線を読まないが、同じ landmark map を共有する都合で
+    列としては残す。bundle の notes がその事実を持つ。"""
+    solid = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
+    raw = json.loads(SYMMETRY_3D_METRIC_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert solid.midline_indices == load_metric_config().midline_indices
+    assert "正中線" in raw["notes"]
+
+
+def test_the_three_dimensional_bundle_carries_no_calibratable_coefficient() -> None:
+    """§8.6.5: §8.6 が廃止した自由パラメータを、新しい bundle で復活させない。"""
+    raw = json.loads(SYMMETRY_3D_METRIC_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert "sensitivity" not in raw
+    assert "weights" not in raw
+    assert "sensitivity_frozen" not in raw
+
+
+def test_the_default_bundle_is_still_the_two_dimensional_one() -> None:
+    """FR-036: 3D は並走であって切り替えではない。既定を動かしていない。"""
+    assert load_metric_config().metric_version.startswith("symmetry-2d/")
 
 
 def test_a_missing_file_is_reported(tmp_path: Path) -> None:

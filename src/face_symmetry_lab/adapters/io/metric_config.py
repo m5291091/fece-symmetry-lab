@@ -1,4 +1,11 @@
-"""凍結された指標 bundle を読み込む（§8.6, §16 `configs/metrics/`）。"""
+"""凍結された指標 bundle を読み込む（§8.6, §16 `configs/metrics/`）。
+
+bundle は 2 件並存する。`symmetry-2d/2.0.0` が §8.5 の正中線で折りたたむ距離を、
+`symmetry-3d/1.0.0` が §8.5.1 の object symmetry 解析を定義する。版の切り替え
+UI ではなく、**指標の定義が 2 つある**という意味である（§15.2, FR-036）。両者は
+同じ `landmark_map_version` と同じ対応ペア表を共有するので、読み込み手順も同じ
+である。表示・エクスポートが読むのは前者だけで、既定は変わらない。
+"""
 
 from __future__ import annotations
 
@@ -16,6 +23,8 @@ from face_symmetry_lab.domain.metrics import (
 
 APP_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_METRIC_CONFIG_PATH = APP_ROOT / "configs" / "metrics" / "symmetry-2d-v1.json"
+#: §8.5.1 の 3D object symmetry 用 bundle。既定にはしない（FR-036）。
+SYMMETRY_3D_METRIC_CONFIG_PATH = APP_ROOT / "configs" / "metrics" / "symmetry-3d-v1.json"
 
 
 def _pairs(raw: Any, part: str) -> tuple[tuple[int, int], ...]:

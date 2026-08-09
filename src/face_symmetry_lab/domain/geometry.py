@@ -1,8 +1,12 @@
-"""左右差指標のための純粋な 2D 幾何（§8.3, §8.4）。
+"""左右差指標のための純粋な幾何（§8.3, §8.4, §8.5.1）。
 
 正規化は roll・スケール・平行移動を取り除き、左右の形状差だけを残す。正中線は
 ``x = ay + b`` の回帰ではなく全最小二乗（PCA）で推定する。そうすることで、
 ほぼ水平な正中線でも推定が破綻しない。
+
+正中線と鏡映は 2D の `symmetry-2d/2.0.0` だけが使う。`normalize_landmarks_3d`
+は §8.5.1 の object symmetry 解析へ 3 軸そろった座標を渡すためのもので、割る
+スケールが **3D の**両眼間距離である点だけが 2D と異なる。
 """
 
 from __future__ import annotations
@@ -65,6 +69,15 @@ def _as_points(points: NDArray[np.float64]) -> NDArray[np.float64]:
     return array
 
 
+def _as_points_3d(points: NDArray[np.float64]) -> NDArray[np.float64]:
+    array = np.asarray(points, dtype=np.float64)
+    if array.ndim != 2 or array.shape[1] != 3:
+        raise GeometryError("座標は (N, 3) の配列である必要があります。")
+    if not np.isfinite(array).all():
+        raise GeometryError("座標は有限値である必要があります。")
+    return array
+
+
 def _anchor(points: NDArray[np.float64], corners: tuple[int, int]) -> NDArray[np.float64]:
     count = len(points)
     for index in corners:
@@ -116,6 +129,46 @@ def normalize_landmarks(
         right_eye_corners=right_eye_corners,
     )
     return transform.apply(points)
+
+
+def normalize_landmarks_3d(
+    points: NDArray[np.float64],
+    *,
+    left_eye_corners: tuple[int, int],
+    right_eye_corners: tuple[int, int],
+) -> NDArray[np.float64]:
+    """§8.3 の相似変換を 3 軸へ広げる（§8.5.1）。単位は 3D の両眼間距離である。
+
+    面内の扱いは §8.3 と同じで、眼 anchor を結ぶ線を水平にし、両眼中点を原点へ
+    寄せる。奥行きも同じ 4 点から取った中点を原点にする。
+
+    **割るスケールは 3 次元で測った両眼 anchor 間距離である。** §8.3 の 2D 投影
+    距離を使ってはならない。yaw が ``θ`` のとき投影距離は ``cos θ`` 倍に縮むので、
+    それで割ると距離が ``1/cos θ`` 倍に膨らみ、object symmetry が剛体不変性で
+    追い出したはずの姿勢依存が、正規化という裏口から戻ってくる。``θ = 0`` では
+    両者が一致するため、正面の合成顔だけでは見つからない種類の誤りである。
+
+    §8.5.1 の重ね合わせは並進と回転を吸収するので、この変換のうち距離へ効くのは
+    スケールだけである。原点の取り方と面内回転は 3D の剛体変換であり、残差を
+    変えない。それでも同じ座標系へ揃えておくのは、xy / z 分解（§8.6.5）と、
+    2D 側の正規化座標との突き合わせを読める形に保つためである。
+    """
+    array = _as_points_3d(points)
+    transform = normalization_transform(
+        array[:, :2],
+        left_eye_corners=left_eye_corners,
+        right_eye_corners=right_eye_corners,
+    )
+    left = _anchor(array, left_eye_corners)
+    right = _anchor(array, right_eye_corners)
+
+    scale = float(np.linalg.norm(right - left))
+    if scale <= MIN_EYE_DISTANCE:
+        raise GeometryError("両眼の距離が小さすぎるため正規化できません。")
+
+    plane = ((array[:, :2] - transform.center) @ transform.rotation.T) / scale
+    depth = (array[:, 2] - float(left[2] + right[2]) / 2.0) / scale
+    return np.column_stack([plane, depth])
 
 
 def fit_midline(points: NDArray[np.float64], indices: tuple[int, ...]) -> Midline:

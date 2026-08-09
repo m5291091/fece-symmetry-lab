@@ -11,10 +11,11 @@
 | `tests/domain/test_skin_quality.py` | camera色補正、頬の色調・texture参考値、欠測、未校正状態 | FR-025, AC-APPEARANCE-01, NFR-013 |
 | `tests/domain/test_export.py` | export record v3.0の有限値・欠測・距離列（`score_*`廃止、負値拒否、上限なし）・肌表面／年齢・性別contract | FR-017, FR-023, FR-025, NFR-013, NFR-020 |
 | `tests/domain/test_metrics.py` | 指標設定の検証（対応マップのみ。感度・重みfieldの不在、`all_pairs`のプールと`overall_min_pairs`） | FR-011, FR-018, NFR-013, AC-SCORE-04, §15.2 |
-| `tests/domain/test_geometry.py` | 正規化の不変性と TLS 中心線・鏡映 | FR-011, AC-SCORE-02, AC-SCORE-03 |
+| `tests/domain/test_geometry.py` | 正規化の不変性と TLS 中心線・鏡映、3D正規化（スケールが**3Dの**両眼間距離であり2D投影距離と別物であること・原点と面内の向き・平行移動と一様scaleへの不変性・(N,2)入力／非有限z／両眼距離0の拒否） | FR-011, FR-036, §8.5.1, AC-SCORE-02, AC-SCORE-03, AC-SCORE-05 |
 | `tests/domain/test_warp_mesh.py` | 境界アンカー生成、変位ガード（両眼間隔比・拒否）、範囲clamp、退化三角形判定、符号付き面積と向き反転判定（両側が1px²超でも検出・向きが一致すれば微小でも非反転・変位ガードとの独立）、不正入力拒否 | FR-035, AC-SYMM-02, §8.6.4 |
 | `tests/domain/test_symmetrization.py` | 正規化逆変換の往復一致、対称化点＝ペア中点／正中線への射影、対応未定義点の不変、ズレ＝§8.5距離の半分、入力非破壊 | FR-034, AC-SYMM-01, §8.6.2 |
-| `tests/domain/test_symmetry.py` | 部位別RMS距離と全ペアプールの全体距離、単調性、不変性、欠測（部位欠測が全体を欠測にしないこと）、上限なし | FR-011, AC-SCORE-01〜04 |
+| `tests/domain/test_symmetry.py` | 部位別RMS距離と全ペアプールの全体距離、単調性、不変性、欠測（部位欠測が全体を欠測にしないこと）、上限なし、3D指標を並走させても2D出力が動かないことの回帰（実測値の固定） | FR-011, FR-036, AC-SCORE-01〜04, AC-SCORE-09 |
+| `tests/domain/test_symmetry_3d.py` | §8.5.1のobject symmetry解析（鏡映→σでペア名入替→並進と回転だけのProcrustes→残差RMS）。剛体不変性（roll 0〜180°・yaw・pitch・平行移動・一様scale）を**左右非対称な**合成顔で確かめ同時に値が0でないことを要求すること、完全対称で0、既知量注入の閉じた期待値（符号と大きさ）と注入部位への集中、単調性、zだけの非対称の検出、正中点を動かしても値が動かないこと（2D側は動く）、yawで2Dのdは動き3Dのd_3dは動かないこと、恒等式`d_3d²=xy²+z²`と部位別からの点数加重再構成、部位別が単一の重ね合わせから来ていること、z欠測の伝播と2D指標の不変、ペア不足・非有限・(N,2)入力・両眼距離0の拒否 | FR-036, §8.5.1, §8.6.5, AC-SCORE-05〜09 |
 | `tests/domain/test_pose.py` | 極分解と intrinsic Y-X-Z の符号 contract | FR-009, §8.2.1, OD-04 |
 | `tests/domain/test_smoothing.py` | 時間ベース EMA と reset 条件、`tau_seconds`読み出し | FR-012, §8.7, §8.8 |
 | `tests/domain/test_tracking_zoom.py` | 追跡ズームの窓計算・座標写像・拡大率の純粋幾何、奥行き`z`の写像（窓の*幅*比だけで倍率が決まり平行移動を持たないこと・全フレーム窓で不変・欠測の維持） | FR-026, §14.3a, §8.1.1, AC-ZOOM-01 |
@@ -42,7 +43,7 @@
 | `tests/adapters/test_mediapipe_segmenter.py` | Image Segmenter contract（VIDEO）、frame order、shape/finite検証、close | FR-027, §14.3b, AC-DISPLAY-01 |
 | `tests/adapters/test_model_store.py` | manifest 検証、HTTPS/許可ホスト、取得再試行、sha256、atomic install | FR-002, AC-MODEL-01, AC-MODEL-02 |
 | `tests/adapters/test_piecewise_warp.py` | Delaunay＋区分アフィンの画素変形（恒等メッシュでの完全一致、元画像非破壊、変位時の画素移動と方向、境界アンカーの固定、三角形のindex解決、重複点・辺上の点、サイズ/チャンネル不一致の拒否）、向きが反転した三角形の読み飛ばし（内部の画素が元のまま・変位ガード内で発生・両側が細長くない場合・残りの三角形は従来どおり変形） | FR-035, AC-SYMM-02, §8.6.4 |
-| `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件 | FR-011, FR-020, AC-SCORE-04 |
+| `tests/adapters/test_metric_config.py` | 凍結 metric bundle の読み込みと構造不変条件、並走する2件（`symmetry-2d/2.0.0`・`symmetry-3d/1.0.0`）が同じ読み手を通ること・landmark map／ペア表／眼アンカーを共有し`metric_version`だけが違うこと・3D側が読まない`midline_indices`を列として保持すること・自由パラメータを持たないこと・既定が2Dのままであること | FR-011, FR-020, FR-036, §8.4, §8.5.1, AC-SCORE-04 |
 | `tests/adapters/test_session_exporter.py` | CSV / JSON の同値性、manifest、ファイル名 | FR-017, AC-EXPORT-01 |
 | `tests/model/test_real_landmarker.py` | 実 `.task` asset の load・検出・スコア smoke（未配置時は skip） | FR-002, FR-009, FR-011, §21.1 |
 | `tests/model/test_demographic_conversion.py` | 検証済み公式IRからmanifest固定ONNXを決定的に再生成（asset／変換tool未配置時は skip）。合成IR fixtureによる、Result層の`/sink_port_0`命名衝突（重複ONNX node名）の回帰test | FR-002, FR-022〜024, AC-AGE-01〜02, §10.6, §21.1 |
