@@ -46,6 +46,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenVINO reference parity (OD-07, dev-only) | `scripts/verify_openvino_parity.py` |
 | Cross-ONNX-runtime agreement (OD-07 due diligence, dev-only) | `scripts/verify_onnx_runtime_agreement.py` |
 | 実写での左右差ノイズ床・左右バイアス・注入ゲイン測定 (diagnostic, dev-only) | `scripts/measure_metric_noise.py` |
+| 追跡ズーム経路の `z` スケール写像の実測 (diagnostic, dev-only) | `scripts/measure_zoom_depth_scale.py` |
+| セッション間の表示値ばらつきと撮影共変量の実測 (diagnostic, dev-only) | `scripts/measure_session_variation.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | 間引きフレーム用のTTL cache | `src/face_symmetry_lab/runtime/display_cache.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
@@ -125,7 +127,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `b77cd8877e43f16c23e1b9b625d37834cdf955ae2b0b1290fd8c0ccebc5c08f2`_
+_File-list SHA-256: `f115512d0a61553218586968407d1b9c49e58ace45900c458cb476167d8509c5`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -153,6 +155,7 @@ face-symmetry-lab/
     - `symmetry-3d-v1.md`
   - `HANDOFF.md`
   - `beauty-page-plan.md`
+  - `capture-protocol.md`
   - `implementation-prompts.md`
   - `symmetry-metric-analysis.md`
   - `symmetry-metric-level3.md`
@@ -164,6 +167,8 @@ face-symmetry-lab/
   - `derive_landmark_map.py`
   - `generate_structure.py`
   - `measure_metric_noise.py`
+  - `measure_session_variation.py`
+  - `measure_zoom_depth_scale.py`
   - `symmetry_level3_probe.py`
   - `symmetry_metric_probe.py`
   - `verify.py`
