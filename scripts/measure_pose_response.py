@@ -12,19 +12,28 @@ take03 だけであり、同じ向きに外れている共変量が **pitch と�
     T: within-take の応答  d_3d と現行 2D を pitch / yaw / roll へ回帰する（全フレーム）
     Y: yaw を層別した応答  セクション H と同じ帯で yaw を止め、pitch だけを残す
     X: 検算                T の感度で、テイク間の表示値差を説明できるか
+    S: 形と交絡            take07（pitch を意図的に掃引したテイク）で、応答の形
+                          （線形 / |pitch| 型 / pitch=0 で折れる型）と、IOD・
+                          黒つぶれ率との交絡を測る（docs §16）
 
 §4 とセクション H は |yaw| だけを調べており、pitch と d_3d の関係は一度も測って
-いない。本スクリプトはそこだけを埋める。
+いない。本スクリプトはそこだけを埋める。**ただし T/Y/X は take01〜03（pitch が
+1.3〜6.3° しか動かない）でしか測れておらず、傾きを 1 個しか出さないので応答の
+形が分からない。** セクション S はその空白を埋める。
 
     uv run python scripts/measure_pose_response.py --self-test
     uv run python scripts/measure_pose_response.py --video take01.mov \
         --video take02.mov --video take03.mov --max-frames 600
+    uv run python scripts/measure_pose_response.py --video take07.mov \
+        --section S --max-frames 600
 
 検出とフレーム集合は `measure_session_variation.py` の `capture_take` をそのまま
 呼ぶので、§14 と同一である。指標・正規化・表示式・yaw の層別は
 `measure_metric_noise.py`（= `domain` の実装）から import している。**その 2 つの
 スクリプトへは一切触れない。** 本スクリプトが持つ独自の計算は、最小二乗と相関と
-自己相関の補正だけである。
+自己相関の補正だけである。セクション S は姿勢ゲートの既定値
+（`face_symmetry_lab.application.quality.QualityThresholds`）を読むだけで、
+`src/` はそれ以外含め一切変更しない。
 
 `src/` は読むだけで一切変更しない。画像と landmark 座標は JSON へ書き出さず、
 統計量だけを残す（CLAUDE.md §5 のプライバシー不変条件）。
@@ -43,6 +52,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.application.quality import QualityThresholds
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
@@ -53,6 +64,7 @@ from scripts.measure_metric_noise import (  # noqa: E402
     IPD_MM,
     MIN_USEFUL_FRAMES,
     YAW_BAND_DEGREES,
+    Capture,
     Series,
     _correlation,
     heading,
@@ -66,6 +78,7 @@ from scripts.measure_session_variation import (  # noqa: E402
     DEFAULT_MAX_FRAMES,
     METRIC_LABELS,
     MIN_TAKES,
+    FrameProfile,
     Take,
     capture_take,
     column_stats,
@@ -85,6 +98,7 @@ SECTIONS: dict[str, str] = {
     "T": "within-take の姿勢応答（全フレーム）",
     "Y": "yaw を層別したときの pitch 応答",
     "X": "検算 — within-take の感度でテイク間差を説明できるか",
+    "S": "pitch 応答の形と、見かけの距離との交絡",
 }
 
 #: 測る姿勢の軸。pitch が主題で、yaw は既知の対照、roll は除外の根拠に使う。
@@ -815,6 +829,638 @@ def _print_residuals(
 
 
 # --------------------------------------------------------------------------
+# セクション S — pitch 応答の形と、見かけの距離との交絡
+# --------------------------------------------------------------------------
+#: pitch ビンの幅（度）。take07 の 49.7° 幅（-39.9〜+9.7°）を 10 ビンに割ると
+#: 各ビン 28〜101 枚になり、中央値が安定する最小の幅である。これより狭いビン幅
+#: では数枚しか入らないビンが出て、中央値が不安定になる。
+PITCH_BIN_DEGREES: float = 5.0
+
+#: S-4 で IOD を層別する帯の数（5 分位）。
+IOD_BANDS: int = 5
+
+#: `fit_multiple` が係数を出す最小枚数。切片 + 2 説明変数でも自由度が残る枚数。
+MIN_MULTI_FRAMES: int = 10
+
+SHAPE_NOTE = """
+  何を測るか
+
+  §15（T/Y/X）は take01〜03（pitch が 1.3〜6.3° しか動かない）で傾きを 1 個だけ
+  出し、それを姿勢ゲート 30° 幅へ 24 倍外挿していた（§15.7）。take07 は pitch を
+  -39.9〜+9.7°（49.7° 幅、0 を跨ぐ）で意図的に掃引したテイクである。本節は
+  その中で、傾き 1 個では見えない「形」（線形か、|pitch| 型か、pitch=0 で折れる
+  型か）と、掃引でだけ顕在化する IOD（見かけの両眼間隔）との交絡を測る。
+
+      S-1  pitch をビンへ切り、表示値の中央値と四分位を並べる（形を目で見る）
+      S-2  符号付き線形 / |pitch| 線形 / 折れ線の 3 モデルを当てはめて比べる
+      S-3  姿勢ゲート内（|pitch| <= pitch_inner_deg）に絞って S-2 をやり直す
+      S-4  IOD・黒つぶれ率・輝度が pitch と一緒に動いていないかを見る
+
+  **本節も結論を断定しない。** 出すのは中央値・係数・残差 RMS・R^2・相関・区間と、
+  数値から直接言えることまでである。
+"""
+
+
+def _bin_edges(values: NDArray[np.float64], width: float) -> NDArray[np.float64]:
+    """半開区間 `[left, right)` のビン境界。最小値を含み、最大値も必ずどれかのビンへ入る。"""
+    low = width * float(np.floor(values.min() / width))
+    high = width * (float(np.floor(values.max() / width)) + 1.0)
+    if high <= low:
+        high = low + width
+    count = max(1, round((high - low) / width))
+    return low + width * np.arange(count + 1, dtype=np.float64)
+
+
+def _bin_index(values: NDArray[np.float64], edges: NDArray[np.float64]) -> NDArray[np.int64]:
+    """`values` が属するビン番号。境界ちょうどの値は右のビン（半開区間の側）へ入る。"""
+    index = np.searchsorted(edges, values, side="right") - 1
+    return np.clip(index, 0, edges.size - 2).astype(np.int64)
+
+
+@dataclass(frozen=True, slots=True)
+class BinRow:
+    """1 ビンぶんの表示値の要約。"""
+
+    left: float
+    right: float
+    count: int
+    median: float
+    p25: float
+    p75: float
+
+
+def pitch_bins(
+    pitch: NDArray[np.float64],
+    display: NDArray[np.float64],
+    width: float = PITCH_BIN_DEGREES,
+) -> list[BinRow]:
+    """pitch でビン分割した表示値の中央値と四分位。枚数 0 のビンは含めない。"""
+    keep = np.isfinite(pitch) & np.isfinite(display)
+    xs, ys = pitch[keep], display[keep]
+    if xs.size == 0:
+        return []
+    edges = _bin_edges(xs, width)
+    bucket = _bin_index(xs, edges)
+    rows: list[BinRow] = []
+    for order in range(edges.size - 1):
+        values = ys[bucket == order]
+        if values.size == 0:
+            continue
+        rows.append(
+            BinRow(
+                left=float(edges[order]),
+                right=float(edges[order + 1]),
+                count=int(values.size),
+                median=float(np.median(values)),
+                p25=float(np.percentile(values, 25.0)),
+                p75=float(np.percentile(values, 75.0)),
+            )
+        )
+    return rows
+
+
+def _fit_quality(
+    x: NDArray[np.float64], y: NDArray[np.float64], fit: Fit | None
+) -> tuple[float | None, float | None]:
+    """`fit_line` が出した (a, b) から残差 RMS と R^2 を計算する。
+
+    新しい最小二乗は解かない —— `fit_line` の係数へ予測させて残差を測るだけである。
+    """
+    if fit is None or fit.slope is None or fit.intercept is None:
+        return None, None
+    left = np.asarray(x, dtype=np.float64)
+    right = np.asarray(y, dtype=np.float64)
+    keep = np.isfinite(left) & np.isfinite(right)
+    xs, ys = left[keep], right[keep]
+    if xs.size == 0:
+        return None, None
+    residual = ys - (fit.intercept + fit.slope * xs)
+    rms = float(sqrt(float((residual**2).mean())))
+    total = float(((ys - ys.mean()) ** 2).sum())
+    r_squared = None if total <= 0.0 else float(1.0 - float((residual**2).sum()) / total)
+    return rms, r_squared
+
+
+@dataclass(frozen=True, slots=True)
+class MultiFit:
+    """複数の説明変数を持つ最小二乗あてはめ。切片は自動で加える。
+
+    `fit_line` と違い自己相関の補正はしない —— 2 変数以上での近似が確立していない
+    ためである。**傾きの信頼区間は出さない。** 区間が要る単回帰には `fit_line` を
+    使うこと（S-2 / S-3 の 1・2 番目のモデルと、S-4 の IOD 帯ごとの傾きはそちら）。
+    """
+
+    count: int
+    intercept: float
+    #: 説明変数を渡した順の係数。切片は含まない。
+    coefficients: tuple[float, ...]
+    residual_rms: float
+    r_squared: float | None
+
+
+def fit_multiple(
+    columns: tuple[NDArray[np.float64], ...], y: NDArray[np.float64]
+) -> MultiFit | None:
+    """y = a + Σ bᵢ·xᵢ の最小二乗。欠測は行ごと落とす。"""
+    arrays = [np.asarray(column, dtype=np.float64) for column in columns]
+    target = np.asarray(y, dtype=np.float64)
+    keep = np.isfinite(target)
+    for array in arrays:
+        keep &= np.isfinite(array)
+    count = int(keep.sum())
+    if count < MIN_MULTI_FRAMES:
+        return None
+    design = np.column_stack([np.ones(count, dtype=np.float64), *(array[keep] for array in arrays)])
+    target_kept = target[keep]
+    solution = np.linalg.lstsq(design, target_kept, rcond=None)[0]
+    residual = target_kept - design @ solution
+    rms = float(sqrt(float((residual**2).mean())))
+    total = float(((target_kept - target_kept.mean()) ** 2).sum())
+    r_squared = None if total <= 0.0 else float(1.0 - float((residual**2).sum()) / total)
+    return MultiFit(
+        count=count,
+        intercept=float(solution[0]),
+        coefficients=tuple(float(value) for value in solution[1:]),
+        residual_rms=rms,
+        r_squared=r_squared,
+    )
+
+
+def fit_hinge(pitch: NDArray[np.float64], display: NDArray[np.float64]) -> MultiFit | None:
+    """pitch=0 で連続な折れ線 `y = a + b_neg・min(pitch,0) + b_pos・max(pitch,0)`。
+
+    連続性は `min` / `max` の定義そのものから来る（pitch=0 ではどちらの項も 0 になる）
+    ので、別立てで制約を課す必要はない。`coefficients` は `(b_neg, b_pos)`。
+    """
+    pitch_array = np.asarray(pitch, dtype=np.float64)
+    return fit_multiple((np.minimum(pitch_array, 0.0), np.maximum(pitch_array, 0.0)), display)
+
+
+def hinge_value(fit: MultiFit, pitch: float) -> float:
+    """折れ線を任意の pitch で評価する。"""
+    b_neg, b_pos = fit.coefficients
+    return fit.intercept + b_neg * min(pitch, 0.0) + b_pos * max(pitch, 0.0)
+
+
+def hinge_reading(fit: MultiFit | None) -> str:
+    """b_neg / b_pos の符号から、劣化型か偏り型かを読む。判定できなければ `—`。"""
+    if fit is None or len(fit.coefficients) != 2:
+        return "—"
+    b_neg, b_pos = fit.coefficients
+    if b_neg == 0.0 or b_pos == 0.0:
+        return "—"
+    return "|pitch|型（劣化）" if (b_neg > 0.0) != (b_pos > 0.0) else "符号付き型（偏り）"
+
+
+def gate_mask(pitch: NDArray[np.float64], thresholds: QualityThresholds) -> NDArray[np.bool_]:
+    """`QualityThresholds.pitch_inner_deg` と同じ規約（境界含む）で姿勢ゲート内を選ぶ。
+
+    `application.quality.evaluate_frame` は `abs(pose.pitch_deg) > limit` で弾く
+    （超えたら弾く、ちょうどは通す）ので、ゲート内は `abs(pitch) <= limit` である。
+    """
+    return np.isfinite(pitch) & (np.abs(pitch) <= thresholds.pitch_inner_deg)
+
+
+def quantile_bands(values: NDArray[np.float64], bands: int = IOD_BANDS) -> list[NDArray[np.intp]]:
+    """値を昇順に並べ、ほぼ均等な `bands` 組へ分ける。重複せず全体を覆う。
+
+    分位点で値そのものを切ると同じ値が境界を跨ぐことがあるので、順位で分けている。
+    返り値は各帯に属する要素の、入力配列内での位置（インデックス）。
+    """
+    order = np.argsort(values, kind="stable")
+    return [np.asarray(part, dtype=np.intp) for part in np.array_split(order, bands)]
+
+
+def profile_field(take: Take, field: str) -> NDArray[np.float64]:
+    """`take.series` の各行に対応する `FrameProfile` の 1 フィールド。
+
+    `Series` は元のフレーム番号を保持しないので、`times = index * delta_seconds`
+    から逆算する。`take.profiles` は生フレームを 0 始まりの連番で密に持つ
+    （`capture_take` が毎フレーム 1 件ずつ積む）ので、逆算した index でそのまま
+    引ける。値の無い欄（顔が 1 つに定まらなかった等）は NaN で埋める。
+    """
+    if take.series.count == 0 or take.delta_seconds <= 0.0 or not take.profiles:
+        return np.zeros(0, dtype=np.float64)
+    dense = np.full(len(take.profiles), np.nan, dtype=np.float64)
+    for position, profile in enumerate(take.profiles):
+        value = getattr(profile, field)
+        if value is not None:
+            dense[position] = float(value)
+    indices = np.clip(
+        np.rint(take.series.times / take.delta_seconds).astype(np.int64), 0, dense.size - 1
+    )
+    return dense[indices]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelComparisonRow:
+    """1 テイク × 1 母集団 × 1 指標ぶんの 3 モデル比較。"""
+
+    take: str
+    population: str
+    metric: str
+    frames: int
+    signed: Fit | None
+    signed_rms: float | None
+    signed_r2: float | None
+    absolute: Fit | None
+    absolute_rms: float | None
+    absolute_r2: float | None
+    hinge: MultiFit | None
+
+
+def _model_comparison_row(
+    take: str,
+    population: str,
+    metric: str,
+    pitch: NDArray[np.float64],
+    display: NDArray[np.float64],
+) -> ModelComparisonRow:
+    signed = fit_line(pitch, display)
+    absolute = fit_line(np.abs(pitch), display)
+    signed_rms, signed_r2 = _fit_quality(pitch, display, signed)
+    absolute_rms, absolute_r2 = _fit_quality(np.abs(pitch), display, absolute)
+    hinge = fit_hinge(pitch, display)
+    frames = int(np.count_nonzero(np.isfinite(pitch) & np.isfinite(display)))
+    return ModelComparisonRow(
+        take=take,
+        population=population,
+        metric=metric,
+        frames=frames,
+        signed=signed,
+        signed_rms=signed_rms,
+        signed_r2=signed_r2,
+        absolute=absolute,
+        absolute_rms=absolute_rms,
+        absolute_r2=absolute_r2,
+        hinge=hinge,
+    )
+
+
+def _model_row_json(row: ModelComparisonRow) -> dict[str, Any]:
+    hinge = row.hinge
+    return {
+        "take": row.take,
+        "population": row.population,
+        "metric": row.metric,
+        "frames": row.frames,
+        "signed": fit_json(row.signed),
+        "signed_residual_rms": row.signed_rms,
+        "signed_r_squared": row.signed_r2,
+        "absolute": fit_json(row.absolute),
+        "absolute_residual_rms": row.absolute_rms,
+        "absolute_r_squared": row.absolute_r2,
+        "hinge": None
+        if hinge is None
+        else {
+            "frames": hinge.count,
+            "intercept": hinge.intercept,
+            "b_neg_pt_per_deg": hinge.coefficients[0],
+            "b_pos_pt_per_deg": hinge.coefficients[1],
+            "residual_rms": hinge.residual_rms,
+            "r_squared": hinge.r_squared,
+            "reading": hinge_reading(hinge),
+        },
+    }
+
+
+def _print_model_row(row: ModelComparisonRow) -> None:
+    label = METRIC_LABELS[row.metric]
+    print(f"     {row.take:<10}{row.population:<14}{label:<8}{row.frames:>5}枚")
+    print(
+        f"         符号付き {_signed(None if row.signed is None else row.signed.slope, 4):>10} "
+        f"{_interval(row.signed):<26} RMS {_number(row.signed_rms, 4):>8} "
+        f"R^2 {_number(row.signed_r2, 4):>7}"
+    )
+    print(
+        f"         |pitch|  {_signed(None if row.absolute is None else row.absolute.slope, 4):>10} "
+        f"{_interval(row.absolute):<26} RMS {_number(row.absolute_rms, 4):>8} "
+        f"R^2 {_number(row.absolute_r2, 4):>7}"
+    )
+    hinge = row.hinge
+    if hinge is None:
+        print("         折れ線   —")
+    else:
+        b_neg, b_pos = hinge.coefficients
+        print(
+            f"         折れ線   負{b_neg:+.4f} 正{b_pos:+.4f}  "
+            f"RMS {_number(hinge.residual_rms, 4)} R^2 {_number(hinge.r_squared, 4)}"
+            f"   → {hinge_reading(hinge)}"
+        )
+
+
+PITCH_BIN_NOTE = """
+  S-1) pitch ビン別の表示値中央値
+
+  ビン幅は {width:.1f}°（`PITCH_BIN_DEGREES`）で固定。区間は半開 `[left, right)` —
+  境界ちょうどの値は右のビンへ入るので、1 枚が 2 つのビンへ二重に入ることはない。
+  枚数 0 のビンは行ごと飛ばす。
+"""
+
+
+def _s1_pitch_bins(takes: list[Take], report: dict[str, Any]) -> None:
+    print(PITCH_BIN_NOTE.format(width=PITCH_BIN_DEGREES))
+    by_take: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for take in takes:
+        pitch = pose_series(take.series, "pitch")
+        print(f"  ● {take.name}")
+        by_take[take.name] = {}
+        for metric, label in METRIC_LABELS.items():
+            display = display_series(take.series, metric)
+            rows = pitch_bins(pitch, display)
+            print(f"     指標: {label}")
+            print(f"     {'pitch帯（度）':<16}{'枚数':>6}{'中央値':>10}{'p25':>10}{'p75':>10}")
+            print("     " + "-" * 52)
+            if not rows:
+                print("     —")
+            for row in rows:
+                bucket = f"{row.left:+.0f}〜{row.right:+.0f}"
+                print(
+                    f"     {bucket:<16}{row.count:>6}{row.median:>10.3f}"
+                    f"{row.p25:>10.3f}{row.p75:>10.3f}"
+                )
+            by_take[take.name][metric] = [
+                {
+                    "left": row.left,
+                    "right": row.right,
+                    "count": row.count,
+                    "median": row.median,
+                    "p25": row.p25,
+                    "p75": row.p75,
+                }
+                for row in rows
+            ]
+            print()
+    report["pitch_bins"] = {
+        "section": "S-1",
+        "bin_width_deg": PITCH_BIN_DEGREES,
+        "by_take": by_take,
+    }
+
+
+MODEL_NOTE = """
+  S-2) 3 モデルの当てはめ比較（全域 / yaw 層別）
+
+  同じ (pitch, 表示値) に 3 つのモデルを当てはめる。
+
+      1) 符号付き線形     y = a + b・pitch                       （`fit_line` そのもの）
+      2) |pitch| 線形      y = a + b・|pitch|                     （`fit_line` そのもの）
+      3) 折れ線（hinge）  y = a + b_neg・min(pitch,0) + b_pos・max(pitch,0)
+
+  3) は pitch=0 で自動的に連続になる（min/max がどちらも 0 になるため、別立ての
+  制約は要らない）。**b_neg と b_pos の符号が逆なら |pitch| 型（劣化）、同じなら
+  符号付き型（偏り）と読める。ただし 3 モデルの R^2 が横並びのときはこの判定は
+  できない**（take07 全域・3D は 0.2941 / 0.3077 / 0.3105 で横並びだった）。
+
+  「全域」は全フレーム、「yaw層別」はセクション Y と同じ `stable_yaw_mask`。
+  残差 RMS と R^2 は、1) と 2) は `fit_line` が出した (a, b) から計算するだけで、
+  別の最小二乗は解かない。3) だけは 2 つの説明変数を同時に持つので、切片込みで
+  新しく最小二乗を解く（`fit_multiple`）。
+"""
+
+
+def _s2_model_comparison(takes: list[Take], report: dict[str, Any]) -> None:
+    print(MODEL_NOTE)
+    rows: list[ModelComparisonRow] = []
+    for take in takes:
+        pitch = pose_series(take.series, "pitch")
+        selection = stable_yaw_mask(take.series)
+        print(f"  ● {take.name}")
+        for metric in METRIC_LABELS:
+            display = display_series(take.series, metric)
+            full_row = _model_comparison_row(take.name, "全域", metric, pitch, display)
+            rows.append(full_row)
+            _print_model_row(full_row)
+            if selection is not None:
+                mask, band, _median = selection
+                stratified = _model_comparison_row(
+                    take.name,
+                    f"yaw層別±{band:.1f}",
+                    metric,
+                    np.where(mask, pitch, np.nan),
+                    display,
+                )
+                rows.append(stratified)
+                _print_model_row(stratified)
+        print()
+    report["model_comparison"] = {"section": "S-2", "rows": [_model_row_json(row) for row in rows]}
+
+
+GATE_NOTE = """
+  S-3) 姿勢ゲート内に絞った再計算
+
+  `face_symmetry_lab.application.quality.QualityThresholds` の既定値
+  `pitch_inner_deg = {inner:.1f}` を使い、|pitch| <= {inner:.1f}° のフレームだけで
+  S-2 と同じ 3 モデルをやり直す。ここはプロダクトの既定をそのまま import して
+  いるので、既定が変われば本節の「ゲート内」も一緒に動く。
+"""
+
+
+def _s3_gated_recalculation(
+    takes: list[Take], thresholds: QualityThresholds, report: dict[str, Any]
+) -> None:
+    print(GATE_NOTE.format(inner=thresholds.pitch_inner_deg))
+    rows: list[ModelComparisonRow] = []
+    for take in takes:
+        pitch = pose_series(take.series, "pitch")
+        mask = gate_mask(pitch, thresholds)
+        print(f"  ● {take.name}   ゲート内 {int(mask.sum())} / {take.series.count} 枚")
+        for metric in METRIC_LABELS:
+            display = display_series(take.series, metric)
+            row = _model_comparison_row(
+                take.name,
+                f"ゲート内±{thresholds.pitch_inner_deg:.1f}",
+                metric,
+                np.where(mask, pitch, np.nan),
+                display,
+            )
+            rows.append(row)
+            _print_model_row(row)
+        print()
+    report["gated_model_comparison"] = {
+        "section": "S-3",
+        "pitch_inner_deg": thresholds.pitch_inner_deg,
+        "rows": [_model_row_json(row) for row in rows],
+    }
+
+
+IOD_NOTE = """
+  S-4) IOD（見かけの両眼間隔）との交絡
+
+  `measure_session_variation.FrameProfile.interocular_px` を使う。pitch を掃引
+  すると見かけの顔の大きさ（IOD）も一緒に動きうる。動いていれば、S-2/S-3 の
+  pitch 係数の一部は IOD の効きを拾っている可能性がある。
+
+      1) r(符号付き pitch, IOD) と r(|pitch|, IOD)（全域・ゲート内）
+      2) IOD を 5 分位で 5 帯に切り、帯の中だけで pitch の傾きと区間を見る
+      3) pitch と IOD を同時に入れた重回帰の係数と R^2（全域・ゲート内）
+      4) 黒つぶれ率・顔輝度も、pitch と一緒に動いていないかを相関で見る
+
+  傾きと区間は `fit_line` を使う。2) と 3) は同じ関数（`fit_line` / `fit_multiple`）
+  を複数の部分集合へ当てているだけで、自己相関補正を外した別の最小二乗は書かない。
+"""
+
+
+def _print_correlation_line(
+    prefix: str, signed: float | None, absolute: float | None, extra: str
+) -> None:
+    print(
+        f"        {prefix:<10} r(符号付pitch) {_signed(signed, 3):>8}   "
+        f"r(|pitch|) {_signed(absolute, 3):>8}{extra}"
+    )
+
+
+def _s4_iod_confound(
+    takes: list[Take], thresholds: QualityThresholds, report: dict[str, Any]
+) -> None:
+    print(IOD_NOTE)
+    entries: list[dict[str, Any]] = []
+    for take in takes:
+        pitch = pose_series(take.series, "pitch")
+        iod = profile_field(take, "interocular_px")
+        clip_low = profile_field(take, "face_clip_low")
+        clip_high = profile_field(take, "face_clip_high")
+        luminance = profile_field(take, "face_luminance")
+        full_mask = np.isfinite(pitch) & np.isfinite(iod)
+        gated_mask = full_mask & gate_mask(pitch, thresholds)
+
+        print(f"  ● {take.name}")
+        print("     1) r(pitch, IOD)")
+        correlations: dict[str, Any] = {}
+        for population, mask in (("全域", full_mask), ("ゲート内", gated_mask)):
+            count = int(mask.sum())
+            if count < 3:
+                print(f"        {population:<8} 枚数不足")
+                correlations[population] = None
+                continue
+            signed_r = _correlation(pitch[mask], iod[mask])
+            absolute_r = _correlation(np.abs(pitch[mask]), iod[mask])
+            values = iod[mask]
+            extra = (
+                f"   IOD {values.min():.1f}〜{values.max():.1f}px "
+                f"中央値 {float(np.median(values)):.1f}"
+            )
+            _print_correlation_line(population, signed_r, absolute_r, extra)
+            correlations[population] = {
+                "signed": signed_r,
+                "absolute": absolute_r,
+                "iod_min": float(values.min()),
+                "iod_max": float(values.max()),
+                "iod_median": float(np.median(values)),
+                "frames": count,
+            }
+        print()
+
+        print("     2) IOD の 5 分位帯ごとの pitch 傾き")
+        band_entries: dict[str, list[dict[str, Any]]] = {}
+        for metric, label in METRIC_LABELS.items():
+            display = display_series(take.series, metric)
+            print(f"        指標: {label}")
+            band_rows: list[dict[str, Any]] = []
+            if int(full_mask.sum()) >= IOD_BANDS:
+                base_pitch = pitch[full_mask]
+                base_display = display[full_mask]
+                base_iod = iod[full_mask]
+                for order, positions in enumerate(quantile_bands(base_iod), start=1):
+                    fit = fit_line(base_pitch[positions], base_display[positions])
+                    band_iod = base_iod[positions]
+                    print(
+                        f"           帯{order} {band_iod.min():.1f}〜{band_iod.max():.1f}px"
+                        f"（{positions.size}枚）  "
+                        f"傾き {_signed(None if fit is None else fit.slope, 4)}"
+                        f"  区間 {_interval(fit)}"
+                    )
+                    band_rows.append(
+                        {
+                            "band": order,
+                            "frames": int(positions.size),
+                            "iod_min": float(band_iod.min()),
+                            "iod_max": float(band_iod.max()),
+                            "fit": fit_json(fit),
+                        }
+                    )
+            else:
+                print("           枚数不足のため 5 帯へ分けられません。")
+            band_entries[metric] = band_rows
+        print()
+
+        print("     3) 重回帰 pitch + IOD → 表示値")
+        regressions: dict[str, dict[str, Any]] = {}
+        for metric, label in METRIC_LABELS.items():
+            display = display_series(take.series, metric)
+            print(f"        指標: {label}")
+            regressions[metric] = {}
+            for population, mask in (("全域", full_mask), ("ゲート内", gated_mask)):
+                fit = fit_multiple((pitch[mask], iod[mask]), display[mask])
+                if fit is None:
+                    print(f"           {population:<8} —")
+                    regressions[metric][population] = None
+                    continue
+                pitch_coefficient, iod_coefficient = fit.coefficients
+                print(
+                    f"           {population:<8} pitch {pitch_coefficient:+.4f} pt/度"
+                    f"   IOD {iod_coefficient:+.4f} pt/px   R^2 {_number(fit.r_squared, 4)}"
+                    f"   （{fit.count}枚）"
+                )
+                regressions[metric][population] = {
+                    "frames": fit.count,
+                    "pitch_pt_per_deg": pitch_coefficient,
+                    "iod_pt_per_px": iod_coefficient,
+                    "r_squared": fit.r_squared,
+                }
+        print()
+
+        print("     4) pitch と黒つぶれ率・輝度・IOD との相関（全域）")
+        covariate_correlations: dict[str, dict[str, float | None]] = {}
+        for label, values in (
+            ("face_clip_low", clip_low),
+            ("face_clip_high", clip_high),
+            ("face_luminance", luminance),
+            ("interocular_px", iod),
+        ):
+            mask = np.isfinite(pitch) & np.isfinite(values)
+            if int(mask.sum()) < 3:
+                print(f"        {label:<18} 枚数不足")
+                covariate_correlations[label] = {"signed": None, "absolute": None}
+                continue
+            signed_r = _correlation(pitch[mask], values[mask])
+            absolute_r = _correlation(np.abs(pitch[mask]), values[mask])
+            print(
+                f"        {label:<18} r(符号付) {_signed(signed_r, 3):>8}   "
+                f"r(|pitch|) {_signed(absolute_r, 3):>8}"
+            )
+            covariate_correlations[label] = {"signed": signed_r, "absolute": absolute_r}
+        print()
+
+        entries.append(
+            {
+                "take": take.name,
+                "correlation_with_iod": correlations,
+                "iod_band_pitch_slope": band_entries,
+                "regression_pitch_iod": regressions,
+                "covariate_correlation": covariate_correlations,
+            }
+        )
+
+    report["iod_confound"] = {
+        "section": "S-4",
+        "pitch_inner_deg": thresholds.pitch_inner_deg,
+        "iod_bands": IOD_BANDS,
+        "entries": entries,
+    }
+
+
+def section_s(takes: list[Take], report: dict[str, Any]) -> None:
+    heading("S", "pitch 応答の形と、見かけの距離との交絡 — take07 の掃引で埋める空白")
+    print(SHAPE_NOTE)
+    thresholds = QualityThresholds()
+    _s1_pitch_bins(takes, report)
+    _s2_model_comparison(takes, report)
+    _s3_gated_recalculation(takes, thresholds, report)
+    _s4_iod_confound(takes, thresholds, report)
+
+
+# --------------------------------------------------------------------------
 # 実写なしの健全性確認
 # --------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
@@ -1054,6 +1700,269 @@ def _check_interval() -> list[Check]:
     ]
 
 
+def _check_pitch_bins() -> list[Check]:
+    """ビン分割が半開区間であること（境界値は右のビンへ入る）。枚数 0 のビンが消えること。"""
+    # 幅 5 の境界（-35）ちょうどの値と、その隣（-40）を混ぜる。半開なら -35 は
+    # 右のビン [-35,-30) へ入り、[-40,-35) には -40 だけが残る。
+    boundary_pitch = np.asarray([-40.0, -35.0], dtype=np.float64)
+    boundary_display = np.asarray([10.0, 20.0], dtype=np.float64)
+    boundary_rows = pitch_bins(boundary_pitch, boundary_display, width=5.0)
+
+    # 中間の帯を素通りさせ、枚数 0 のビンが出力に現れないことを確かめる。
+    sparse_pitch = np.asarray([-10.0, -10.0, 8.0, 8.0], dtype=np.float64)
+    sparse_display = np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64)
+    sparse_rows = pitch_bins(sparse_pitch, sparse_display, width=5.0)
+    sparse_lefts = {row.left for row in sparse_rows}
+
+    return [
+        Check(
+            "境界ちょうどの値は左のビンではなく右のビンへ入る（半開区間）",
+            len(boundary_rows) == 2
+            and boundary_rows[0].left == -40.0
+            and boundary_rows[0].count == 1
+            and boundary_rows[1].left == -35.0
+            and boundary_rows[1].count == 1,
+            "—"
+            if len(boundary_rows) != 2
+            else f"[-40,-35)={boundary_rows[0].count}枚 [-35,-30)={boundary_rows[1].count}枚",
+        ),
+        Check(
+            "枚数 0 のビンは出力に現れない",
+            len(sparse_rows) == 2 and sparse_lefts == {-10.0, 5.0},
+            f"出力に現れたビンの左端: {sorted(sparse_lefts)}（帯は [-10,10) を 4 分割）",
+        ),
+    ]
+
+
+def _check_fit_quality() -> list[Check]:
+    """`_fit_quality` が `fit_line` の係数から RMS / R^2 を計算し、外れ値に反応すること。"""
+    x = np.linspace(-5.0, 5.0, 50)
+    y = 2.0 + 3.0 * x
+    fit = fit_line(x, y)
+    rms, r_squared = _fit_quality(x, y, fit)
+
+    noisy_y = y.copy()
+    noisy_y[0] += 100.0
+    noisy_fit = fit_line(x, noisy_y)
+    noisy_rms, noisy_r_squared = _fit_quality(x, noisy_y, noisy_fit)
+    return [
+        Check(
+            "完全な直線では RMS 0・R^2 1",
+            rms is not None
+            and rms < 1e-9
+            and r_squared is not None
+            and abs(r_squared - 1.0) < 1e-9,
+            f"RMS={rms} R^2={r_squared}",
+        ),
+        Check(
+            "外れ値を混ぜると RMS が増え R^2 が下がる",
+            None not in (rms, r_squared, noisy_rms, noisy_r_squared)
+            and noisy_rms > rms  # type: ignore[operator]
+            and noisy_r_squared < r_squared,  # type: ignore[operator]
+            f"RMS {rms:.4f}→{noisy_rms:.4f}  R^2 {r_squared:.4f}→{noisy_r_squared:.4f}"
+            if None not in (rms, r_squared, noisy_rms, noisy_r_squared)
+            else "—",
+        ),
+    ]
+
+
+def _hinge_sample(
+    *, kind: str, count: int = 200
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """`y = c - k|x|`（kind="abs"）または `y = c + k·x`（kind="signed"）の純粋な合成データ。
+
+    ノイズなし。|x| = max(x,0) - min(x,0)、x = max(x,0) + min(x,0) が恒等式なので、
+    折れ線の係数は閉じた値（k または ±k）へ厳密に収束する。
+    """
+    x = np.linspace(-10.0, 10.0, count)
+    y = 5.0 - 0.3 * np.abs(x) if kind == "abs" else 5.0 + 0.3 * x
+    return x, y
+
+
+def _coefficients_text(fit: MultiFit | None) -> str:
+    """`MultiFit.coefficients` を安全に文字列化する。長さが 2 でなくても壊れない。
+
+    罠テスト（`fit_multiple` が説明変数を取りこぼす等）で `coefficients` の長さが
+    想定と違っても、self-test 自体が例外で落ちずに `FAIL` を報告できるようにする。
+    """
+    if fit is None:
+        return "—"
+    parts = (f"b_{index}={value:+.6f}" for index, value in enumerate(fit.coefficients))
+    return ", ".join(parts)
+
+
+def _check_hinge_shape() -> list[Check]:
+    """折れ線が |pitch| 型（劣化）と符号付き型（偏り）を b_neg / b_pos の符号だけで見分けること。"""
+    x_abs, y_abs = _hinge_sample(kind="abs")
+    x_signed, y_signed = _hinge_sample(kind="signed")
+    degraded = fit_hinge(x_abs, y_abs)
+    biased = fit_hinge(x_signed, y_signed)
+    return [
+        Check(
+            "y = c - k|x| では b_neg と b_pos が符号が逆で、大きさがほぼ一致",
+            degraded is not None
+            and len(degraded.coefficients) == 2
+            and (degraded.coefficients[0] > 0.0) != (degraded.coefficients[1] > 0.0)
+            and abs(abs(degraded.coefficients[0]) - abs(degraded.coefficients[1])) < 1e-6,
+            _coefficients_text(degraded),
+        ),
+        Check(
+            "y = c + k・x では b_neg と b_pos が同符号で、ほぼ一致",
+            biased is not None
+            and len(biased.coefficients) == 2
+            and (biased.coefficients[0] > 0.0) == (biased.coefficients[1] > 0.0)
+            and abs(biased.coefficients[0] - biased.coefficients[1]) < 1e-6,
+            _coefficients_text(biased),
+        ),
+    ]
+
+
+def _check_hinge_continuity() -> list[Check]:
+    """折れ線は pitch=0 で連続（左右の極限が切片に一致すること）。"""
+    x, y = _hinge_sample(kind="abs", count=300)
+    fit = fit_hinge(x, y)
+    if fit is None:
+        return [Check("折れ線は pitch=0 で連続", False, "フィットが None")]
+    if len(fit.coefficients) != 2:
+        return [
+            Check(
+                "折れ線は pitch=0 で連続",
+                False,
+                f"coefficients の長さが 2 でない: {_coefficients_text(fit)}",
+            )
+        ]
+    left = hinge_value(fit, -1e-6)
+    right = hinge_value(fit, 1e-6)
+    return [
+        Check(
+            "折れ線は pitch=0 で連続（左右の極限が一致し、切片とも一致）",
+            abs(left - right) < 1e-4
+            and abs(left - fit.intercept) < 1e-4
+            and abs(right - fit.intercept) < 1e-4,
+            f"左極限={left:.6f} 右極限={right:.6f} 切片={fit.intercept:.6f}",
+        ),
+    ]
+
+
+def _check_hinge_reading() -> list[Check]:
+    """`hinge_reading` が符号の一致・不一致から正しい文言を選ぶこと。"""
+    degraded = fit_hinge(*_hinge_sample(kind="abs"))
+    biased = fit_hinge(*_hinge_sample(kind="signed"))
+    return [
+        Check(
+            "読み: 符号が逆なら |pitch| 型、同じなら符号付き型",
+            hinge_reading(degraded) == "|pitch|型（劣化）"
+            and hinge_reading(biased) == "符号付き型（偏り）",
+            f"degraded→{hinge_reading(degraded)} / biased→{hinge_reading(biased)}",
+        ),
+    ]
+
+
+def _check_multi_regression() -> list[Check]:
+    """既知の 2 変数合成 y = a + b1・x1 + b2・x2 の係数を `fit_multiple` が復元すること。"""
+    generator = np.random.default_rng(20260810)
+    x1 = generator.normal(size=300)
+    x2 = generator.normal(size=300)
+    y = 4.0 + 1.5 * x1 - 2.5 * x2
+    fit = fit_multiple((x1, x2), y)
+    ok = (
+        fit is not None
+        and len(fit.coefficients) == 2
+        and abs(fit.intercept - 4.0) < 1e-8
+        and abs(fit.coefficients[0] - 1.5) < 1e-8
+        and abs(fit.coefficients[1] - (-2.5)) < 1e-8
+    )
+    return [
+        Check(
+            "既知の 2 変数合成 y=a+b1・x1+b2・x2 の係数を復元する",
+            ok,
+            "—"
+            if fit is None
+            else f"a={fit.intercept:.6f} 係数={tuple(round(v, 6) for v in fit.coefficients)}",
+        ),
+    ]
+
+
+def _check_gate_mask() -> list[Check]:
+    """姿勢ゲート内マスクが `pitch_inner_deg` と厳密一致すること（境界 ±15.0 を含む）。"""
+    thresholds = QualityThresholds()
+    pitch = np.asarray(
+        [-20.0, -15.0, -14.999, 0.0, 14.999, 15.0, 20.0, float("nan")], dtype=np.float64
+    )
+    mask = gate_mask(pitch, thresholds)
+    expected = np.asarray([False, True, True, True, True, True, False, False])
+    return [
+        Check(
+            "ゲート内は abs(pitch) <= pitch_inner_deg（境界 ±15.0 ちょうどを含む）",
+            bool(np.array_equal(mask, expected)),
+            f"pitch_inner_deg={thresholds.pitch_inner_deg} mask={mask.tolist()}",
+        ),
+    ]
+
+
+def _check_quantile_bands() -> list[Check]:
+    """5 分位帯が全フレームを重複なく覆い、大きさがほぼ均等であること。"""
+    values = np.arange(23, dtype=np.float64)  # 5 で割り切れない枚数で試す
+    bands = quantile_bands(values, bands=5)
+    sizes = [int(part.size) for part in bands]
+    covered = np.concatenate(bands) if bands else np.zeros(0, dtype=np.intp)
+    return [
+        Check(
+            "5 分位帯は重複せず全フレームを覆う",
+            covered.size == values.size and set(covered.tolist()) == set(range(values.size)),
+            f"帯サイズ={sizes} 合計={covered.size}/{values.size}",
+        ),
+        Check(
+            "帯サイズはほぼ均等（最大と最小の差は 1 以下）",
+            bool(sizes) and max(sizes) - min(sizes) <= 1,
+            f"帯サイズ={sizes}",
+        ),
+    ]
+
+
+def _check_profile_field() -> list[Check]:
+    """`profile_field` が、逆算した元フレーム番号で `FrameProfile` を正しく引くこと。"""
+    series, _pitch = _synthetic_series(count=5)
+    profiles = tuple(
+        FrameProfile(
+            index=index,
+            time_seconds=index / 30.0,
+            face_count=1,
+            frame_luminance=0.0,
+            frame_clip_high=0.0,
+            frame_clip_low=0.0,
+            interocular_px=100.0 + index,
+        )
+        for index in range(5)
+    )
+    take = Take(
+        name="synthetic",
+        path=Path("synthetic.mov"),
+        fps=30.0,
+        frames_seen=5,
+        profiles=profiles,
+        capture=Capture(
+            detections=(),
+            frames_seen=5,
+            delta_seconds=1.0 / 30.0,
+            source_kind="video",
+            mode="image",
+            model_version="test",
+            model_sha256="0" * 64,
+        ),
+        series=series,
+    )
+    values = profile_field(take, "interocular_px")
+    expected = np.asarray([100.0, 101.0, 102.0, 103.0, 104.0], dtype=np.float64)
+    return [
+        Check(
+            "profile_field は逆算した元フレーム番号で FrameProfile の欄を引く",
+            bool(np.allclose(values, expected)),
+            f"{values.tolist()}",
+        ),
+    ]
+
+
 def run_self_test() -> list[Check]:
     checks: list[Check] = []
     checks.extend(_check_fit())
@@ -1062,6 +1971,15 @@ def run_self_test() -> list[Check]:
     checks.extend(_check_adjacency())
     checks.extend(_check_effective_count())
     checks.extend(_check_interval())
+    checks.extend(_check_pitch_bins())
+    checks.extend(_check_fit_quality())
+    checks.extend(_check_hinge_shape())
+    checks.extend(_check_hinge_continuity())
+    checks.extend(_check_hinge_reading())
+    checks.extend(_check_multi_regression())
+    checks.extend(_check_gate_mask())
+    checks.extend(_check_quantile_bands())
+    checks.extend(_check_profile_field())
     return checks
 
 
@@ -1174,6 +2092,8 @@ def main(argv: list[str] | None = None) -> int:
             section_y(takes, report)
         if "X" in selected:
             section_x(takes, report)
+        if "S" in selected:
+            section_s(takes, report)
 
     failures = 0
     if arguments.self_test:
@@ -1197,7 +2117,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print("=" * 100)
-    print("解説: docs/symmetry-metric-measurements.md §15")
+    print("解説: docs/symmetry-metric-measurements.md §15（T/Y/X） / §16（S）")
     print("=" * 100)
     return 1 if failures else 0
 
