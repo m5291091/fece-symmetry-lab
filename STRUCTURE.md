@@ -1,6 +1,6 @@
 # Repository Structure
 
-This is the compact, AI-facing repository index for `face-symmetry-lab`. It is an exploration aid, not a specification. `requirement.md` remains the product source of truth and `AGENTS.md` remains the execution policy.
+This is the compact, AI-facing repository index for `face-symmetry-lab`. It is an exploration aid, not a specification. `requirement.md` remains the product source of truth and `CLAUDE.md` remains the execution policy.
 
 Read this file once at the start of a task. After locating the relevant module, inspect only that module, its corresponding tests, model card, and requirement sections.
 
@@ -9,7 +9,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Concern | Path |
 |---|---|
 | Product requirements | `requirement.md` |
-| AI and development policy | `AGENTS.md` |
+| AI and development policy | `CLAUDE.md` |
 | Test traceability | `testbox.md` |
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
@@ -48,6 +48,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 実写での左右差ノイズ床・左右バイアス・注入ゲイン測定 (diagnostic, dev-only) | `scripts/measure_metric_noise.py` |
 | 追跡ズーム経路の `z` スケール写像の実測 (diagnostic, dev-only) | `scripts/measure_zoom_depth_scale.py` |
 | セッション間の表示値ばらつきと撮影共変量の実測 (diagnostic, dev-only) | `scripts/measure_session_variation.py` |
+| within-take の姿勢応答（pitch と表示値）の実測 (diagnostic, dev-only) | `scripts/measure_pose_response.py` |
 | Frame admission gate | `src/face_symmetry_lab/runtime/frame_scheduler.py` |
 | 間引きフレーム用のTTL cache | `src/face_symmetry_lab/runtime/display_cache.py` |
 | MediaPipe landmark adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_landmarker.py` |
@@ -127,14 +128,21 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `f115512d0a61553218586968407d1b9c49e58ace45900c458cb476167d8509c5`_
+_File-list SHA-256: `5cf3a5686e6bd2e0f88c31b6b5afb97155212f7817fdbcad4ee0915d2923e0c9`_
 
 face-symmetry-lab/
 - `.antigravity/`
   - `instructions.md`
+- `.claude/`
+  - `agents/`
+    - `implementer.md`
+  - `scripts/`
+    - `block-commit.sh`
+  - `settings.json`
 - `.github/`
   - `workflows/`
     - `ci.yml`
+  - `copilot-instructions.md`
 - `.streamlit/`
   - `config.toml`
 - `configs/`
@@ -167,6 +175,7 @@ face-symmetry-lab/
   - `derive_landmark_map.py`
   - `generate_structure.py`
   - `measure_metric_noise.py`
+  - `measure_pose_response.py`
   - `measure_session_variation.py`
   - `measure_zoom_depth_scale.py`
   - `symmetry_level3_probe.py`
@@ -266,7 +275,6 @@ face-symmetry-lab/
   - `test_cli.py`
 - `.gitignore`
 - `.python-version`
-- `AGENTS.md`
 - `CLAUDE.md`
 - `CODEX.md`
 - `NOTICE`

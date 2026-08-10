@@ -33,7 +33,7 @@
 毎回検査する。
 
 `src/` は読むだけで一切変更しない。画像と landmark 座標は JSON へ書き出さず、
-統計量だけを残す（AGENTS.md 不変条件 1）。
+統計量だけを残す（CLAUDE.md §5 のプライバシー不変条件）。
 """
 
 from __future__ import annotations

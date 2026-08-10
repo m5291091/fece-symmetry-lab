@@ -30,3 +30,9 @@ warped*.png
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Claude Code のローカル生成物と個人設定（.claude/settings.json と
+# .claude/agents/ と .claude/scripts/ は共有するので追跡する）
+.claude/worktrees/
+.claude/settings.local.json
+CLAUDE.local.md

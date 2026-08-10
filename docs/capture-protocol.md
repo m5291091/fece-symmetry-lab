@@ -127,7 +127,7 @@ uv run python scripts/measure_session_variation.py --video take04.mov --section 
 
 ## 6. 命名と保管
 
-**顔の映像・座標をリポジトリへ入れない**（`AGENTS.md` 不変条件 1）。
+**顔の映像・座標をリポジトリへ入れない**（`CLAUDE.md` §5 のプライバシー不変条件）。
 
 | 種別 | 名前 | 扱い |
 |---|---|---|

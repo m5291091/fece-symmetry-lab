@@ -1125,7 +1125,7 @@ Advanced設定に手動編集UIは存在しない。品質ゲート閾値は固�
 
 ```text
 face-symmetry-lab/
-├── AGENTS.md
+├── CLAUDE.md
 ├── STRUCTURE.md
 ├── testbox.md
 ├── .python-version

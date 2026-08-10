@@ -2,7 +2,7 @@
 
 Face Symmetry Lab は、顔の左右差、撮影条件依存の肌表面参考値、18〜75歳向けの参考年齢・参考性別をローカルで可視化する研究用Streamlitアプリです。画像をアプリから外部へ送信・保存せず、人物の価値、美しさ、医学的状態、本人性を判定しません。
 
-仕様の正本は [requirement.md](requirement.md)、リポジトリ探索の入口は [STRUCTURE.md](STRUCTURE.md)、AI・開発作業の共通規約は [AGENTS.md](AGENTS.md) です。
+仕様の正本は [requirement.md](requirement.md)、リポジトリ探索の入口は [STRUCTURE.md](STRUCTURE.md)、AI・開発作業の共通規約は [CLAUDE.md](CLAUDE.md) です。
 
 ## 現在の実装範囲
 
