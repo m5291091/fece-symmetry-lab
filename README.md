@@ -137,3 +137,7 @@ uv run python scripts/generate_structure.py --include-untracked --check
 ```
 
 新しいテストを追加・移動した場合は [testbox.md](testbox.md) も更新してください。
+
+## 開発体制
+
+メインスレッドはOpus、実装はimplementer(Sonnet)が担当する。
