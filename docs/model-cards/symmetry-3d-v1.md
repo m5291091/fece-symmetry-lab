@@ -4,7 +4,7 @@
 |---|---|
 | metric_version | `symmetry-3d/1.0.0` |
 | landmark_map_version | `mediapipe-478-mirror/1.0.0`（`symmetry-2d/2.0.0` と同一） |
-| status | **主指標。** 表示（全体・部位別・部位平均の対称度）とエクスポート（レコードスキーマ v4.0）へ接続済み（FR-036, OD-09） |
+| status | **主指標。** 表示（全体の対称度・部位別の対称度・全体のスコア）とエクスポート（レコードスキーマ v4.0）へ接続済み（FR-036, OD-09） |
 | config | `configs/metrics/symmetry-3d-v1.json` |
 | 定義 | `requirement.md` §8.5.1（手順）、§8.6.5（出力値） |
 | intended comparison | 同一人物・同一端末・同一照明・同一撮影条件内の相対比較 |

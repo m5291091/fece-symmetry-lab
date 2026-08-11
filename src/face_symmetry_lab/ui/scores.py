@@ -42,16 +42,23 @@ DISTANCE_UNIT_CAPTION = (
 )
 
 
-#: §8.6.5: 部位平均の対称度（`s_3d`）の見出し。「対称度」の枠組みに留め、
-#: 「スコア」という語は使わない（実体は全体・部位別と同じ変換であり、
-#: 違いは部位の重み付けだけである）。
-PART_EQUAL_WEIGHT_LABEL: Final[str] = "部位平均の対称度"
+#: §8.6.3/§8.6.5: 見出しに出す `s_3d` のラベル。**ユーザー指定により
+#: 「部位平均の対称度」ではなく「全体のスコア」とする**（2026-08-11、
+#: W5-fix）。実体は §8.6.3 と同じ線形・無パラメータの変換で読んだ対称度であり、
+#: `s_3d` の重みは全部位について 1 に固定され調整の余地を持たないため、§8.6 が
+#: 禁じる較正されていない自由パラメータには当たらない（§8.6.3「表示語として
+#: のスコア」・§8.6.5）。採点・評価ではないことは help（`PART_EQUAL_WEIGHT_HELP`）
+#: で明示する。
+PART_EQUAL_WEIGHT_LABEL: Final[str] = "全体のスコア"
 
-#: §8.6.5: 部位平均の対称度の help。全体の対称度（対応点を 1 票ずつ数える
-#: `d_3d`）とは重みだけが異なる並列の総合量であることを明示する。
+#: §8.6.3/§8.6.5: 「全体のスコア」の help。全体の対称度（対応点を 1 票ずつ数える
+#: `d_3d`）とは重みだけが異なる並列の総合量であることと、採点ではないことの
+#: 両方を明示する。
 PART_EQUAL_WEIGHT_HELP: Final[str] = (
     "部位を 1 票ずつ数えた対称度です。全体の対称度（対応点を 1 票ずつ）とは重みだけが"
     "違い、鼻のようにペア数の少ない部位も、目のように多い部位と同じ重みで入ります。"
+    "較正された感度係数や部位の重み付けを持たない値であり、採点ではありません。"
+    "高い・低いは良し悪しを表しません。"
 )
 
 #: §5.3・§14.7（同 docs）: 部位別の値は同一条件で撮り直すだけでも動く幅がある。
@@ -128,6 +135,26 @@ def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
     if symmetry_3d is not None and symmetry_3d.overall is not None:
         return symmetry_3d.overall.distance
     return None
+
+
+def resolve_equal_weight_distance(outcome: AnalysisOutcome) -> float | None:
+    """§8.6.3/§8.6.5: 見出しの「全体のスコア」として表示する `s_3d` を 1 か所で決める。
+
+    `s_3d` は §8.6.5・§8.7 のとおり EMA の対象に含めないため、常に生値である
+    （`resolve_overall_distance` と異なり、平滑値へのフォールバックを持たない
+    ——そもそも平滑値が存在しない）。3D 一式が欠測、または部位が 1 つでも
+    欠測していれば `None`（`—`）を返し、0 や前回値へ置換しない（不変条件 11）。
+    `Symmetry3DResult.equal_weight_distance` が「部位が 1 つでも欠測なら欠測に
+    する。使える部位だけで平均しない」を実装しているので、ここではそれを
+    そのまま読むだけでよい。
+
+    Camera（見出し）と Image のどちらの呼び出し側もこの解決を個別に書かないよう、
+    `resolve_overall_distance` と同じくここへ集約している。
+    """
+    symmetry_3d = outcome.symmetry_3d
+    if symmetry_3d is None:
+        return None
+    return symmetry_3d.equal_weight_distance
 
 
 _PART_LABELS: Final[dict[str, str]] = {
@@ -235,18 +262,30 @@ def render_pose(outcome: AnalysisOutcome) -> None:
 def render_headline_metrics(
     *,
     overall: float | None,
+    equal_weight: float | None,
     estimate: DemographicEstimate | None,
 ) -> None:
-    """FR-013/FR-014: 全体の距離・参考性別・参考年齢を、映像や写真のすぐ隣に出す。
+    """FR-013/FR-014/FR-032: 見出しを 2 行に分けて映像や写真のすぐ隣に出す。
 
-    Camera と Image が共有し、両者が同じ見出し配置を使う（§5.1）。
+    Camera と Image が共有し、両者が同じ見出し配置を使う（§5.1）。**見出しは
+    2 行構成である。** 1 行目は左右差の 2 値（全体の対称度・全体のスコア）、
+    2 行目は参考値の 2 値（参考性別・参考年齢）とする。不変条件 5（§1.3.1）は
+    参考年齢・参考性別と左右差を別々の結果として扱い、相関・因果を示唆しない
+    と定めており、1 行に 3〜4 項目を並置するより行を分けるほうがこの不変条件
+    に忠実である。
+
+    ``overall``（§8.6.3 の `d_3d`）と ``equal_weight``（同 `s_3d`）は、それぞれ
+    `resolve_overall_distance` / `resolve_equal_weight_distance` で解決した
+    値を渡すこと。どちらも重みだけが異なる並列の総合量で、通常は一致しない
+    （§8.6.5）。
+
     ``estimate`` は性別・年齢へ分解済みの引数ではなく、まとめて受け取る。
     §10.8 は 2 つの値を 1 つの観測として扱っており、どちらの呼び出し側も
     同じ形で展開していたためである。欠測は古い値や 0 ではなく `—` を出す
     （NFR-013）。
     """
-    score_column, gender_column, age_column = st.columns(3)
-    score_column.metric(
+    symmetry_column, score_column = st.columns(2)
+    symmetry_column.metric(
         "全体の対称度",
         format_symmetry(overall),
         # §5.3: ずれを必ず併記する。数値をどちらの向きからも読めるようにし、
@@ -256,6 +295,14 @@ def render_headline_metrics(
             "100% は数学上の上限で目標値ではありません。"
         ),
     )
+    score_column.metric(
+        PART_EQUAL_WEIGHT_LABEL,
+        format_symmetry(equal_weight),
+        help=PART_EQUAL_WEIGHT_HELP,
+    )
+    st.caption(f"ずれ {format_distance(overall)}（対称度との和は 100%）")
+
+    gender_column, age_column = st.columns(2)
     gender_column.metric(
         "参考性別",
         "—" if estimate is None else GENDER_LABELS[estimate.gender],
@@ -264,17 +311,18 @@ def render_headline_metrics(
         "参考年齢",
         "—" if estimate is None else f"{estimate.estimated_age_years:.0f}歳",
     )
-    st.caption(f"ずれ {format_distance(overall)}（対称度との和は 100%）")
 
 
 def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
     """見出しの総合値を除く、左右差に関するすべてを描画する。
 
-    見出しの総合値は `render_headline_metrics` が担い、映像や写真の隣に出る。
-    こちらは部位別・部位平均の内訳・姿勢・肌表面参考値を描画する。いずれも
-    その下の画面幅いっぱいの詳細セクションに属する（§5.1, FR-013, AC-LAYOUT-01）。
+    見出し（`render_headline_metrics`）は全体の対称度・全体のスコアの両方を
+    映像や写真のすぐ隣に出す。こちらは部位別の内訳・姿勢・肌表面参考値を
+    描画する。いずれもその下の画面幅いっぱいの詳細セクションに属する
+    （§5.1, FR-013, AC-LAYOUT-01）。**全体のスコア（`s_3d`）は見出しへ表示する
+    ため、ここでは重複して描画しない。**
 
-    §8.6.3 のとおり、部位別・部位平均は主指標 `symmetry-3d/1.0.0`
+    §8.6.3 のとおり、部位別は主指標 `symmetry-3d/1.0.0`
     （`outcome.symmetry_3d`）から作る。`outcome.symmetry`（`symmetry-2d/2.0.0`）
     は §8.6.6 の構造的な欠陥を持つため画面には出さず、エクスポートの
     `distance_*_raw` としてのみ残る。
@@ -321,11 +369,6 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         )
     st.caption(PART_LEVEL_VARIATION_CAPTION)
 
-    # §8.6.5: `s_3d`。部位が 1 つでも欠測なら欠測にする（使える部位だけで
-    # 平均しない）。全体の対称度（`d_3d`、点を 1 票ずつ）とは重みだけが違う。
-    equal_weight = symmetry_3d.equal_weight_distance if symmetry_3d is not None else None
-    st.metric(PART_EQUAL_WEIGHT_LABEL, format_symmetry(equal_weight), help=PART_EQUAL_WEIGHT_HELP)
-
     render_pose(outcome)
     if outcome.skin_quality is not None:
         skin = outcome.skin_quality
@@ -355,8 +398,9 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
     st.caption(DISTANCE_UNIT_CAPTION)
     st.caption(
         "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
-        "部位別の値を平均しても全体の値にはなりません（全体は全対応ペアをまとめて 1 回だけ"
-        "折りたたんで求めるためです）。"
+        "部位別の値を平均しても全体の対称度にはなりません（全体の対称度は全対応ペアを"
+        "まとめて 1 回だけ折りたたんで求めるためです）。見出しの「全体のスコア」は"
+        "部位別の値から明示的に組み立てた別の値で、全体の対称度とは重みだけが異なります。"
     )
     st.caption(
         "同一人物・同一環境内の相対的な傾向を見るための値です。"

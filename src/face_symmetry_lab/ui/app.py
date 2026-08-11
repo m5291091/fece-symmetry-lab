@@ -60,6 +60,7 @@ from face_symmetry_lab.ui.scores import (
     render_score_details,
     render_symmetrized_image,
     render_tracking_status,
+    resolve_equal_weight_distance,
     resolve_overall_distance,
 )
 
@@ -404,13 +405,17 @@ def _render_image_section() -> None:
 
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
-    # §8.6.3/§8.7: 全体の対称度は主指標 symmetry-3d/1.0.0 から作る。静止画は
-    # 平滑値を持たない（`analyze_still_image` が明示的に欠測へ落とす）ため、
-    # ここは自然に生値へ落ちる。
+    # §8.6.3/§8.7: 全体の対称度・全体のスコアは主指標 symmetry-3d/1.0.0 から作る。
+    # 静止画は平滑値を持たない（`analyze_still_image` が明示的に欠測へ落とす）
+    # ため、全体の対称度は自然に生値へ落ちる。全体のスコアはもともと生値のみ
+    # （§8.6.5・§8.7）。
     overall = resolve_overall_distance(analysis.outcome) if analysis is not None else None
+    equal_weight = resolve_equal_weight_distance(analysis.outcome) if analysis is not None else None
 
-    # §5.1: 写真と見出し（スコア・性別・年齢+状態）を横に並べ、ひと目で必要な
-    # ものがページの下方に隠れないようにする。Camera と Image で同じ配置を使う。
+    # §5.1: 写真と見出し（全体の対称度・全体のスコア・参考性別・参考年齢+状態）
+    # を横に並べ、ひと目で必要なものがページの下方に隠れないようにする。
+    # 見出しは不変条件 5 に従い、左右差 2 つ・参考値 2 つの 2 行に分ける
+    # （`render_headline_metrics` へ委譲）。Camera と Image で同じ配置を使う。
     preview_column, status_column = st.columns([7, 5], gap="large")
     with preview_column:
         if analysis is None:
@@ -419,7 +424,7 @@ def _render_image_section() -> None:
             st.image(analysis.landmarks.preview, caption="検出したランドマーク", width="stretch")
 
     with status_column:
-        render_headline_metrics(overall=overall, estimate=estimate)
+        render_headline_metrics(overall=overall, equal_weight=equal_weight, estimate=estimate)
         st.divider()
         if analysis is not None:
             render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)

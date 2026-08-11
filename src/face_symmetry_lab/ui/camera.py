@@ -81,6 +81,7 @@ from face_symmetry_lab.ui.scores import (
     render_score_details,
     render_symmetrized_image,
     render_tracking_status,
+    resolve_equal_weight_distance,
     resolve_overall_distance,
 )
 
@@ -279,18 +280,29 @@ def release_session_pipeline() -> None:
 def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     """不変 snapshot を 5 Hz で読み、見出しブロックだけを描画する。
 
-    FR-013/FR-032: 総合スコア・参考性別・参考年齢・追跡状態・位置誘導は映像の
-    隣（配置はプリセットに従う）へ置き、カメラから目を離さずに読めるようにする。
-    それ以外は詳細であり、常に画面幅いっぱいで下に出る `_render_detail_fragment`
-    が受け持つ（§5.1, AC-LAYOUT-01）。
+    FR-013/FR-032: 全体の対称度・全体のスコア・参考性別・参考年齢・追跡状態・
+    位置誘導は映像の隣（配置はプリセットに従う）へ置き、カメラから目を離さず
+    に読めるようにする。見出しは §5.1・不変条件 5 に従い、左右差 2 つ・参考値
+    2 つの 2 行に分ける（`render_headline_metrics` へ委譲）。それ以外は詳細で
+    あり、常に画面幅いっぱいで下に出る `_render_detail_fragment` が受け持つ
+    （§5.1, AC-LAYOUT-01）。
     """
     snapshot = pipeline.snapshot()
     with st.container(border=True):
-        # §8.6.3/§8.7: 全体の対称度は主指標 symmetry-3d/1.0.0 から作る。
+        # §8.6.3/§8.7: 全体の対称度・全体のスコアは主指標 symmetry-3d/1.0.0 から作る。
         overall = (
             resolve_overall_distance(snapshot.analysis) if snapshot.analysis is not None else None
         )
-        render_headline_metrics(overall=overall, estimate=snapshot.demographic_estimate)
+        equal_weight = (
+            resolve_equal_weight_distance(snapshot.analysis)
+            if snapshot.analysis is not None
+            else None
+        )
+        render_headline_metrics(
+            overall=overall,
+            equal_weight=equal_weight,
+            estimate=snapshot.demographic_estimate,
+        )
         st.divider()
         render_tracking_status(snapshot.status, _STATUS_MESSAGES)
 
@@ -596,7 +608,10 @@ def _render_panel_layout_control() -> None:
         options=_PANEL_LAYOUT_OPTIONS,
         key=PANEL_LAYOUT_STATE_KEY,
         horizontal=True,
-        help="見出し（対称度・参考性別・参考年齢・状態）の位置だけを変えます。数値は変わりません。",
+        help=(
+            "見出し（全体の対称度・全体のスコア・参考性別・参考年齢・状態）の位置だけを"
+            "変えます。数値は変わりません。"
+        ),
     )
     st.radio(
         "映像上の HUD の位置",
@@ -645,8 +660,9 @@ def render_camera_section() -> None:
     st.subheader("リアルタイム ランドマーク表示")
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "映像にはランドマークと中心線だけを重ね、全体の対称度・参考性別・参考年齢は"
-        "映像のすぐ隣に大きく表示します。設定と詳しい数値は映像の下のタブにまとめています。"
+        "映像にはランドマークと中心線だけを重ね、全体の対称度・全体のスコア・"
+        "参考性別・参考年齢は映像のすぐ隣に大きく表示します。設定と詳しい数値は"
+        "映像の下のタブにまとめています。"
     )
 
     model_path = resolve_ready_landmarker()
