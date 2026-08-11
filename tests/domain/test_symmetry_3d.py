@@ -23,7 +23,11 @@ from face_symmetry_lab.domain.landmarks import (
 )
 from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, PartMap, build_metric_config
 from face_symmetry_lab.domain.symmetry import compute_symmetry
-from face_symmetry_lab.domain.symmetry_3d import Symmetry3DError, compute_symmetry_3d
+from face_symmetry_lab.domain.symmetry_3d import (
+    Symmetry3DError,
+    compute_symmetry_3d,
+    equal_weight_distance_from_parts,
+)
 
 #: 計測される対応点の総数（12 ペア = 24 点）。既知量の期待値に効く。
 MEASURED_POINTS = 24
@@ -587,3 +591,44 @@ def test_a_perfectly_symmetric_face_has_zero_equal_weight_distance() -> None:
 
     assert result.equal_weight_distance is not None
     assert result.equal_weight_distance == pytest.approx(0.0, abs=1e-12)
+
+
+# --------------------------------------------------------------------------
+# equal_weight_distance_from_parts（H2: 部位別距離だけからの s_3d 算出、
+# `ui.scores` の計算過程開示が部位別平滑値から同じ式を呼べるようにする切り出し）
+# --------------------------------------------------------------------------
+
+
+def test_equal_weight_distance_from_parts_computes_the_root_mean_square() -> None:
+    """s_3d = sqrt(mean(d_p²)) を、既知の値で直接検算する（罠: 平均を取り忘れる・
+    二乗を忘れる実装はここで落ちる）。"""
+    parts = {"contour": 0.02, "eyes": 0.0, "nose": 0.0, "mouth": 0.0}
+
+    assert equal_weight_distance_from_parts(parts) == pytest.approx(0.01, abs=1e-12)
+
+
+def test_equal_weight_distance_from_parts_matches_the_property_on_a_real_result() -> None:
+    """`Symmetry3DResult.equal_weight_distance` が使うのと同じ式であることを、
+    実際の重ね合わせ結果の部位別距離を渡して確認する。"""
+    result = compute_symmetry_3d(_asymmetric(), _config())
+    assert result.overall is not None
+    parts = {name: result.distance(name) for name in PART_NAMES}
+
+    resolved = equal_weight_distance_from_parts(parts)
+
+    assert resolved is not None
+    assert resolved == pytest.approx(result.equal_weight_distance, abs=1e-12)
+
+
+def test_equal_weight_distance_from_parts_is_missing_if_any_part_is_none() -> None:
+    parts = {"contour": 0.01, "eyes": 0.02, "nose": None, "mouth": 0.015}
+
+    assert equal_weight_distance_from_parts(parts) is None
+
+
+def test_equal_weight_distance_from_parts_is_missing_if_a_part_key_is_absent() -> None:
+    """`s_3d` は部位集合が固定であることに依存する（§8.6.5）。キー自体が無い
+    （辞書が部分的にしか埋まっていない）場合も、使える部位だけで平均しない。"""
+    parts = {"contour": 0.01, "eyes": 0.02, "mouth": 0.015}
+
+    assert equal_weight_distance_from_parts(parts) is None

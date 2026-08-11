@@ -24,6 +24,7 @@ from face_symmetry_lab.domain.models import (
     GenderLabel,
     Status,
 )
+from face_symmetry_lab.domain.symmetry_3d import equal_weight_distance_from_parts
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
 SCORE_HEADING = "対称度（実験値・両眼距離比）"
@@ -69,6 +70,51 @@ PART_LEVEL_VARIATION_CAPTION: Final[str] = (
     "部位別の値は、同じ条件で撮り直すだけでも動きます。"
     "撮影のたびに動く幅より小さい変化は、部位別の値だけでは左右差の変化として読み取れません。"
     "この幅は部位ごとに異なり、個人差は未検証です。"
+)
+
+
+#: §8.6.3(H2)・§5.3: 「全体のスコア」の計算過程を開示する expander の中身。
+#: 初学者向けに (1)「ずれ」の定義 (2) 実数値を代入した式 (3) 全体の対称度との
+#: 重みの違い (4) 高い数字になりやすい理由 (5) 実測レンジと被写体 1 名の但し書き、
+#: の順で並べる。価値判断語（§5.3・不変条件 8）と、母集団の分布を持たないため
+#: 基準値（「◯%以上なら対称」）のいずれも書かない。
+SCORE_CALCULATION_DEVIATION_INTRO: Final[str] = (
+    "この式に出てくる「ずれ」は、両目の間隔を100%としたときの、左右で対応する"
+    "点どうしの離れ具合です。両目の間隔が6cmの人なら、ずれ1%はおよそ0.6mmに"
+    "あたります。"
+)
+
+#: 実数値を代入する前の、式そのものの形。`s_3d` が欠測のときはこれだけを示す。
+SCORE_CALCULATION_FORMULA_LINE: Final[str] = (
+    "全体のスコア = 100 - √( (輪郭のずれ² + 目のずれ² + 鼻のずれ² + 口のずれ²) ÷ 4 )"
+)
+
+#: §8.6.5・不変条件 11: 部位が 1 つでも欠測すると `s_3d` は欠測になる。そのとき
+#: 計算過程は数値を出さず、古い値や 0 でも埋めない。
+SCORE_CALCULATION_UNAVAILABLE_NOTICE: Final[str] = (
+    "部位別の値のいずれかが欠測しているため、今は数値を当てはめられません。"
+)
+
+SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION: Final[str] = (
+    "全体の対称度は対応点126個を1個ずつ数えるため、点の多い部位（目26組）ほど"
+    "強く効きます。全体のスコアは部位を1つずつ数えるため、点の少ない部位"
+    "（鼻7組）も同じ重みで入ります。この重みの違いが、全体の対称度と全体の"
+    "スコアが一致しない理由です。"
+)
+
+SCORE_CALCULATION_HIGH_VALUE_NOTE: Final[str] = (
+    "成人の顔の左右のずれは、両眼の間隔の1〜2%ほどです。この式ではそれが"
+    "そのまま「98%前後」という表示になります。高い数字が出やすい指標であり、"
+    "98%が「ほぼ完全」という意味ではありません。"
+)
+
+#: `docs/symmetry-metric-measurements.md` §12.0（文献の対称/非対称群差）・
+#: §12.1（撮り直しの表示値レンジ、take01/take02 3D、被写体 1 名）に基づく。
+SCORE_CALCULATION_MEASURED_RANGE_CAPTION: Final[str] = (
+    "同じ人を撮り直した実測（被写体 1 名）では、表示値は96〜99%の範囲に収まりました"
+    "（`docs/symmetry-metric-measurements.md` §12.1）。文献で「対称」とされた成人と"
+    "「非対称」とされた成人の差は2.11ポイントです（同§12.0）。そのため0.1ポイントの"
+    "違いも、この指標では小さくありません。"
 )
 
 
@@ -346,6 +392,73 @@ def render_headline_metrics(
     )
 
 
+def _score_calculation_walkthrough(part_values: Mapping[str, float]) -> str | None:
+    """H2: 「全体のスコア」を実数値で組み立てる計算過程のテキストを作る。
+
+    ``part_values`` は呼び出し側が `resolve_part_distance_3d` で解決した値
+    （部位別メトリクスの主表示と同じ、平滑値優先）をそのまま渡す。4 部位が
+    揃わない場合は `None` を返す（呼び出し側はこれを「今は値が揃っていない」
+    として扱う）。数値は `format_distance` / `format_symmetry`
+    （`equal_weight_distance_from_parts` と同じ式）だけを通し、3 つ目の丸め
+    規則は作らない。
+    """
+    combined = equal_weight_distance_from_parts(part_values)
+    if combined is None:
+        return None
+
+    def _bare(value: float) -> str:
+        return format_distance(value).rstrip("%")
+
+    deviation_line = "   ".join(
+        f"{PART_LABELS[name]} {format_distance(part_values[name])}" for name in PART_NAMES
+    )
+    squares = " + ".join(f"{_bare(part_values[name])}²" for name in PART_NAMES)
+    return (
+        f"{SCORE_CALCULATION_FORMULA_LINE}\n\n"
+        f"  {deviation_line}\n"
+        f"  √(({squares}) ÷ 4) = {format_distance(combined)}\n"
+        f"  100 - {_bare(combined)} = {format_symmetry(combined)}"
+    )
+
+
+def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
+    """§5.3/§8.6.3（H2）: 「全体のスコア」の計算過程を、初学者向けに開示する。
+
+    畳んだ `st.expander` の中に (1) 「ずれ」の定義 (2) 実数値を代入した式
+    (3) 全体の対称度との重みの違い (4) 高い数字になりやすい理由 (5) 実測レンジと
+    被写体 1 名の但し書き、の順で示す。
+
+    計算過程が使う部位別の値は、この関数のすぐ上で描画済みの部位別メトリクス
+    （主表示、`resolve_part_distance_3d`）と必ず同じものを使う。`s_3d` の完備性
+    は `resolve_equal_weight_distance` （その時点の生値、§8.6.5・§8.7）で判定
+    する。`resolve_part_distance_3d` は平滑値が欠測部位を「保持」しうる
+    （H1 改訂）ため、部位別の値そのものではなく、この生値ベースの判定を
+    ゲートに使う。さもないと、今のフレームでは欠測している部位の古い平滑値を
+    使って数値を組み立ててしまう（不変条件 11 違反）。
+    """
+    with st.expander(f"{PART_EQUAL_WEIGHT_LABEL}の計算過程を見る"):
+        st.caption(SCORE_CALCULATION_DEVIATION_INTRO)
+
+        walkthrough: str | None = None
+        if resolve_equal_weight_distance(outcome) is not None:
+            part_values: dict[str, float] = {}
+            for name in PART_NAMES:
+                value = resolve_part_distance_3d(outcome, name)
+                if value is not None:
+                    part_values[name] = value
+            walkthrough = _score_calculation_walkthrough(part_values)
+
+        if walkthrough is None:
+            st.code(SCORE_CALCULATION_FORMULA_LINE, language="text")
+            st.info(SCORE_CALCULATION_UNAVAILABLE_NOTICE)
+        else:
+            st.code(walkthrough, language="text")
+
+        st.caption(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION)
+        st.caption(SCORE_CALCULATION_HIGH_VALUE_NOTE)
+        st.caption(SCORE_CALCULATION_MEASURED_RANGE_CAPTION)
+
+
 def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
     """見出しの総合値を除く、左右差に関するすべてを描画する。
 
@@ -407,6 +520,7 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
             raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
             column.caption(f"生値 {format_symmetry(raw)}")
     st.caption(PART_LEVEL_VARIATION_CAPTION)
+    _render_score_calculation_detail(outcome)
 
     render_pose(outcome)
     if outcome.skin_quality is not None:

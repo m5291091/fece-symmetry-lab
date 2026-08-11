@@ -96,6 +96,12 @@ IMAGE_LANDMARKER_STATE_KEY = "image_landmarker"
 IMAGE_LANDMARKER_PATH_KEY = "image_landmarker_path"
 IMAGE_RECORDER_STATE_KEY = "image_session_recorder"
 IMAGE_RECORDED_INPUT_KEY = "image_recorded_input"
+#: H2: 「この画像に対して年齢・性別の推論を既に試みたか」を示す fingerprint。
+#: `IMAGE_RECORDED_INPUT_KEY` が landmark 記録の重複を防ぐのと同じ方式で、
+#: 同じ写真に対する再実行のたびに ONNX 推論を走らせないためのキャッシュ鍵。
+IMAGE_DEMOGRAPHIC_INPUT_KEY = "image_demographic_input"
+#: H2: 直近の推定試行が失敗した理由。`RESULT_STATE_KEY` と排他的に持つ。
+DEMOGRAPHIC_ERROR_KEY = "image_demographic_error"
 CONSENT_PRIVACY_KEY = "consent_privacy"
 CONSENT_RESEARCH_KEY = "consent_research"
 CONSENT_RIGHTS_KEY = "consent_rights"
@@ -137,6 +143,8 @@ def _clear_session_result() -> None:
     st.session_state.pop(RESULT_STATE_KEY, None)
     st.session_state.pop(IMAGE_RECORDER_STATE_KEY, None)
     st.session_state.pop(IMAGE_RECORDED_INPUT_KEY, None)
+    st.session_state.pop(IMAGE_DEMOGRAPHIC_INPUT_KEY, None)
+    st.session_state.pop(DEMOGRAPHIC_ERROR_KEY, None)
 
 
 def _session_image_landmarker(model_path: Path) -> MediaPipeImageLandmarker:
@@ -244,46 +252,48 @@ def _analyze_uploaded_image(
     return recorder, analysis
 
 
-def _render_image_demographic_controls(
+def _maybe_estimate_image_demographics(
     age_input: np.ndarray | None,
     *,
+    input_fingerprint: str,
     recorder: SessionRecorder | None,
 ) -> None:
-    """静止画フローの、要求時にだけ走る年齢・性別推定の操作子（§10.8）。
+    """H2/§10.8: 単一顔を検出できたら、ボタン操作なしに年齢・性別を推定する。
 
-    写真の隣、これが埋める見出し数値のそばに置く（§5.1）。runtime の注記と
-    詳細パネルは `_render_image_demographic_detail` にあり、常に下側へ画面幅
-    いっぱいで表示される。
+    `IMAGE_RECORDED_INPUT_KEY` が landmark 記録の重複を防ぐのと同じ方式で、
+    同じ写真（アップロード bytes の sha256 = ``input_fingerprint``）に対しては
+    1 度しか推論を試みない。以後の再実行はセッション状態のキャッシュ
+    （`RESULT_STATE_KEY` / `DEMOGRAPHIC_ERROR_KEY`）を読むだけで、ONNX 推論を
+    走らせない。分析前の明示同意は Analyze ページ入口の同意ゲートが Camera・
+    Image 共通で満たす（§10.8 項目 2）ため、推定ごとの追加同意は要求しない。
+
+    不変条件 12・FR-024: 失敗はここで必ず捕まえ、左右差側の描画へ伝播させない。
+    呼び出し側（`_render_image_section`）はこの関数の後に左右差の見出し・詳細を
+    描画するため、ここで例外を握りつぶすことがそのまま失敗分離の実装になる。
     """
     demographic_model = resolve_ready_demographic()
-    analyze_column, reset_column = st.columns(2)
-    analyze = analyze_column.button(
-        "参考年齢・参考性別を推定",
-        type="primary",
-        disabled=demographic_model is None or age_input is None,
-        width="stretch",
-    )
-    if reset_column.button("結果をリセット", width="stretch"):
-        _clear_session_result()
-        st.rerun()
+    if age_input is None or demographic_model is None:
+        return
+    if st.session_state.get(IMAGE_DEMOGRAPHIC_INPUT_KEY) == input_fingerprint:
+        return  # この写真に対しては既に 1 度試みている。
 
-    if analyze and demographic_model is not None and age_input is not None:
-        onnx_path, model_version = demographic_model
-        try:
-            estimate = _session_estimator(onnx_path, model_version).estimate(age_input)
-            st.session_state[RESULT_STATE_KEY] = estimate
-            if recorder is not None:
-                recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
-        except Exception as error:
-            # 不変条件 12: 年齢・性別の失敗が左右差側を止めてはならない。
-            # そのため例外をこのパネルの外へ出さない。
-            _clear_session_result()
-            message = (
-                str(error)
-                if isinstance(error, DemographicInferenceError)
-                else "年齢・性別を推定できませんでした。"
-            )
-            st.error(message)
+    st.session_state[IMAGE_DEMOGRAPHIC_INPUT_KEY] = input_fingerprint
+    onnx_path, model_version = demographic_model
+    try:
+        estimate = _session_estimator(onnx_path, model_version).estimate(age_input)
+        st.session_state[RESULT_STATE_KEY] = estimate
+        st.session_state.pop(DEMOGRAPHIC_ERROR_KEY, None)
+        if recorder is not None:
+            recorder.attach_demographic_estimate(estimate, observed_elapsed_ms=0)
+    except Exception as error:
+        # 不変条件 12: 年齢・性別の失敗が左右差側を止めてはならない。
+        # そのため例外をここで捕まえ、呼び出し側へ伝播させない。
+        st.session_state.pop(RESULT_STATE_KEY, None)
+        st.session_state[DEMOGRAPHIC_ERROR_KEY] = (
+            str(error)
+            if isinstance(error, DemographicInferenceError)
+            else "年齢・性別を推定できませんでした。"
+        )
 
 
 def _render_image_symmetrization(
@@ -341,17 +351,27 @@ def _render_image_symmetrization(
 def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
     """年齢・性別の参考値パネル全体。常に下側へ画面幅いっぱいで表示する（§5.1）。
 
-    FR-024 はこれを左右差側から独立させている。ランドマーク検出が失敗した
-    ときも描画し、黙って消えるのではなく何が欠けているかを説明する。
+    FR-024 はこれを左右差側から独立させている。推定は `_maybe_estimate_image_demographics`
+    がこの関数より先に済ませているため、ここでは結果を読んで表示するだけである。
+    黙って消えるのではなく、常に何が起きているかを説明する（顔が検出できない・
+    モデルが未配置・推定が成功した・推定が失敗した、のいずれの状態でも）。
     """
     st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
+    if age_input is None:
+        st.info("単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。")
+        return
+
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     if isinstance(session_estimate, DemographicEstimate):
         render_demographic_estimate(session_estimate)
-    elif age_input is None:
-        st.info("単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。")
-    else:
-        st.info("ボタンを押すと、18〜75歳向けの参考値を表示します。")
+        return
+
+    error_message = st.session_state.get(DEMOGRAPHIC_ERROR_KEY)
+    if error_message:
+        st.error(error_message)
+        return
+
+    st.info("年齢・性別モデルが未配置のため、参考値を表示できません。")
 
 
 def _render_image_section() -> None:
@@ -373,6 +393,7 @@ def _render_image_section() -> None:
         return
 
     rgb = np.asarray(decoded.rgb, dtype=np.uint8)
+    input_fingerprint = sha256(uploaded_bytes).hexdigest()
     st.subheader("静止画のランドマークと左右差")
     model_path = resolve_ready_landmarker()
 
@@ -388,7 +409,7 @@ def _render_image_section() -> None:
         try:
             recorder, analysis = _analyze_uploaded_image(
                 rgb,
-                input_fingerprint=sha256(uploaded_bytes).hexdigest(),
+                input_fingerprint=input_fingerprint,
                 model_path=model_path,
                 show_midline=show_midline,
             )
@@ -402,6 +423,15 @@ def _render_image_section() -> None:
             age_input = extract_face_crop(rgb, landmark_frame)
         except ImageInputError:
             age_input = None
+
+    # H2: 見出し（render_headline_metrics）が `estimate` を読む前に確定させる。
+    # ボタンが無くなったため、ここで済ませないと見出しが 1 呼吸遅れて古い値の
+    # まま描画されてしまう。
+    _maybe_estimate_image_demographics(
+        age_input,
+        input_fingerprint=input_fingerprint,
+        recorder=recorder,
+    )
 
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
@@ -428,7 +458,6 @@ def _render_image_section() -> None:
         st.divider()
         if analysis is not None:
             render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
-        _render_image_demographic_controls(age_input, recorder=recorder)
 
     # §5.1, AC-LAYOUT-01: 詳細結果は常に写真と見出しの下へ画面幅いっぱいで
     # 描画する。Camera 側の配置と対称にするためである。

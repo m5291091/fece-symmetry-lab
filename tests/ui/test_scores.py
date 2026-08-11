@@ -665,6 +665,128 @@ def test_the_part_level_variation_note_applies_equally_to_all_four_parts() -> No
     assert "撮影" in PART_LEVEL_VARIATION_CAPTION
 
 
+# --- §8.6.3(H2): 「全体のスコア」の計算過程の開示 ----------------------------
+
+
+def test_the_calculation_walkthrough_shows_the_four_parts_and_the_final_result() -> None:
+    """H2: 計算過程に、部位別 4 つの値・RMS の途中経過・最終値が出る。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    walkthrough = " ".join(element.value for element in at.code)
+    for label in ("輪郭", "目", "鼻", "口"):
+        assert label in walkthrough
+    for deviation in ("2.11", "1.44", "0.62", "1.83"):
+        assert deviation in walkthrough
+    assert "1.60" in walkthrough  # sqrt(mean(2.11²+1.44²+0.62²+1.83²)/4)
+    assert "98.40" in walkthrough  # 100 - 1.60
+
+
+def test_the_calculation_walkthrough_matches_the_part_level_metrics_above_it() -> None:
+    """H2: 計算過程の部位別の値は、上の部位別メトリクス（主表示、H1 の平滑値）と
+    文字列として一致する。罠 (b): 計算過程だけ生値（1.00/2.00/3.00/1.50）を使うと
+    ここが落ちる。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        "    part_smooth_3d={\n"
+        "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
+        "    },\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=True)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    metric_values = {metric.label: metric.value for metric in at.metric}
+    walkthrough = " ".join(element.value for element in at.code)
+    for label, smoothed in (("輪郭", 0.004), ("目", 0.006), ("鼻", 0.009), ("口", 0.005)):
+        assert metric_values[label] == format_symmetry(smoothed)
+        assert format_distance(smoothed).rstrip("%") in walkthrough
+    for raw_deviation in ("1.00", "2.00", "3.00", "1.50"):
+        assert raw_deviation not in walkthrough
+
+
+def test_the_calculation_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:
+    """H2/不変条件 11: `s_3d` が部位欠測で欠測のとき、計算過程は数値を代入しない
+    （罠: 欠測を 0 へ fallback すると `100.00` という偽の満点が出てしまう）。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=None, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    walkthrough = " ".join(element.value for element in at.code)
+    assert "100.00" not in walkthrough
+    assert "1.00" not in walkthrough  # 輪郭のずれを代入した行そのものが無い
+    notices = " ".join(element.value for element in list(at.info) + list(at.caption))
+    assert "当てはめられません" in notices
+
+
+def test_the_calculation_walkthrough_wording_avoids_value_judgements_and_thresholds() -> None:
+    """§5.3/§10.7/不変条件 8: 計算過程の説明文にも他の文言と同じ禁止語が適用され、
+    加えて母集団の分布を持たないため基準値も書かない。"""
+    from face_symmetry_lab.ui.scores import (
+        SCORE_CALCULATION_DEVIATION_INTRO,
+        SCORE_CALCULATION_HIGH_VALUE_NOTE,
+        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
+        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
+    )
+
+    combined = (
+        SCORE_CALCULATION_DEVIATION_INTRO
+        + SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION
+        + SCORE_CALCULATION_HIGH_VALUE_NOTE
+        + SCORE_CALCULATION_MEASURED_RANGE_CAPTION
+    )
+    for forbidden in (
+        "良い",
+        "悪い",
+        "美しい",
+        "優秀",
+        "優れ",
+        "完璧",
+        "高得点",
+        "低得点",
+        "満点",
+        "合格",
+    ):
+        assert forbidden not in combined
+    for threshold_phrase in ("以上なら対称", "%以上で対称", "以上あれば対称"):
+        assert threshold_phrase not in combined
+
+
+def test_the_calculation_walkthrough_notes_the_single_subject_caveat() -> None:
+    """OD-09: 個人差は未検証であるため「被写体 1 名」の但し書きを必ず書く。"""
+    from face_symmetry_lab.ui.scores import SCORE_CALCULATION_MEASURED_RANGE_CAPTION
+
+    assert "被写体 1 名" in SCORE_CALCULATION_MEASURED_RANGE_CAPTION
+
+
 # --- FR-035 対称化画像の枠付け ----------------------------------------------
 
 

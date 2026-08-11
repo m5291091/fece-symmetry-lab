@@ -28,6 +28,7 @@ anchor が正規化基準そのものであること——を同時に消す。*
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -39,6 +40,28 @@ from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig
 
 class Symmetry3DError(ValueError):
     """入力からそもそも 3D の左右差距離を求められない。"""
+
+
+def equal_weight_distance_from_parts(distances: Mapping[str, float | None]) -> float | None:
+    """§8.6.5 の `s_3d` を、部位別距離の辞書から直接求める純関数。
+
+        s_3d = sqrt( Σ_p d_p² / P )        P = 部位数（現行は 4）
+
+    `Symmetry3DResult.equal_weight_distance` が自身の `splits`（生値）から呼ぶ
+    のと同じ式であり、そちらから切り出した。部位別距離を単独で持つ場面
+    （`ui.scores` の「全体のスコア」計算過程の開示、H2）でも同じ式を再利用でき、
+    domain 層の外（ui）で計算式を複製しないための境界である（CLAUDE.md §5・§6）。
+
+    **部位が 1 つでも欠測（`None`）、またはキー自体が無ければ欠測を返す。**
+    使える部位だけで平均しない（§8.6.5 と同じ規約、不変条件 11）。
+    """
+    values: list[float] = []
+    for name in PART_NAMES:
+        value = distances.get(name)
+        if value is None:
+            return None
+        values.append(value)
+    return math.sqrt(sum(value**2 for value in values) / len(PART_NAMES))
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,12 +122,7 @@ class Symmetry3DResult:
         """
         if not self.is_complete:
             return None
-        distances: list[float] = []
-        for name in PART_NAMES:
-            split = self.splits[name]
-            assert split is not None  # is_complete が保証する
-            distances.append(split.distance)
-        return math.sqrt(sum(value**2 for value in distances) / len(PART_NAMES))
+        return equal_weight_distance_from_parts({name: self.distance(name) for name in PART_NAMES})
 
 
 def _usable(pairs: tuple[tuple[int, int], ...], available: int) -> tuple[tuple[int, int], ...]:
