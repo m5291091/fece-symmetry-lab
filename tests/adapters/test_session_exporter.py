@@ -12,9 +12,9 @@ from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
 
 
-def _bundle():
-    config = build_metric_config(
-        metric_version="symmetry/test",
+def _metric_config(*, metric_version: str):
+    return build_metric_config(
+        metric_version=metric_version,
         landmark_map_version="map/test",
         landmark_count=16,
         left_eye_corners=(0, 1),
@@ -27,8 +27,12 @@ def _bundle():
             "mouth": PartMap(pairs=((11, 12),), min_pairs=1),
         },
     )
+
+
+def _bundle():
     recorder = SessionRecorder(
-        metric_config=config,
+        metric_config=_metric_config(metric_version="symmetry-2d/test"),
+        metric_config_3d=_metric_config(metric_version="symmetry-3d/test"),
         thresholds=QualityThresholds(),
         tau_seconds=0.4,
         landmark_model_version="landmark/1",
@@ -46,13 +50,19 @@ def test_csv_and_json_records_have_the_same_meaning() -> None:
     csv_record = next(csv.DictReader(io.StringIO(csv_bytes(bundle).decode("utf-8"))))
     json_record = payload["records"][0]
 
-    assert csv_record["schema_version"] == json_record["schema_version"] == "3.0.0"
-    assert csv_record["metric_version"] == json_record["metric_version"]
+    assert csv_record["schema_version"] == json_record["schema_version"] == "4.0.0"
+    assert csv_record["metric_version"] == json_record["metric_version"] == "symmetry-3d/test"
+    assert csv_record["metric_version_2d"] == json_record["metric_version_2d"] == "symmetry-2d/test"
     assert csv_record["config_fingerprint"] == json_record["config_fingerprint"]
     assert csv_record["segment_id"] == json_record["segment_id"]
     assert csv_record["analysis_status"] == json_record["analysis_status"] == "ERROR"
     assert "skin_quality_score_raw" in csv_record
     assert "skin_quality_score_raw" in json_record
+    # §9.2 v4.0: 3D の診断列は揃っており、2D の EMA 列は消えている。
+    assert "distance3d_overall_raw" in csv_record
+    assert "distance3d_parts_equal_raw" in csv_record
+    assert "distance_overall_smooth" not in csv_record
+    assert "distance_overall_smooth" not in json_record
     assert "NaN" not in csv_bytes(bundle).decode("utf-8")
     assert "Infinity" not in json_bytes(bundle).decode("utf-8")
 
@@ -60,8 +70,9 @@ def test_csv_and_json_records_have_the_same_meaning() -> None:
 def test_json_contains_the_reproducibility_manifest() -> None:
     manifest = json.loads(json_bytes(_bundle()))["manifest"]
 
-    assert manifest["schema_version"] == "3.0.0"
-    assert manifest["metric_version"] == "symmetry/test"
+    assert manifest["schema_version"] == "4.0.0"
+    # §8.6.5/§9.2: manifest の metric_version は主指標（3D）を指す。
+    assert manifest["metric_version"] == "symmetry-3d/test"
     assert manifest["models"][0]["version"] == "landmark/1"
     assert manifest["config_revisions"][0]["fingerprint"]
     assert manifest["config_revisions"][0]["settings"]["part_pair_counts"]

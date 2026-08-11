@@ -29,11 +29,39 @@ from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 SCORE_HEADING = "対称度（実験値・両眼距離比）"
 
 #: §5.2: 距離は両眼間隔に対する比なので、小数 2 桁の百分率が、精度を偽らずに
-#: 読める形になる。
+#: 読める形になる。§5.3/§12.1（`docs/symmetry-metric-measurements.md`）: 実写の
+#: 表示値はテイク内でも数パーセントポイントの狭い範囲に集まるため、「100% は
+#: 目標値ではない」という既存の注意の延長として、その狭い範囲の中の違いを
+#: 対称・非対称の判定として読ませない注意文を添える。
 DISTANCE_UNIT_CAPTION = (
     "対称度は、両眼の間隔を 100% としたときの左右対応点のずれを 100% から引いた値です。"
     "100% は対応点距離がすべて 0 になる数学上の上限で、目標値ではありません。"
     "高い・低いは良し悪しを表しません。"
+    "実写では表示値が数パーセントポイントの狭い範囲に集まりやすく、"
+    "その中の違いを対称・非対称の判定として読まないでください。"
+)
+
+
+#: §8.6.5: 部位平均の対称度（`s_3d`）の見出し。「対称度」の枠組みに留め、
+#: 「スコア」という語は使わない（実体は全体・部位別と同じ変換であり、
+#: 違いは部位の重み付けだけである）。
+PART_EQUAL_WEIGHT_LABEL: Final[str] = "部位平均の対称度"
+
+#: §8.6.5: 部位平均の対称度の help。全体の対称度（対応点を 1 票ずつ数える
+#: `d_3d`）とは重みだけが異なる並列の総合量であることを明示する。
+PART_EQUAL_WEIGHT_HELP: Final[str] = (
+    "部位を 1 票ずつ数えた対称度です。全体の対称度（対応点を 1 票ずつ）とは重みだけが"
+    "違い、鼻のようにペア数の少ない部位も、目のように多い部位と同じ重みで入ります。"
+)
+
+#: §5.3・§14.7（同 docs）: 部位別の値は同一条件で撮り直すだけでも動く幅がある。
+#: この注記は 4 部位すべてに等しく掛かる形にし、特定の部位（鼻など）だけを
+#: 名指しで「使えない」と述べない。測定は被写体 1 名によるため、部位ごとの
+#: 個人差は未検証である（OD-09）。
+PART_LEVEL_VARIATION_CAPTION: Final[str] = (
+    "部位別の値は、同じ条件で撮り直すだけでも動きます。"
+    "撮影のたびに動く幅より小さい変化は、部位別の値だけでは左右差の変化として読み取れません。"
+    "この幅は部位ごとに異なり、個人差は未検証です。"
 )
 
 
@@ -79,6 +107,27 @@ def format_symmetry(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{min(100.0, max(0.0, (1.0 - value) * 100.0)):.2f}%"
+
+
+def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
+    """§8.6.3/§8.7: 「全体の対称度」として表示する 3D の総合距離を 1 か所で決める。
+
+    平滑値（`overall_distance_3d_smooth`）を優先し、無ければ生値
+    （`symmetry_3d.overall.distance`）へ落ちる。静止画は §8.7 のとおり平滑値を
+    持たない（`application.still_image.analyze_still_image` が明示的に欠測へ
+    落とす）ため、この関数は自然に生値へ落ちる——呼び出し側が入力モードを
+    分岐する必要はない。3D 一式が丸ごと欠測なら `None`（`—`）を返し、`symmetry`
+    （2D）へは決してフォールバックしない。
+
+    Camera（見出し・HUD）と Image のどの呼び出し側もこの解決を個別に書かない
+    よう、ここへ集約している。
+    """
+    if outcome.overall_distance_3d_smooth is not None:
+        return outcome.overall_distance_3d_smooth
+    symmetry_3d = outcome.symmetry_3d
+    if symmetry_3d is not None and symmetry_3d.overall is not None:
+        return symmetry_3d.overall.distance
+    return None
 
 
 _PART_LABELS: Final[dict[str, str]] = {
@@ -222,8 +271,13 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
     """見出しの総合値を除く、左右差に関するすべてを描画する。
 
     見出しの総合値は `render_headline_metrics` が担い、映像や写真の隣に出る。
-    こちらは部位別の内訳・姿勢・肌表面参考値を描画する。いずれもその下の
-    画面幅いっぱいの詳細セクションに属する（§5.1, FR-013, AC-LAYOUT-01）。
+    こちらは部位別・部位平均の内訳・姿勢・肌表面参考値を描画する。いずれも
+    その下の画面幅いっぱいの詳細セクションに属する（§5.1, FR-013, AC-LAYOUT-01）。
+
+    §8.6.3 のとおり、部位別・部位平均は主指標 `symmetry-3d/1.0.0`
+    （`outcome.symmetry_3d`）から作る。`outcome.symmetry`（`symmetry-2d/2.0.0`）
+    は §8.6.6 の構造的な欠陥を持つため画面には出さず、エクスポートの
+    `distance_*_raw` としてのみ残る。
     """
     st.subheader(SCORE_HEADING)
     st.info(
@@ -231,30 +285,46 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         "同一人物・同一環境での相対変化だけを参照してください。"
     )
 
+    # 何か描画できるものがあるか（= 品質ゲートが開いているか）は 2D の有無で
+    # 判定する。2D は品質ゲート直後に無条件で算出されるのに対し、3D は `z` の
+    # 有無にも依存し独立に欠測しうる（不変条件 12 の失敗分離）。したがって
+    # 2D の有無のほうが「解析そのものが成立しているか」の安定した代理になる。
     symmetry = outcome.symmetry
     if symmetry is None or symmetry.overall is None:
         render_guidance(outcome)
         render_pose(outcome)
         return
 
+    symmetry_3d = outcome.symmetry_3d
+    overall_3d_raw = (
+        symmetry_3d.overall.distance
+        if symmetry_3d is not None and symmetry_3d.overall is not None
+        else None
+    )
     if show_smoothed:
         st.caption(
-            f"平滑化前の生値 {format_symmetry(symmetry.overall)}"
-            f"（ずれ {format_distance(symmetry.overall)}）"
+            f"平滑化前の生値 {format_symmetry(overall_3d_raw)}"
+            f"（ずれ {format_distance(overall_3d_raw)}）"
         )
 
-    # §8.6: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
+    # §8.6.5: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
     # 見出しの値にはならない。見出しは全対応ペアをまとめて 1 回だけ
-    # 折りたたんで求めるためである。
+    # 折りたたんで求めるためである。3D 一式が欠測なら 4 部位とも `—`。
     st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
     columns = st.columns(len(PART_NAMES))
     for column, name in zip(columns, PART_NAMES, strict=True):
-        distance = symmetry.distance(name)
+        distance = symmetry_3d.distance(name) if symmetry_3d is not None else None
         column.metric(
             _PART_LABELS[name],
             format_symmetry(distance),
             help=f"ずれ {format_distance(distance)}",
         )
+    st.caption(PART_LEVEL_VARIATION_CAPTION)
+
+    # §8.6.5: `s_3d`。部位が 1 つでも欠測なら欠測にする（使える部位だけで
+    # 平均しない）。全体の対称度（`d_3d`、点を 1 票ずつ）とは重みだけが違う。
+    equal_weight = symmetry_3d.equal_weight_distance if symmetry_3d is not None else None
+    st.metric(PART_EQUAL_WEIGHT_LABEL, format_symmetry(equal_weight), help=PART_EQUAL_WEIGHT_HELP)
 
     render_pose(outcome)
     if outcome.skin_quality is not None:
@@ -292,7 +362,11 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
         "同一人物・同一環境内の相対的な傾向を見るための値です。"
         "他人との比較、医学的評価、魅力度の判断には使用できません。"
     )
-    st.caption(f"metric {outcome.metric_version} · landmark map {outcome.landmark_map_version}")
+    metric_3d_label = symmetry_3d.metric_version if symmetry_3d is not None else "—"
+    st.caption(
+        f"metric {metric_3d_label} · 2D 診断 {outcome.metric_version} · "
+        f"landmark map {outcome.landmark_map_version}"
+    )
 
 
 def render_symmetrized_image(view: SymmetrizationView, *, requested: bool) -> None:

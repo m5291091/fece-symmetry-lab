@@ -21,7 +21,10 @@ from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 #: §9.2 の record schema の版。records と manifest の両方が持つ。`Final` が
 #: リテラル型へ絞り込むので、下の `Literal` フィールドの既定値として使え、版の
 #: 定義が 1 箇所に収まる。モデルごとに定義して整合を取る必要が無くなる。
-SCHEMA_VERSION: Final = "3.0.0"
+#: v4.0.0 は主指標を `symmetry-3d/1.0.0` へ切り替えた破壊的変更（§8.6.3, §8.6.5,
+#: §9.2）。`distance3d_*` 列を追加し、2D の EMA 列 `distance_overall_smooth` を
+#: 削除した。
+SCHEMA_VERSION: Final = "4.0.0"
 
 
 class InputMode(StrEnum):
@@ -34,7 +37,7 @@ class ExportRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal["3.0.0"] = SCHEMA_VERSION
+    schema_version: Literal["4.0.0"] = SCHEMA_VERSION
     session_id: str
     segment_id: str
     frame_id: int = Field(ge=0)
@@ -52,13 +55,25 @@ class ExportRecord(BaseModel):
     quality_score: float | None = Field(default=None, ge=0, le=1)
     # §8.6: 正規化 RMS 距離なので下限は 0 であり、検証すべき上限は存在しない。
     # `distance_overall_raw` はまとめて折りたたんだ値であって、上の 4 部位を
-    # 混合したものではない。
+    # 混合したものではない。`symmetry-2d/2.0.0` は画面から外れており、これらは
+    # 版の比較可能性のために残す診断列である（§8.6.6, §9.2）。
     distance_contour_raw: float | None = Field(default=None, ge=0)
     distance_eyes_raw: float | None = Field(default=None, ge=0)
     distance_nose_raw: float | None = Field(default=None, ge=0)
     distance_mouth_raw: float | None = Field(default=None, ge=0)
     distance_overall_raw: float | None = Field(default=None, ge=0)
-    distance_overall_smooth: float | None = Field(default=None, ge=0)
+    # §8.6.5/§9.2: `symmetry-3d/1.0.0` の出力一式（主指標）。部位別・全体は並列の
+    # 診断関係にあり、`distance3d_overall_raw` は部位別からの合成値ではない。
+    # `distance3d_parts_equal_raw` は `s_3d`（部位を 1 票ずつ数える）であり、
+    # `distance3d_overall_raw`（`d_3d`、対応点を 1 票ずつ数える）とは重みだけが
+    # 異なる別の総合量である。
+    distance3d_contour_raw: float | None = Field(default=None, ge=0)
+    distance3d_eyes_raw: float | None = Field(default=None, ge=0)
+    distance3d_nose_raw: float | None = Field(default=None, ge=0)
+    distance3d_mouth_raw: float | None = Field(default=None, ge=0)
+    distance3d_overall_raw: float | None = Field(default=None, ge=0)
+    distance3d_overall_smooth: float | None = Field(default=None, ge=0)
+    distance3d_parts_equal_raw: float | None = Field(default=None, ge=0)
     skin_quality_score_raw: float | None = Field(default=None, ge=0, le=100)
     skin_tone_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
     skin_texture_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
@@ -78,7 +93,11 @@ class ExportRecord(BaseModel):
     demographic_model_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     landmark_model_version: str = Field(min_length=1)
     landmark_model_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    #: 主指標（`symmetry-3d/1.0.0`）の版（§8.6.5）。
     metric_version: str = Field(min_length=1)
+    #: `distance_*_raw`（診断列）を生成した `symmetry-2d/2.0.0` 系 bundle の版。
+    #: 行ごとに持つ理由は §9.2「2D の版の追跡」を参照。
+    metric_version_2d: str = Field(min_length=1)
     app_version: str = Field(min_length=1)
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     config_revision: int = Field(ge=1)
@@ -107,7 +126,13 @@ class ExportRecord(BaseModel):
             self.distance_nose_raw,
             self.distance_mouth_raw,
             self.distance_overall_raw,
-            self.distance_overall_smooth,
+            self.distance3d_contour_raw,
+            self.distance3d_eyes_raw,
+            self.distance3d_nose_raw,
+            self.distance3d_mouth_raw,
+            self.distance3d_overall_raw,
+            self.distance3d_overall_smooth,
+            self.distance3d_parts_equal_raw,
             self.skin_quality_score_raw,
             self.skin_tone_uniformity_raw,
             self.skin_texture_uniformity_raw,
@@ -161,7 +186,7 @@ class ConfigRevision(BaseModel):
 class ExportManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["3.0.0"] = SCHEMA_VERSION
+    schema_version: Literal["4.0.0"] = SCHEMA_VERSION
     app_version: str = Field(min_length=1)
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     session_id: str

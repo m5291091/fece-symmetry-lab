@@ -4,7 +4,7 @@
 |---|---|
 | metric_version | `symmetry-3d/1.0.0` |
 | landmark_map_version | `mediapipe-478-mirror/1.0.0`（`symmetry-2d/2.0.0` と同一） |
-| status | **並走評価中**。表示・エクスポートへ接続していない（FR-036, OD-09） |
+| status | **主指標。** 表示（全体・部位別・部位平均の対称度）とエクスポート（レコードスキーマ v4.0）へ接続済み（FR-036, OD-09） |
 | config | `configs/metrics/symmetry-3d-v1.json` |
 | 定義 | `requirement.md` §8.5.1（手順）、§8.6.5（出力値） |
 | intended comparison | 同一人物・同一端末・同一照明・同一撮影条件内の相対比較 |
@@ -99,9 +99,11 @@ roll のすべて）に対して不変である。
 
 ## この版の適用範囲
 
-**算出のみを行い、表示・EMA・エクスポート・`AnalysisOutcome`・`SessionRecorder` のいずれへも
-接続していない**（FR-036）。エクスポートスキーマ `3.0.0` は `symmetry-2d/2.0.0` の
-`distance_*` 列のままで、本 bundle の追加によって変わらない。
+**主指標として、EMA・`AnalysisOutcome`・表示・エクスポート・`SessionRecorder` のすべてへ
+接続している**（FR-036）。エクスポートスキーマ `4.0.0` は本 bundle の出力を `distance3d_*`
+列（部位別・全体・平滑値・部位等重み `s_3d`）として記録し、`metric_version` は
+`symmetry-3d/1.0.0` を指す。`symmetry-2d/2.0.0` は表示から外れ、エクスポートには
+`distance_*_raw` と `metric_version_2d` として診断目的で残る。
 
 ## 未取得の証跡
 

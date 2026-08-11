@@ -3,12 +3,18 @@ import re
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
+from face_symmetry_lab.domain.symmetry import SymmetryResult
+from face_symmetry_lab.domain.symmetry_3d import AxisSplit, Symmetry3DResult
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.scores import (
     DISTANCE_UNIT_CAPTION,
     GATE_COLORS,
+    PART_EQUAL_WEIGHT_HELP,
+    PART_EQUAL_WEIGHT_LABEL,
+    PART_LEVEL_VARIATION_CAPTION,
     SCORE_HEADING,
     SYMMETRIZED_IMAGE_CAPTION,
     SYMMETRIZED_IMAGE_LIMITS,
@@ -16,7 +22,84 @@ from face_symmetry_lab.ui.scores import (
     format_distance,
     format_symmetry,
     gate_color,
+    resolve_overall_distance,
 )
+
+#: §8.6.5: 部位ごとの `d_3d,p`/`s_3d` から `AxisSplit`/`Symmetry3DResult` を直接
+#: 組み立てるテスト用 fixture。plane/depth の内訳はここでの表示テストには関係
+#: しないため distance と同じ値を入れる。
+_METRIC_VERSION_3D = "symmetry-3d/test"
+_LANDMARK_MAP_VERSION = "map/test"
+
+
+def _symmetry_3d_result(
+    *,
+    contour: float | None,
+    eyes: float | None,
+    nose: float | None,
+    mouth: float | None,
+    overall: float | None,
+) -> Symmetry3DResult | None:
+    """§8.6.5 の出力一式を、値だけから組み立てるテスト fixture。
+
+    `overall=None` は「重ね合わせ自体が成立しない」（§8.5.1 の全欠測）を表す。
+    """
+    if overall is None:
+        return None
+
+    def _split(value: float | None) -> AxisSplit | None:
+        return None if value is None else AxisSplit(distance=value, plane=value, depth=0.0)
+
+    return Symmetry3DResult(
+        splits={
+            "contour": _split(contour),
+            "eyes": _split(eyes),
+            "nose": _split(nose),
+            "mouth": _split(mouth),
+        },
+        overall=_split(overall),
+        metric_version=_METRIC_VERSION_3D,
+        landmark_map_version=_LANDMARK_MAP_VERSION,
+    )
+
+
+def _outcome_for_display(
+    *,
+    symmetry_3d: Symmetry3DResult | None,
+    smooth_3d: float | None,
+    symmetry_2d_overall: float | None = 0.5,
+) -> AnalysisOutcome:
+    """§8.6.3 の表示テスト用 `AnalysisOutcome`。
+
+    2D の値（既定 0.5）は 3D の値（テストでは概ね 0.0〜0.1）から大きく離す。
+    表示ロジックが誤って 2D を読んでいれば、この差で assertion が落ちる
+    （fixture 設計上の罠、いちばん重要な部分）。
+    """
+    symmetry_2d = None
+    if symmetry_2d_overall is not None:
+        symmetry_2d = SymmetryResult(
+            distances={
+                "contour": symmetry_2d_overall,
+                "eyes": symmetry_2d_overall,
+                "nose": symmetry_2d_overall,
+                "mouth": symmetry_2d_overall,
+            },
+            overall=symmetry_2d_overall,
+            metric_version="symmetry-2d/test",
+            landmark_map_version=_LANDMARK_MAP_VERSION,
+        )
+    return AnalysisOutcome(
+        frame_id=1,
+        state=AnalysisState(status=Status.OK),
+        symmetry=symmetry_2d,
+        overall_distance_smooth=symmetry_2d_overall,
+        pose=None,
+        face_area_ratio=None,
+        metric_version="symmetry-2d/test",
+        landmark_map_version=_LANDMARK_MAP_VERSION,
+        symmetry_3d=symmetry_3d,
+        overall_distance_3d_smooth=smooth_3d,
+    )
 
 
 def _run(body: str) -> AppTest:
@@ -161,6 +244,150 @@ def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
     # 変えただけのものが、利用者の目指す目標へ黙って変わってしまう。
     assert "上限" in DISTANCE_UNIT_CAPTION
     assert "目標値ではありません" in DISTANCE_UNIT_CAPTION
+
+    for forbidden in ("スコア", "得点", "評価", "優秀", "理想", "完璧"):
+        assert forbidden not in PART_LEVEL_VARIATION_CAPTION
+        assert forbidden not in PART_EQUAL_WEIGHT_HELP
+
+
+# --- §8.6.3/§8.6.5: 表示・エクスポートを 3D 指標へ切り替える -----------------
+
+
+def test_the_resolved_overall_distance_prefers_the_three_dimensional_smoothed_value() -> None:
+    """§8.6.3/§8.7: 主表示は 3D の平滑値であり、2D の値ではない（罠 (a)）。"""
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.021,
+        symmetry_2d_overall=0.5,
+    )
+
+    resolved = resolve_overall_distance(outcome)
+
+    assert resolved == pytest.approx(0.021)
+    assert resolved != pytest.approx(0.5)
+
+
+def test_the_resolved_overall_distance_falls_back_to_the_raw_three_dimensional_value() -> None:
+    """EMA が未確立（生値のみ）でも欠測にせず、3D の生値を使う。"""
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=None,
+    )
+
+    assert resolve_overall_distance(outcome) == pytest.approx(0.018)
+
+
+def test_the_resolved_overall_distance_is_missing_without_a_three_dimensional_result() -> None:
+    """NFR-013: 3D 一式が欠測なら `—`（`None`）であり、0 や 2D の値で埋めない。"""
+    outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None, symmetry_2d_overall=0.5)
+
+    assert resolve_overall_distance(outcome) is None
+
+
+def test_the_part_breakdown_reads_from_the_three_dimensional_result() -> None:
+    """§8.6.3: 部位別 4 部位は `d_3d,p` から作られる（2D の値ではない）。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        "    symmetry_2d_overall=0.5,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    values = {metric.label: metric.value for metric in at.metric}
+    assert values["輪郭"] == format_symmetry(0.01)
+    assert values["目"] == format_symmetry(0.02)
+    assert values["鼻"] == format_symmetry(0.03)
+    assert values["口"] == format_symmetry(0.015)
+    for part_value in (values["輪郭"], values["目"], values["鼻"], values["口"]):
+        assert part_value != format_symmetry(0.5)
+
+
+def test_the_part_equal_weight_symmetry_is_a_distinct_reading_from_the_headline_overall() -> None:
+    """§8.6.5: `s_3d`（部位平均）は `d_3d`（全体）と重みだけが違う別の総合量で、
+    一致しない。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import (\n"
+        "    render_headline_metrics,\n"
+        "    render_score_details,\n"
+        "    resolve_overall_distance,\n"
+        ")\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.005, eyes=0.005, nose=0.06, mouth=0.005, overall=0.02\n"
+        "    ),\n"
+        "    smooth_3d=0.02,\n"
+        ")\n"
+        "render_headline_metrics(overall=resolve_overall_distance(outcome), estimate=None)\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    values = {metric.label: metric.value for metric in at.metric}
+    assert values["全体の対称度"] == format_symmetry(0.02)
+    assert values[PART_EQUAL_WEIGHT_LABEL] != values["全体の対称度"]
+
+
+def test_a_single_missing_part_only_removes_the_part_equal_weight_reading() -> None:
+    """§8.6.5: 部位が 1 つ欠測しても `s_3d` だけが `—` になり、全体・他部位は
+    出続ける（AC-SCORE-10 と同じ非対称な欠測条件）。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=None, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    values = {metric.label: metric.value for metric in at.metric}
+    assert values["鼻"] == "—"
+    assert values["輪郭"] == format_symmetry(0.01)
+    assert values["目"] == format_symmetry(0.02)
+    assert values["口"] == format_symmetry(0.015)
+    assert values[PART_EQUAL_WEIGHT_LABEL] == "—"
+
+
+def test_a_missing_three_dimensional_result_shows_every_reading_as_a_dash() -> None:
+    """不変条件 11: §8.5.1 の重ね合わせが成立しないとき、0 や前値ではなく `—`。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    values = {metric.label: metric.value for metric in at.metric}
+    for label in ("輪郭", "目", "鼻", "口", PART_EQUAL_WEIGHT_LABEL):
+        assert values[label] == "—"
+
+
+def test_the_part_level_variation_note_applies_equally_to_all_four_parts() -> None:
+    """§5.3: 撮影のたびに動く幅より小さい変化は読み取れないという注記を、特定の
+    部位（鼻など）だけを名指しして述べない。"""
+    for singled_out in ("鼻だけ", "鼻のみ", "鼻は使えません", "鼻は信頼できません"):
+        assert singled_out not in PART_LEVEL_VARIATION_CAPTION
+    assert "撮影" in PART_LEVEL_VARIATION_CAPTION
 
 
 # --- FR-035 対称化画像の枠付け ----------------------------------------------

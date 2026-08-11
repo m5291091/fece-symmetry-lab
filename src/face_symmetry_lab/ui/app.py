@@ -60,6 +60,7 @@ from face_symmetry_lab.ui.scores import (
     render_score_details,
     render_symmetrized_image,
     render_tracking_status,
+    resolve_overall_distance,
 )
 
 ESTIMATOR_STATE_KEY = "demographic_estimator"
@@ -167,11 +168,13 @@ def release_image_landmarker() -> None:
 def _session_image_recorder(
     landmarker: MediaPipeImageLandmarker,
     config: MetricConfig,
+    config_3d: MetricConfig,
 ) -> SessionRecorder:
     recorder = st.session_state.get(IMAGE_RECORDER_STATE_KEY)
     if not isinstance(recorder, SessionRecorder):
         recorder = SessionRecorder(
             metric_config=config,
+            metric_config_3d=config_3d,
             thresholds=STILL_IMAGE_THRESHOLDS,
             tau_seconds=DEFAULT_TAU_SECONDS,
             landmark_model_version=landmarker.model_version,
@@ -210,7 +213,7 @@ def _analyze_uploaded_image(
     無関係なパネルを道連れにすることはない。
     """
     config = load_metric_config()
-    # §8.5.1/§8.6.5, FR-036: 静止画も camera と同じく 2 指標を並走させる。
+    # §8.5.1/§8.6.5, FR-036: 静止画も camera と同じく 3D を主指標として扱う。
     # `config_3d` を省略可能にすると渡し忘れが 3D の欠測と区別できなくなるため、
     # `_build_pipeline` と同じ形で明示的に読み込む。
     config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
@@ -225,7 +228,7 @@ def _analyze_uploaded_image(
     )
     processing_ms = (time.monotonic() - started) * 1000.0
 
-    recorder = _session_image_recorder(landmarker, config)
+    recorder = _session_image_recorder(landmarker, config, config_3d)
     if st.session_state.get(IMAGE_RECORDED_INPUT_KEY) != input_fingerprint:
         if recorder.records():
             recorder.reset()
@@ -401,9 +404,10 @@ def _render_image_section() -> None:
 
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
-    overall = None
-    if analysis is not None and analysis.outcome.symmetry is not None:
-        overall = analysis.outcome.symmetry.overall
+    # §8.6.3/§8.7: 全体の対称度は主指標 symmetry-3d/1.0.0 から作る。静止画は
+    # 平滑値を持たない（`analyze_still_image` が明示的に欠測へ落とす）ため、
+    # ここは自然に生値へ落ちる。
+    overall = resolve_overall_distance(analysis.outcome) if analysis is not None else None
 
     # §5.1: 写真と見出し（スコア・性別・年齢+状態）を横に並べ、ひと目で必要な
     # ものがページの下方に隠れないようにする。Camera と Image で同じ配置を使う。

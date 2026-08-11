@@ -9,6 +9,7 @@ payload）である。HUD をカメラ画面の合成から切り離したので
 import json
 
 import pytest
+from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.domain.models import GenderLabel
 from face_symmetry_lab.ui.hud import (
@@ -68,6 +69,36 @@ def _bridge(**overrides) -> str:
 def test_the_hud_reuses_the_shared_symmetry_formatter() -> None:
     """同じ測定値に対する 2 つ目の表示規則を作らない（§14.3e）。"""
     assert _payload()["symmetry"] == format_symmetry(0.0215)
+
+
+def test_the_hud_payload_reads_the_three_dimensional_overall_distance() -> None:
+    """§8.6.3/§8.7: HUD の全体値も 3D の平滑値から来る（2D の値ではないことを固定）。
+
+    `render_hud_payload`（snapshot からの配線）を対象にする。`build_hud_payload`
+    は既に `overall` を受け取るだけの純関数として上のテストで確認済みなので、
+    ここで確かめるのは「どの値を渡すか」という解決の部分である。
+    """
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        "    symmetry_2d_overall=0.5,\n"
+        ")\n"
+        "render_hud_payload(PipelineSnapshot(analysis=outcome), show_demographics=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["symmetry"] == format_symmetry(0.021)
+    assert payload["symmetry"] != format_symmetry(0.5)
 
 
 def test_a_missing_symmetry_value_renders_as_a_dash() -> None:

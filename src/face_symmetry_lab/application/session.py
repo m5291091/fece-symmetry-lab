@@ -38,7 +38,15 @@ def build_config_settings(
     tau_seconds: float,
     analysis_interval_ms: int | None = None,
 ) -> dict[str, JsonValue]:
-    """比較可能性を定義する digest の元になる、正規化済み設定を返す。"""
+    """比較可能性を定義する digest の元になる、正規化済み設定を返す。
+
+    ``config`` は**主指標**の bundle（`symmetry-3d/1.0.0`）を渡す（§8.6.5, §9.2）。
+    2D と 3D は同じ `landmark_map_version` と対応ペア表を共有するため
+    `part_pair_counts` / `overall_min_pairs` は bundle を差し替えても値は変わらないが、
+    `metric_version` が変わるぶん fingerprint は変わる。これは版の切り替えとして
+    正しい振る舞いである。2D 側の版（`metric_version_2d`）は比較可能性の定義には
+    使わず、`SessionRecorder` が行ごとの列として別に追跡する。
+    """
     settings: dict[str, JsonValue] = {
         "metric_version": config.metric_version,
         "landmark_map_version": config.landmark_map_version,
@@ -80,12 +88,20 @@ def config_fingerprint(settings: Mapping[str, object]) -> str:
 
 
 class SessionRecorder:
-    """セッションのコールバックと UI が共有する、スレッドセーフな有界履歴。"""
+    """セッションのコールバックと UI が共有する、スレッドセーフな有界履歴。
+
+    ``metric_config`` は `symmetry-2d/2.0.0`（診断列 `distance_*_raw` の由来）、
+    ``metric_config_3d`` は `symmetry-3d/1.0.0`（主指標。`distance3d_*` 列と
+    `config_fingerprint` の由来、§9.2）を渡す。`config_3d` を省略可能にすると
+    渡し忘れが静かに主指標なしへ落ちてしまうため、`FrameAnalyzer` と同じく
+    必須引数にしてある。
+    """
 
     def __init__(
         self,
         *,
         metric_config: MetricConfig,
+        metric_config_3d: MetricConfig,
         thresholds: QualityThresholds,
         tau_seconds: float,
         landmark_model_version: str,
@@ -98,11 +114,12 @@ class SessionRecorder:
         if history_capacity < 1:
             raise ValueError("history_capacity は 1 以上である必要があります。")
         self._metric_config = metric_config
+        self._metric_config_3d = metric_config_3d
         self._thresholds = thresholds
         self._tau_seconds = tau_seconds
         self._analysis_interval_ms = analysis_interval_ms
         self._settings = build_config_settings(
-            metric_config,
+            metric_config_3d,
             thresholds,
             tau_seconds=tau_seconds,
             analysis_interval_ms=analysis_interval_ms,
@@ -144,6 +161,7 @@ class SessionRecorder:
         captured_at: datetime | None = None,
     ) -> ExportRecord:
         symmetry = outcome.symmetry
+        symmetry_3d = outcome.symmetry_3d
         pose = outcome.pose
         skin = outcome.skin_quality
         # §8.6.1: 使用可能な white balance 補正が無くても肌の結果は存在しうる
@@ -165,12 +183,34 @@ class SessionRecorder:
                 pitch_deg=pose.pitch_deg if pose is not None else None,
                 roll_deg=pose.roll_deg if pose is not None else None,
                 face_area_ratio=outcome.face_area_ratio,
+                # symmetry-2d/2.0.0: 画面から外れた診断列（§8.6.6, §9.2）。
                 distance_contour_raw=symmetry.distance("contour") if symmetry is not None else None,
                 distance_eyes_raw=symmetry.distance("eyes") if symmetry is not None else None,
                 distance_nose_raw=symmetry.distance("nose") if symmetry is not None else None,
                 distance_mouth_raw=symmetry.distance("mouth") if symmetry is not None else None,
                 distance_overall_raw=symmetry.overall if symmetry is not None else None,
-                distance_overall_smooth=outcome.overall_distance_smooth,
+                # symmetry-3d/1.0.0: 主指標（§8.6.5, §9.2）。
+                distance3d_contour_raw=(
+                    symmetry_3d.distance("contour") if symmetry_3d is not None else None
+                ),
+                distance3d_eyes_raw=(
+                    symmetry_3d.distance("eyes") if symmetry_3d is not None else None
+                ),
+                distance3d_nose_raw=(
+                    symmetry_3d.distance("nose") if symmetry_3d is not None else None
+                ),
+                distance3d_mouth_raw=(
+                    symmetry_3d.distance("mouth") if symmetry_3d is not None else None
+                ),
+                distance3d_overall_raw=(
+                    symmetry_3d.overall.distance
+                    if symmetry_3d is not None and symmetry_3d.overall is not None
+                    else None
+                ),
+                distance3d_overall_smooth=outcome.overall_distance_3d_smooth,
+                distance3d_parts_equal_raw=(
+                    symmetry_3d.equal_weight_distance if symmetry_3d is not None else None
+                ),
                 skin_quality_score_raw=skin.score if skin is not None else None,
                 skin_tone_uniformity_raw=skin.tone_uniformity if skin is not None else None,
                 skin_texture_uniformity_raw=skin.texture_uniformity if skin is not None else None,
@@ -181,7 +221,8 @@ class SessionRecorder:
                 skin_quality_frozen=skin.frozen if skin is not None else None,
                 landmark_model_version=self._landmark_model_version,
                 landmark_model_sha256=self._landmark_model_sha256,
-                metric_version=outcome.metric_version,
+                metric_version=self._metric_config_3d.metric_version,
+                metric_version_2d=self._metric_config.metric_version,
                 app_version=self._app_version,
                 lock_digest=self._lock_digest,
                 config_revision=self._config_revision,
@@ -214,7 +255,8 @@ class SessionRecorder:
                 reason_codes=(ReasonCode.LOW_QUALITY,),
                 landmark_model_version=self._landmark_model_version,
                 landmark_model_sha256=self._landmark_model_sha256,
-                metric_version=self._metric_config.metric_version,
+                metric_version=self._metric_config_3d.metric_version,
+                metric_version_2d=self._metric_config.metric_version,
                 app_version=self._app_version,
                 lock_digest=self._lock_digest,
                 config_revision=self._config_revision,
@@ -290,7 +332,7 @@ class SessionRecorder:
             lock_digest=self._lock_digest,
             session_id=self._session_id,
             models=tuple(models),
-            metric_version=self._metric_config.metric_version,
+            metric_version=self._metric_config_3d.metric_version,
             config_revisions=(
                 ConfigRevision(
                     revision=revision,
@@ -331,7 +373,7 @@ class SessionRecorder:
                 or analysis_interval_ms is not None
             ):
                 self._settings = build_config_settings(
-                    self._metric_config,
+                    self._metric_config_3d,
                     self._thresholds,
                     tau_seconds=self._tau_seconds,
                     analysis_interval_ms=self._analysis_interval_ms,

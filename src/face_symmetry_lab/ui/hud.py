@@ -19,7 +19,12 @@ import streamlit.components.v1 as components
 
 from face_symmetry_lab.application.realtime import PipelineSnapshot
 from face_symmetry_lab.domain.models import DemographicEstimate
-from face_symmetry_lab.ui.scores import GENDER_LABELS, format_symmetry, gate_color
+from face_symmetry_lab.ui.scores import (
+    GENDER_LABELS,
+    format_symmetry,
+    gate_color,
+    resolve_overall_distance,
+)
 
 #: §14.3e/FR-032: HUD はパネル配置と同じくプリセットで移動し、ドラッグ位置は
 #: 補助的に保持するだけである。"非表示" は何も描画しない。
@@ -405,11 +410,14 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
 
     隠し要素であり id で参照されるため、DOM 上のどこへ出ても構わない。これが
     3 つ目の fragment を新設せずに既存の fragment へ相乗りできる理由である。
+
+    §8.6.3/§8.7: 全体値は主指標 `symmetry-3d/1.0.0` から作る
+    （`ui.scores.resolve_overall_distance`）。パネルの見出しと同じ解決を通す
+    ことで、映像上の HUD とパネルが同じ測定値に対して二通りの表示規則へ
+    分岐しないようにする。
     """
     analysis = snapshot.analysis
-    overall = analysis.overall_distance_smooth if analysis is not None else None
-    if overall is None and analysis is not None and analysis.symmetry is not None:
-        overall = analysis.symmetry.overall
+    overall = resolve_overall_distance(analysis) if analysis is not None else None
 
     st.markdown(
         hud_html(

@@ -4,7 +4,7 @@
 |---|---|
 | metric_version | `symmetry-2d/2.0.0` |
 | landmark_map_version | `mediapipe-478-mirror/1.0.0` |
-| status | 較正すべき自由パラメータを持たない（OD-01 は解消） |
+| status | 較正すべき自由パラメータを持たない（OD-01 は解消）。**表示からは外れ、診断列としてエクスポートに残る**（主指標は `symmetry-3d/1.0.0`、`docs/model-cards/symmetry-3d-v1.md`） |
 | config | `configs/metrics/symmetry-2d-v1.json` |
 | intended comparison | 同一人物・同一端末・同一照明・同一撮影条件内の相対比較 |
 
@@ -61,11 +61,13 @@
 
 ## エクスポート契約
 
-スキーマ`3.0.0`は正規化RMS距離（`distance_contour_raw`・`distance_eyes_raw`・
-`distance_nose_raw`・`distance_mouth_raw`・`distance_overall_raw`・
-`distance_overall_smooth`）、幾何へ混合しない撮影条件依存の`skin_quality_score_raw`と
-補正gain、および18〜75歳向け年齢・性別fieldを含む。`score_*`列の削除を含む破壊的変更
-である。画像、映像、landmark座標、元ファイル名、人物名は含めない。派生数値も匿名とは
+スキーマ`4.0.0`は本 bundle の正規化RMS距離を診断列（`distance_contour_raw`・
+`distance_eyes_raw`・`distance_nose_raw`・`distance_mouth_raw`・`distance_overall_raw`）
+として含む。主指標が`symmetry-3d/1.0.0`へ切り替わったため、本bundleのEMA列
+`distance_overall_smooth`はv4.0で削除された（並走する3Dの平滑値`distance3d_overall_smooth`
+に置き換わった）。行ごとの版は`metric_version_2d`列で追跡する。ほかに、幾何へ混合しない
+撮影条件依存の`skin_quality_score_raw`と補正gain、および18〜75歳向け年齢・性別fieldを
+含む。画像、映像、landmark座標、元ファイル名、人物名は含めない。派生数値も匿名とは
 限らないため、利用者の明示操作でのみ保存し、共有先と保持期間を管理する。
 
 ## 肌表面参考指標との関係

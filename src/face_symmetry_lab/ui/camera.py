@@ -81,6 +81,7 @@ from face_symmetry_lab.ui.scores import (
     render_score_details,
     render_symmetrized_image,
     render_tracking_status,
+    resolve_overall_distance,
 )
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
@@ -215,10 +216,11 @@ def _build_demographic_worker() -> DemographicWorker | None:
 
 def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     config = load_metric_config()
-    # §8.5.1/§8.6.5, FR-036: symmetry-3d/1.0.0 は 2D と並走するだけで、この版
-    # では表示・エクスポートへ接続しない。それでも `config_3d` を省略可能にす
-    # ると、呼び出し側が渡し忘れたときに 3D が静かに無しへ落ちてしまうため、
-    # `FrameAnalyzer` 側は必須引数にしてある。ここで明示的に読み込んで渡す。
+    # §8.5.1/§8.6.5, FR-036: symmetry-3d/1.0.0 は主指標であり、表示・エクスポート
+    # の両方へ接続する。`config_3d` を省略可能にすると、呼び出し側が渡し忘れた
+    # ときに主指標が静かに無しへ落ちてしまうため、`FrameAnalyzer`・
+    # `SessionRecorder` のどちらも必須引数にしてある。ここで明示的に読み込んで
+    # 渡す。
     config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
     landmarker = MediaPipeFaceLandmarker(
         model_path=model_path,
@@ -231,6 +233,7 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     analyzer = FrameAnalyzer(config=config, config_3d=config_3d)
     recorder = SessionRecorder(
         metric_config=config,
+        metric_config_3d=config_3d,
         thresholds=analyzer.thresholds,
         tau_seconds=DEFAULT_TAU_SECONDS,
         landmark_model_version=landmarker.model_version,
@@ -283,12 +286,10 @@ def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     """
     snapshot = pipeline.snapshot()
     with st.container(border=True):
-        symmetry = snapshot.analysis.symmetry if snapshot.analysis is not None else None
+        # §8.6.3/§8.7: 全体の対称度は主指標 symmetry-3d/1.0.0 から作る。
         overall = (
-            snapshot.analysis.overall_distance_smooth if snapshot.analysis is not None else None
+            resolve_overall_distance(snapshot.analysis) if snapshot.analysis is not None else None
         )
-        if overall is None and symmetry is not None:
-            overall = symmetry.overall
         render_headline_metrics(overall=overall, estimate=snapshot.demographic_estimate)
         st.divider()
         render_tracking_status(snapshot.status, _STATUS_MESSAGES)

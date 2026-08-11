@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 import numpy as np
@@ -105,4 +106,13 @@ def analyze_still_image(
         thresholds=thresholds or STILL_IMAGE_THRESHOLDS,
     )
     outcome = analyzer.analyze(landmarks.frame, at=0.0, rgb_image=rgb_image)
+    # §8.7: 静止画は stateless。`analyzer` はこの呼び出し専用の新しい EMA を
+    # 持つため、§8.5.1 の重ね合わせが成立した場合の `overall_distance_3d_smooth`
+    # はその EMA への最初の更新であり、何もしなければ生値と等しい非 null 値を
+    # 返してしまう。表示・エクスポートは主指標のこの平滑値を読むため
+    # （§8.6.3, §9.2）、明示的に欠測へ落として「平滑化された」という誤った
+    # 含意を持たせない（不変条件 11）。UI はこの欠測時、`symmetry_3d.overall`
+    # の生値へ自然にフォールバックする（`ui.scores.resolve_overall_distance`）。
+    if outcome.overall_distance_3d_smooth is not None:
+        outcome = dataclasses.replace(outcome, overall_distance_3d_smooth=None)
     return StillImageAnalysis(landmarks=landmarks, outcome=outcome)
