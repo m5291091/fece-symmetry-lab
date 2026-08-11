@@ -27,6 +27,7 @@ anchor が正規化基準そのものであること——を同時に消す。*
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -77,6 +78,33 @@ class Symmetry3DResult:
         return self.overall is not None and all(
             self.splits.get(name) is not None for name in PART_NAMES
         )
+
+    @property
+    def equal_weight_distance(self) -> float | None:
+        """§8.6.5 の `s_3d`。部位を等しく 1 票として扱う、もう 1 つの総合距離。
+
+            s_3d = sqrt( Σ_p d_3d,p² / P )        P = 部位数（現行は 4）
+
+        `overall`（`d_3d`）が対応点をそれぞれ 1 票として数えるのに対し、これは
+        部位をそれぞれ 1 票として数える。**較正された重みではない** —— 全部位
+        について 1 に固定され、調整の余地を持たない。§8.6 が禁じるのは固定評価
+        セットで較正されていない自由パラメータであり、この固定 1 は対象外である。
+
+        `is_complete` と同じ条件（`overall` と全部位の `splits` がすべて揃って
+        いること）を使う。**部位が 1 つでも欠測なら欠測にし、使える部位だけで
+        平均しない。** この定義は部位集合が固定であることに依存しており、3 部位
+        で平均した値と 4 部位で平均した値を同じ名前で扱うと、部位が欠測した瞬間
+        に値が跳ぶ。`overall` 自身は §8.5.1 のとおり、重ね合わせさえ成立すれば
+        部位の内訳なしに定義され続けるため、この条件の対象外である。
+        """
+        if not self.is_complete:
+            return None
+        distances: list[float] = []
+        for name in PART_NAMES:
+            split = self.splits[name]
+            assert split is not None  # is_complete が保証する
+            distances.append(split.distance)
+        return math.sqrt(sum(value**2 for value in distances) / len(PART_NAMES))
 
 
 def _usable(pairs: tuple[tuple[int, int], ...], available: int) -> tuple[tuple[int, int], ...]:

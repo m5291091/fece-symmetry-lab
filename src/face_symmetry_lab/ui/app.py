@@ -18,7 +18,10 @@ from face_symmetry_lab.adapters.inference.opencv_demographic_estimator import (
     DemographicInferenceError,
     OpenCvDemographicEstimator,
 )
-from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+from face_symmetry_lab.adapters.io.metric_config import (
+    SYMMETRY_3D_METRIC_CONFIG_PATH,
+    load_metric_config,
+)
 from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, file_sha256
 from face_symmetry_lab.application.image_input import (
     ImageInputError,
@@ -207,9 +210,19 @@ def _analyze_uploaded_image(
     無関係なパネルを道連れにすることはない。
     """
     config = load_metric_config()
+    # §8.5.1/§8.6.5, FR-036: 静止画も camera と同じく 2 指標を並走させる。
+    # `config_3d` を省略可能にすると渡し忘れが 3D の欠測と区別できなくなるため、
+    # `_build_pipeline` と同じ形で明示的に読み込む。
+    config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
     landmarker = _session_image_landmarker(model_path)
     started = time.monotonic()
-    analysis = analyze_still_image(landmarker, rgb, config=config, show_midline=show_midline)
+    analysis = analyze_still_image(
+        landmarker,
+        rgb,
+        config=config,
+        config_3d=config_3d,
+        show_midline=show_midline,
+    )
     processing_ms = (time.monotonic() - started) * 1000.0
 
     recorder = _session_image_recorder(landmarker, config)

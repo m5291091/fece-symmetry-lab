@@ -17,6 +17,7 @@ from face_symmetry_lab.domain.landmarks import (
     LandmarkError,
     LandmarkFrame,
     to_pixel_array,
+    to_pixel_array_3d,
 )
 from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
@@ -32,6 +33,11 @@ from face_symmetry_lab.domain.symmetry import (
     SymmetryError,
     SymmetryResult,
     compute_symmetry,
+)
+from face_symmetry_lab.domain.symmetry_3d import (
+    Symmetry3DError,
+    Symmetry3DResult,
+    compute_symmetry_3d,
 )
 
 #: §8.8: 顔がこの時間だけ不在になったら、フィルタをリセットする。
@@ -52,6 +58,13 @@ class AnalysisOutcome:
     metric_version: str
     landmark_map_version: str
     skin_quality: SkinQualityResult | None = None
+    #: §8.5.1 / §8.6.5 の並走指標（`symmetry-3d/1.0.0`, FR-036）。この版では
+    #: `AnalysisOutcome` までは届くが、表示・エクスポートへは接続しない。
+    symmetry_3d: Symmetry3DResult | None = None
+    #: `symmetry_3d.overall.distance`（`d_3d`）へ §8.7 と同じ時間ベース EMA を
+    #: 独立に掛けたもの。`overall_distance_smooth` とは別の EMA インスタンスで
+    #: あり、値も共有しない。
+    overall_distance_3d_smooth: float | None = None
 
     @property
     def overall_distance_raw(self) -> float | None:
@@ -65,19 +78,26 @@ class FrameAnalyzer:
         self,
         *,
         config: MetricConfig,
+        config_3d: MetricConfig,
         thresholds: QualityThresholds | None = None,
         tau_seconds: float = DEFAULT_TAU_SECONDS,
         skin_pairs: tuple[tuple[int, int], ...] = MEDIAPIPE_CHEEK_PAIRS,
     ) -> None:
         self._config = config
+        self._config_3d = config_3d
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
+        self._ema_3d = TimeBasedEma(tau_seconds=tau_seconds)
         self._lost_since: float | None = None
         self._skin_pairs = skin_pairs
 
     @property
     def config(self) -> MetricConfig:
         return self._config
+
+    @property
+    def config_3d(self) -> MetricConfig:
+        return self._config_3d
 
     @property
     def thresholds(self) -> QualityThresholds:
@@ -103,12 +123,14 @@ class FrameAnalyzer:
         """
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
+        self._ema_3d = TimeBasedEma(tau_seconds=tau_seconds)
         self._lost_since = None
 
     def reset(self) -> None:
         """履歴・平滑化・ヒステリシスを破棄する（§4.4, §8.8）。"""
         self._gate.reset()
         self._ema.reset()
+        self._ema_3d.reset()
         self._lost_since = None
 
     def analyze(
@@ -120,9 +142,10 @@ class FrameAnalyzer:
     ) -> AnalysisOutcome:
         state = self._gate.update(frame)
         self._track_face_loss(state.status, at)
+        quality_ok = state.status is Status.OK
 
         symmetry: SymmetryResult | None = None
-        if state.status is Status.OK:
+        if quality_ok:
             try:
                 symmetry = compute_symmetry(to_pixel_array(frame), self._config)
             except (SymmetryError, LandmarkError):
@@ -139,6 +162,24 @@ class FrameAnalyzer:
         smooth: float | None = None
         if symmetry is not None and symmetry.overall is not None:
             smooth = self._ema.update(symmetry.overall, at=at)
+
+        # symmetry-3d/1.0.0（§8.5.1, §8.6.5, FR-036）は 2D と並走するだけで、
+        # まだ誰も読まない。2D の失敗処理（Status.ERROR にしてゲートと EMA を
+        # リセットする）をここへコピーしない —— 3D の失敗はこのフレームの 3D
+        # 側だけを欠測にし、state・品質ゲート・2D の距離・EMA・肌表面参考値の
+        # いずれも変えない（不変条件 12 の失敗分離）。`quality_ok` は品質ゲート
+        # 直後の判定であり、2D の算出が後から失敗して `state` が ERROR に変わっ
+        # ても、3D はそれに引きずられない。
+        symmetry_3d: Symmetry3DResult | None = None
+        if quality_ok:
+            try:
+                symmetry_3d = compute_symmetry_3d(to_pixel_array_3d(frame), self._config_3d)
+            except (Symmetry3DError, LandmarkError):
+                symmetry_3d = None
+
+        smooth_3d: float | None = None
+        if symmetry_3d is not None and symmetry_3d.overall is not None:
+            smooth_3d = self._ema_3d.update(symmetry_3d.overall.distance, at=at)
 
         skin_quality: SkinQualityResult | None = None
         if state.status is Status.OK and rgb_image is not None:
@@ -162,6 +203,8 @@ class FrameAnalyzer:
             metric_version=self._config.metric_version,
             landmark_map_version=self._config.landmark_map_version,
             skin_quality=skin_quality,
+            symmetry_3d=symmetry_3d,
+            overall_distance_3d_smooth=smooth_3d,
         )
 
     def _track_face_loss(self, status: Status, at: float) -> None:
@@ -172,3 +215,4 @@ class FrameAnalyzer:
             self._lost_since = at
         elif at - self._lost_since >= FACE_LOST_RESET_SECONDS:
             self._ema.reset()
+            self._ema_3d.reset()

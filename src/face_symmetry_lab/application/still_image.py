@@ -79,12 +79,18 @@ def analyze_still_image(
     rgb_image: NDArray[np.uint8],
     *,
     config: MetricConfig,
+    config_3d: MetricConfig,
     thresholds: QualityThresholds | None = None,
     color: tuple[int, int, int] = DEFAULT_POINT_COLOR,
     radius: int = DEFAULT_POINT_RADIUS,
     show_midline: bool = True,
 ) -> StillImageAnalysis:
-    """写真 1 枚を検出・描画・採点する。状態を持たず、平滑化は適用しない。"""
+    """写真 1 枚を検出・描画・採点する。状態を持たず、平滑化は適用しない。
+
+    `config_3d`（symmetry-3d/1.0.0, §8.5.1, FR-036）は `FrameAnalyzer` と同じく
+    必須引数である。既定 `None` にして省略可能にすると、呼び出し側が渡し忘れた
+    ときに 3D が静かに無しへ落ちてしまうため、呼び出し元に明示させる。
+    """
     landmarks = detect_still_image_landmarks(
         provider,
         rgb_image,
@@ -95,6 +101,7 @@ def analyze_still_image(
     )
     analyzer = FrameAnalyzer(
         config=config,
+        config_3d=config_3d,
         thresholds=thresholds or STILL_IMAGE_THRESHOLDS,
     )
     outcome = analyzer.analyze(landmarks.frame, at=0.0, rgb_image=rgb_image)

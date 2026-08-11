@@ -9,14 +9,19 @@ import math
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
+from face_symmetry_lab.adapters.io.metric_config import (
+    SYMMETRY_3D_METRIC_CONFIG_PATH,
+    load_metric_config,
+)
 from face_symmetry_lab.domain.landmarks import (
     LandmarkError,
     build_landmark_frame,
     to_pixel_array,
     to_pixel_array_3d,
 )
-from face_symmetry_lab.domain.metrics import PART_NAMES, PartMap, build_metric_config
+from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, PartMap, build_metric_config
 from face_symmetry_lab.domain.symmetry import compute_symmetry
 from face_symmetry_lab.domain.symmetry_3d import Symmetry3DError, compute_symmetry_3d
 
@@ -482,3 +487,103 @@ def test_the_input_array_is_not_modified() -> None:
     compute_symmetry_3d(points, _config())
 
     assert np.array_equal(points, before)
+
+
+# --------------------------------------------------------------------------
+# 部位等重み距離 s_3d（§8.6.5, AC-SCORE-10）
+# --------------------------------------------------------------------------
+
+
+def _mirror_symmetric_full_face(config: MetricConfig) -> NDArray[np.float64]:
+    """`config` の全対応ペアを、左右対称な baseline で埋めた合成 3D 顔。
+
+    実際の bundle（部位ごとにペア数が違う）を使う test 専用の fixture。ペアに
+    現れない landmark（正中点・虹彩）は 3D 指標が読まないので原点のままでよい。
+    左右のペア (left, right) を x について厳密に鏡映させて配置するので、摂動を
+    加えるまでは全体が完全対称になる。
+    """
+    points = np.zeros((config.landmark_count, 3), dtype=np.float64)
+    step = 0
+    for name in PART_NAMES:
+        for left, right in config.parts[name].pairs:
+            step += 1
+            x = 10.0 + step
+            y = 4.0 * math.sin(step)
+            z = 3.0 * math.cos(step)
+            points[left] = (-x, y, z)
+            points[right] = (x, y, z)
+    return points
+
+
+def test_the_equal_weight_distance_matches_the_point_weighted_one_when_parts_are_balanced() -> None:
+    """AC-SCORE-10: 各部位の使用点数が等しいとき `s_3d` は `d_3d` と一致する。
+
+    `_config()` は 4 部位いずれも 3 ペア（6 点）で、点数加重の重みが部位ごとに
+    等しくなる退化ケースである。次の test はペア数が違う非退化ケースを扱う。
+    """
+    result = compute_symmetry_3d(_asymmetric(), _config())
+
+    assert result.overall is not None
+    assert result.equal_weight_distance is not None
+    assert result.equal_weight_distance > 0.0
+    assert result.equal_weight_distance == pytest.approx(result.overall.distance, abs=1e-12)
+
+
+def test_the_equal_weight_distance_differs_from_the_point_weighted_one_on_the_real_bundle() -> None:
+    """AC-SCORE-10: 実際の bundle は部位ごとの点数が違う（17/26/7/13 ペア）ため、
+    等重みの `s_3d` と点数加重の `d_3d` は一致しない。等重みが実際に効いている
+    ことの証拠であり、両方とも 0 でないことも確かめる。
+    """
+    config = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
+    assert {name: len(config.parts[name].pairs) for name in PART_NAMES} == {
+        "contour": 17,
+        "eyes": 26,
+        "nose": 7,
+        "mouth": 13,
+    }
+    points = _mirror_symmetric_full_face(config)
+    nose_left, _ = config.parts["nose"].pairs[0]
+    points[nose_left] += (0.0, 3.0, 0.0)  # 最小部位（鼻）だけへ非対称を注入する。
+
+    result = compute_symmetry_3d(points, config)
+
+    assert result.overall is not None
+    assert result.equal_weight_distance is not None
+    assert result.overall.distance > 0.0
+    assert result.equal_weight_distance > 0.0
+    assert result.equal_weight_distance != pytest.approx(result.overall.distance, rel=1e-6)
+
+
+def test_a_missing_part_makes_the_equal_weight_distance_missing_but_not_the_overall() -> None:
+    """AC-SCORE-10: `s_3d` は部位集合が固定であることに定義が依存するので、1 部位
+    でも欠測なら欠測にする。使える部位だけで埋め合わせない。点数加重の `d_3d` は
+    §8.5.1 のとおり定義され続ける（両者は欠測条件が異なる独立した出力である）。
+    """
+    result = compute_symmetry_3d(SYNTHETIC_FACE_3D[:21], _config())
+
+    assert result.split("mouth") is None
+    assert result.overall is not None
+    assert result.equal_weight_distance is None
+
+
+def test_the_equal_weight_distance_is_invariant_to_rigid_transforms() -> None:
+    """AC-SCORE-10: `s_3d` も `d_3d` と同じく並進・回転・一様 scale に対して不変。"""
+    points = _asymmetric()
+    baseline = compute_symmetry_3d(points, _config())
+
+    transformed_points = (points @ _rotation("yaw", 12.0).T) * 3.0 + np.array([120.0, -40.0, 15.0])
+    transformed = compute_symmetry_3d(transformed_points, _config())
+
+    assert baseline.equal_weight_distance is not None
+    assert transformed.equal_weight_distance is not None
+    assert baseline.equal_weight_distance > 0.0
+    assert transformed.equal_weight_distance == pytest.approx(
+        baseline.equal_weight_distance, abs=1e-9
+    )
+
+
+def test_a_perfectly_symmetric_face_has_zero_equal_weight_distance() -> None:
+    result = compute_symmetry_3d(SYNTHETIC_FACE_3D, _config())
+
+    assert result.equal_weight_distance is not None
+    assert result.equal_weight_distance == pytest.approx(0.0, abs=1e-12)

@@ -182,7 +182,10 @@ def test_the_synthetic_face_produces_a_symmetry_distance(
     synthetic_face_rgb: NDArray[np.uint8],
 ) -> None:
     """端から端まで: 実モデル -> 姿勢 -> 品質ゲート -> 距離。"""
-    from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+    from face_symmetry_lab.adapters.io.metric_config import (
+        SYMMETRY_3D_METRIC_CONFIG_PATH,
+        load_metric_config,
+    )
     from face_symmetry_lab.application.still_image import analyze_still_image
 
     landmarker = MediaPipeImageLandmarker(
@@ -190,7 +193,12 @@ def test_the_synthetic_face_produces_a_symmetry_distance(
         model_version=_asset().version,
     )
     try:
-        analysis = analyze_still_image(landmarker, synthetic_face_rgb, config=load_metric_config())
+        analysis = analyze_still_image(
+            landmarker,
+            synthetic_face_rgb,
+            config=load_metric_config(),
+            config_3d=load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH),
+        )
     finally:
         landmarker.close()
 
@@ -211,7 +219,10 @@ def test_a_drawn_symmetric_face_measures_less_deviation_than_a_skewed_one(
     """意図的に非対称に描いたものが、対称なものより小さく測られてはならない。"""
     from PIL import Image
 
-    from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+    from face_symmetry_lab.adapters.io.metric_config import (
+        SYMMETRY_3D_METRIC_CONFIG_PATH,
+        load_metric_config,
+    )
     from face_symmetry_lab.application.still_image import analyze_still_image
 
     skewed = Image.fromarray(synthetic_face_rgb).transform(
@@ -221,16 +232,20 @@ def test_a_drawn_symmetric_face_measures_less_deviation_than_a_skewed_one(
         resample=Image.Resampling.BILINEAR,
     )
     config = load_metric_config()
+    config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
     landmarker = MediaPipeImageLandmarker(
         model_path=_installed_model(),
         model_version=_asset().version,
     )
     try:
-        balanced = analyze_still_image(landmarker, synthetic_face_rgb, config=config)
+        balanced = analyze_still_image(
+            landmarker, synthetic_face_rgb, config=config, config_3d=config_3d
+        )
         distorted = analyze_still_image(
             landmarker,
             np.asarray(skewed, dtype=np.uint8),
             config=config,
+            config_3d=config_3d,
         )
     finally:
         landmarker.close()
@@ -251,7 +266,10 @@ def test_image_and_video_running_modes_measure_an_identical_frame_the_same(
     ことで、この 1 つの変数を、カメラのノイズ・動き・撮影条件から切り離せる。
     静止画のアップロードとライブ映像は、それら以外を共有しないためである。
     """
-    from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+    from face_symmetry_lab.adapters.io.metric_config import (
+        SYMMETRY_3D_METRIC_CONFIG_PATH,
+        load_metric_config,
+    )
     from face_symmetry_lab.application.analyzer import FrameAnalyzer
     from face_symmetry_lab.application.still_image import (
         STILL_IMAGE_THRESHOLDS,
@@ -259,12 +277,15 @@ def test_image_and_video_running_modes_measure_an_identical_frame_the_same(
     )
 
     config = load_metric_config()
+    config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
 
     image_landmarker = MediaPipeImageLandmarker(
         model_path=_installed_model(), model_version=_asset().version
     )
     try:
-        still = analyze_still_image(image_landmarker, synthetic_face_rgb, config=config)
+        still = analyze_still_image(
+            image_landmarker, synthetic_face_rgb, config=config, config_3d=config_3d
+        )
     finally:
         image_landmarker.close()
 
@@ -272,7 +293,9 @@ def test_image_and_video_running_modes_measure_an_identical_frame_the_same(
         model_path=_installed_model(), model_version=_asset().version
     )
     try:
-        analyzer = FrameAnalyzer(config=config, thresholds=STILL_IMAGE_THRESHOLDS)
+        analyzer = FrameAnalyzer(
+            config=config, config_3d=config_3d, thresholds=STILL_IMAGE_THRESHOLDS
+        )
         settled = None
         for index in range(15):
             frame = video_landmarker.detect_video(

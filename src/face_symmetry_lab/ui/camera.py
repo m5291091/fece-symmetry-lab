@@ -37,7 +37,10 @@ from face_symmetry_lab.adapters.inference.opencv_demographic_estimator import (
 from face_symmetry_lab.adapters.inference.tracking_zoom_landmarker import (
     TrackingZoomLandmarker,
 )
-from face_symmetry_lab.adapters.io.metric_config import load_metric_config
+from face_symmetry_lab.adapters.io.metric_config import (
+    SYMMETRY_3D_METRIC_CONFIG_PATH,
+    load_metric_config,
+)
 from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, InstallStatus, file_sha256
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
@@ -212,6 +215,11 @@ def _build_demographic_worker() -> DemographicWorker | None:
 
 def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     config = load_metric_config()
+    # §8.5.1/§8.6.5, FR-036: symmetry-3d/1.0.0 は 2D と並走するだけで、この版
+    # では表示・エクスポートへ接続しない。それでも `config_3d` を省略可能にす
+    # ると、呼び出し側が渡し忘れたときに 3D が静かに無しへ落ちてしまうため、
+    # `FrameAnalyzer` 側は必須引数にしてある。ここで明示的に読み込んで渡す。
+    config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
     landmarker = MediaPipeFaceLandmarker(
         model_path=model_path,
         model_version=landmark_asset().version,
@@ -220,7 +228,7 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
     # 直前の検出位置を中心に切り出して拡大してから MediaPipe へ渡す。wrapper は
     # 下の `landmarker` 参照を通じて `model_version`/`model_sha256` を報告する。
     zoomed_landmarker = TrackingZoomLandmarker(landmarker)
-    analyzer = FrameAnalyzer(config=config)
+    analyzer = FrameAnalyzer(config=config, config_3d=config_3d)
     recorder = SessionRecorder(
         metric_config=config,
         thresholds=analyzer.thresholds,

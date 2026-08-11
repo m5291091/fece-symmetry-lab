@@ -276,7 +276,7 @@ def test_a_captured_frame_becomes_a_symmetrization_view() -> None:
     """§14.3g: 保持したフレームは一度だけ消費され、静止結果として描画される。"""
     pipeline = RealtimeLandmarkPipeline(
         landmarker=SymmetrizableLandmarker(),
-        analyzer=FrameAnalyzer(config=_symmetrizable_config()),
+        analyzer=FrameAnalyzer(config=_symmetrizable_config(), config_3d=_symmetrizable_config()),
         analysis_interval_ms=0,
     )
     pipeline.request_capture()
@@ -296,7 +296,7 @@ def test_a_captured_frame_becomes_a_symmetrization_view() -> None:
 def test_a_capture_that_cannot_be_symmetrized_is_reported_not_retried() -> None:
     pipeline = RealtimeLandmarkPipeline(
         landmarker=StubLandmarker(),  # 退化した 1 点だけでは折り返せない
-        analyzer=FrameAnalyzer(config=_symmetrizable_config()),
+        analyzer=FrameAnalyzer(config=_symmetrizable_config(), config_3d=_symmetrizable_config()),
         analysis_interval_ms=0,
     )
     pipeline.request_capture()
