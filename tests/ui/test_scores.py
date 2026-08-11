@@ -24,6 +24,8 @@ from face_symmetry_lab.ui.scores import (
     gate_color,
     resolve_equal_weight_distance,
     resolve_overall_distance,
+    resolve_part_distance_3d,
+    symmetry_percent,
 )
 
 #: §8.6.5: 部位ごとの `d_3d,p`/`s_3d` から `AxisSplit`/`Symmetry3DResult` を直接
@@ -69,12 +71,15 @@ def _outcome_for_display(
     symmetry_3d: Symmetry3DResult | None,
     smooth_3d: float | None,
     symmetry_2d_overall: float | None = 0.5,
+    part_smooth_3d: dict[str, float | None] | None = None,
 ) -> AnalysisOutcome:
     """§8.6.3 の表示テスト用 `AnalysisOutcome`。
 
     2D の値（既定 0.5）は 3D の値（テストでは概ね 0.0〜0.1）から大きく離す。
     表示ロジックが誤って 2D を読んでいれば、この差で assertion が落ちる
-    （fixture 設計上の罠、いちばん重要な部分）。
+    （fixture 設計上の罠、いちばん重要な部分）。``part_smooth_3d`` は §8.7 改訂
+    （H1）の部位別平滑値で、既定 `None`（呼び出し側の多くは生値へのフォール
+    バックだけを確かめるため、指定しなくても動く）。
     """
     symmetry_2d = None
     if symmetry_2d_overall is not None:
@@ -100,6 +105,7 @@ def _outcome_for_display(
         landmark_map_version=_LANDMARK_MAP_VERSION,
         symmetry_3d=symmetry_3d,
         overall_distance_3d_smooth=smooth_3d,
+        part_distances_3d_smooth=part_smooth_3d,
     )
 
 
@@ -366,6 +372,73 @@ def test_the_resolved_equal_weight_distance_is_missing_without_a_three_dimension
     assert resolve_equal_weight_distance(outcome) is None
 
 
+# --- §8.7 改訂（H1）: 部位別 (`d_3d,p`) の平滑値表示 -------------------------
+
+
+def test_symmetry_percent_agrees_with_the_formatted_string() -> None:
+    """`symmetry_percent` は `format_symmetry` と同じ変換を数値で返す
+    （HUD の折れ線グラフがテキストと別の表示規則へ分岐しないための共有経路）。"""
+    for distance in (0.0, 0.0215, 0.5, 1.0, 4.0):
+        percent = symmetry_percent(distance)
+        assert percent is not None
+        assert f"{percent:.2f}%" == format_symmetry(distance)
+
+
+def test_symmetry_percent_of_a_missing_value_is_missing() -> None:
+    assert symmetry_percent(None) is None
+
+
+def test_resolve_part_distance_prefers_the_smoothed_value_over_the_raw_one() -> None:
+    """§8.7 改訂: 部位別も全体値と同じく「平滑値を優先し、無ければ生値」の
+    解決を通す。「常に生値を読む実装」ではこの assertion が落ちる（罠）。"""
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.05, eyes=0.05, nose=0.05, mouth=0.05, overall=0.05
+        ),
+        smooth_3d=0.05,
+        part_smooth_3d={"contour": 0.02, "eyes": 0.02, "nose": 0.02, "mouth": 0.02},
+    )
+
+    resolved = resolve_part_distance_3d(outcome, "contour")
+
+    assert resolved == pytest.approx(0.02)
+    assert resolved != pytest.approx(0.05)
+
+
+def test_resolve_part_distance_falls_back_to_raw_when_the_smoothed_container_is_missing() -> None:
+    """静止画（§8.7 改訂、`part_distances_3d_smooth is None`）は生値へ落ちる。"""
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=None,
+        part_smooth_3d=None,
+    )
+
+    assert resolve_part_distance_3d(outcome, "nose") == pytest.approx(0.03)
+
+
+def test_resolve_part_distance_falls_back_per_part_when_only_that_key_is_missing() -> None:
+    """部位が個別に欠測(不変条件 11)しても、他の部位は平滑値を読み続ける。"""
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.018,
+        part_smooth_3d={"contour": None, "eyes": 0.09, "nose": 0.09, "mouth": 0.09},
+    )
+
+    assert resolve_part_distance_3d(outcome, "contour") == pytest.approx(0.01)  # 生値へ回帰
+    assert resolve_part_distance_3d(outcome, "eyes") == pytest.approx(0.09)  # 平滑値のまま
+
+
+def test_resolve_part_distance_is_missing_without_a_three_dimensional_result() -> None:
+    """NFR-013: 3D 一式が欠測なら `—`（`None`）であり、0 で埋めない。"""
+    outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)
+
+    assert resolve_part_distance_3d(outcome, "mouth") is None
+
+
 def test_the_part_breakdown_reads_from_the_three_dimensional_result() -> None:
     """§8.6.3: 部位別 4 部位は `d_3d,p` から作られる（2D の値ではない）。"""
     at = AppTest.from_string(
@@ -390,6 +463,40 @@ def test_the_part_breakdown_reads_from_the_three_dimensional_result() -> None:
     assert values["口"] == format_symmetry(0.015)
     for part_value in (values["輪郭"], values["目"], values["鼻"], values["口"]):
         assert part_value != format_symmetry(0.5)
+
+
+def test_the_part_breakdown_shows_the_smoothed_value_as_primary_and_notes_the_raw_one() -> None:
+    """§8.7 改訂（H1）: 部位別の平滑値を持つときは、詳細タブも全体値と同じ
+    「平滑値を主表示し生値を併記する」構成にする（表示の一貫性、片方が生値・
+    片方が平滑値という 2 つの表示規則を作らない）。生値をそのまま出す実装では
+    ``values["輪郭"]`` の assertion が落ちる（罠）。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        "    part_smooth_3d={\n"
+        "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
+        "    },\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=True)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    values = {metric.label: metric.value for metric in at.metric}
+    # 主表示は平滑値であり、生値(0.01 等)そのものではない。
+    assert values["輪郭"] == format_symmetry(0.004)
+    assert values["目"] == format_symmetry(0.006)
+    assert values["鼻"] == format_symmetry(0.009)
+    assert values["口"] == format_symmetry(0.005)
+    # 生値は併記される(全体値の「平滑化前の生値」と同じ構成)。
+    captions = " ".join(element.value for element in at.caption)
+    for raw in (format_symmetry(0.01), format_symmetry(0.02), format_symmetry(0.03)):
+        assert raw in captions
 
 
 def test_the_headline_part_equal_weight_score_is_a_distinct_reading_from_the_overall() -> None:

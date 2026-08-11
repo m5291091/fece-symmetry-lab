@@ -101,19 +101,31 @@ def format_distance(value: float | None) -> str:
     return "—" if value is None else f"{value * 100.0:.2f}%"
 
 
+def symmetry_percent(value: float | None) -> float | None:
+    """§8.6.3 の対称度変換を、文字列ではなく数値のまま返す。
+
+    `format_symmetry` と同じ式を共有する唯一の実装であり、`ui.hud` の折れ線
+    グラフが数値を必要とする場所（テキスト表示とは別に、SVG の `points` 属性
+    を計算する箇所）はここを経由する。式を 2 箇所に書くと、グラフとテキストが
+    別々の表示規則へ分岐しうる（`ui.hud` の docstring と同じ理由）。
+
+    ずれが両眼間隔そのものを超える退化ケースのために 0% で下限を設ける。
+    それ以外の場所では `d` は上限のない値のままである（§8.6.3）。
+    """
+    if value is None:
+        return None
+    return min(100.0, max(0.0, (1.0 - value) * 100.0))
+
+
 def format_symmetry(value: float | None) -> str:
     """正規化距離を §8.6.3 の対称度パーセントとして表示する。
 
     `100% - ずれ%` は線形かつ可逆で、係数を持たない。したがって同じ測定値の
     読む向きを変えるだけであり、採点ではない。指標そのもの、エクスポートの
     列、`metric_version` はいずれもこれによって変わらない。
-
-    ずれが両眼間隔そのものを超える退化ケースのために 0% で下限を設ける。
-    それ以外の場所では `d` は上限のない値のままである（§8.6.3）。
     """
-    if value is None:
-        return "—"
-    return f"{min(100.0, max(0.0, (1.0 - value) * 100.0)):.2f}%"
+    percent = symmetry_percent(value)
+    return "—" if percent is None else f"{percent:.2f}%"
 
 
 def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
@@ -157,7 +169,28 @@ def resolve_equal_weight_distance(outcome: AnalysisOutcome) -> float | None:
     return symmetry_3d.equal_weight_distance
 
 
-_PART_LABELS: Final[dict[str, str]] = {
+def resolve_part_distance_3d(outcome: AnalysisOutcome, name: str) -> float | None:
+    """§8.6.3/§8.7 改訂(H1): 部位別 `d_3d,p` の平滑値を 1 か所で決める。
+
+    `resolve_overall_distance` と同じ「平滑値を優先し、無ければ生値」という
+    解決を部位別にも適用する。`outcome.part_distances_3d_smooth` がコンテナ
+    ごと欠測(静止画・3D 一式欠測)、またはその部位のキーだけ欠測(不変条件 11、
+    部位が個別に欠測したフレーム)のいずれでも自然に生値へ落ちる。詳細タブと
+    HUD のどちらの呼び出し側もこの解決を個別に書かないよう、ここへ集約する
+    (表示の一貫性: 片方が生値・片方が平滑値という 2 つの表示規則を作らない)。
+    """
+    smoothed = outcome.part_distances_3d_smooth
+    if smoothed is not None:
+        value = smoothed.get(name)
+        if value is not None:
+            return value
+    symmetry_3d = outcome.symmetry_3d
+    if symmetry_3d is None:
+        return None
+    return symmetry_3d.distance(name)
+
+
+PART_LABELS: Final[dict[str, str]] = {
     "contour": "輪郭",
     "eyes": "目",
     "nose": "鼻",
@@ -358,15 +391,21 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
     # §8.6.5: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
     # 見出しの値にはならない。見出しは全対応ペアをまとめて 1 回だけ
     # 折りたたんで求めるためである。3D 一式が欠測なら 4 部位とも `—`。
+    # §8.7 改訂（H1）: 部位別も全体値と同じく平滑値を主表示し、生値を併記する
+    # （`resolve_part_distance_3d` が「平滑値を優先し、無ければ生値」を解決
+    # する）。片方が生値・片方が平滑値という 2 つの表示規則を作らないため。
     st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
     columns = st.columns(len(PART_NAMES))
     for column, name in zip(columns, PART_NAMES, strict=True):
-        distance = symmetry_3d.distance(name) if symmetry_3d is not None else None
+        distance = resolve_part_distance_3d(outcome, name)
         column.metric(
-            _PART_LABELS[name],
+            PART_LABELS[name],
             format_symmetry(distance),
             help=f"ずれ {format_distance(distance)}",
         )
+        if show_smoothed:
+            raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
+            column.caption(f"生値 {format_symmetry(raw)}")
     st.caption(PART_LEVEL_VARIATION_CAPTION)
 
     render_pose(outcome)

@@ -6,7 +6,7 @@ import pytest
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_frame
-from face_symmetry_lab.domain.metrics import PartMap, build_metric_config
+from face_symmetry_lab.domain.metrics import MetricConfig, PartMap, build_metric_config
 from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
 
@@ -320,10 +320,10 @@ def _depths(points) -> tuple[float, ...]:
 def test_carrying_a_depth_does_not_move_any_measured_value() -> None:
     """§8.1.1: §8.3〜§8.6 は xy だけで定義される。z の有無で値が変わらない。
 
-    `symmetry_3d`・`overall_distance_3d_smooth` はこの比較から除く。3D 指標
-    （§8.5.1、FR-036）は z を読むことこそが目的なので、この 2 つだけは z の
-    有無で異なることが正しい。除いた残り全部が一致することが「2D は z を
-    読まない」の証拠になる。
+    `symmetry_3d`・`overall_distance_3d_smooth`・`part_distances_3d_smooth` は
+    この比較から除く。3D 指標（§8.5.1、FR-036）は z を読むことこそが目的なので、
+    この 3 つだけは z の有無で異なることが正しい。除いた残り全部が一致すること
+    が「2D は z を読まない」の証拠になる。
     """
     rgb_image = np.full((480, 640, 3), (150, 120, 105), dtype=np.uint8)
     depths = _depths(SYMMETRIC_POINTS)
@@ -347,7 +347,12 @@ def test_carrying_a_depth_does_not_move_any_measured_value() -> None:
     assert outcome is not None
     assert outcome.symmetry_3d is not None  # z があるので 3D 側は算出される
     assert (
-        dataclasses.replace(outcome, symmetry_3d=None, overall_distance_3d_smooth=None)
+        dataclasses.replace(
+            outcome,
+            symmetry_3d=None,
+            overall_distance_3d_smooth=None,
+            part_distances_3d_smooth=None,
+        )
         == without_depth
     )
 
@@ -355,9 +360,9 @@ def test_carrying_a_depth_does_not_move_any_measured_value() -> None:
 def test_an_asymmetric_face_measures_the_same_distance_with_and_without_depth() -> None:
     """対称な顔だけで比べると 0 同士の一致になるため、ズレのある顔でも確かめる。
 
-    `symmetry_3d`・`overall_distance_3d_smooth` は z の有無で異なることが正しい
-    ため比較から除く（`test_carrying_a_depth_does_not_move_any_measured_value`
-    と同じ理由）。
+    `symmetry_3d`・`overall_distance_3d_smooth`・`part_distances_3d_smooth` は
+    z の有無で異なることが正しいため比較から除く
+    （`test_carrying_a_depth_does_not_move_any_measured_value` と同じ理由）。
     """
     skewed = tuple(
         (x + 0.01, y) if index in {8, 10, 12} else (x, y)
@@ -390,7 +395,12 @@ def test_an_asymmetric_face_measures_the_same_distance_with_and_without_depth() 
     assert without_depth.overall_distance_raw > 0.0
     assert with_depth.symmetry_3d is not None  # z があるので 3D 側は算出される
     assert (
-        dataclasses.replace(with_depth, symmetry_3d=None, overall_distance_3d_smooth=None)
+        dataclasses.replace(
+            with_depth,
+            symmetry_3d=None,
+            overall_distance_3d_smooth=None,
+            part_distances_3d_smooth=None,
+        )
         == without_depth
     )
 
@@ -580,3 +590,205 @@ def test_a_prolonged_face_loss_resets_the_three_dimensional_smoothing_too() -> N
     assert recovered.overall_distance_3d_smooth == pytest.approx(
         recovered.symmetry_3d.overall.distance, abs=1e-6
     )
+
+
+# --------------------------------------------------------------------------
+# 部位別 (`d_3d,p`) の時間ベース EMA（requirement.md §8.7 改訂、H1）
+# --------------------------------------------------------------------------
+
+
+def test_the_outcome_carries_smoothed_part_distances_that_lag_a_change_in_the_raw_ones() -> None:
+    """§8.7 改訂: `d_3d,p` にも `d_3d` と同じ tau・同じ式の独立した EMA を部位ごとに
+    掛ける。「常に生値を素通しする実装」ではこの assertion が落ちる(罠)。"""
+    depths = _depths(SYMMETRIC_POINTS)
+    analyzer = _analyzer()
+    outcome = None
+    for index in range(1, 6):
+        outcome = analyzer.analyze(
+            _depth_frame(SYMMETRIC_POINTS, frame_id=index, depths=depths), at=index * 0.1
+        )
+    assert outcome is not None
+    assert outcome.part_distances_3d_smooth is not None
+    settled_mouth = outcome.part_distances_3d_smooth["mouth"]
+    assert settled_mouth is not None
+
+    # 口のペア (19, 20) だけを非対称にする。mouth の生値だけが跳ね上がる。
+    skewed = list(SYMMETRIC_POINTS)
+    skewed[19] = (0.20, SYMMETRIC_POINTS[19][1])
+    jumped = analyzer.analyze(_depth_frame(tuple(skewed), frame_id=6, depths=depths), at=0.65)
+
+    assert jumped.symmetry_3d is not None
+    raw_mouth = jumped.symmetry_3d.distance("mouth")
+    assert raw_mouth is not None and raw_mouth > 0.0
+    assert jumped.part_distances_3d_smooth is not None
+    smoothed_mouth = jumped.part_distances_3d_smooth["mouth"]
+    assert smoothed_mouth is not None
+    # 生値は跳ね上がったが、部位別 EMA はまだ追随しきれていない。
+    assert raw_mouth > smoothed_mouth > settled_mouth
+
+
+def test_reset_also_restarts_the_per_part_three_dimensional_smoothing() -> None:
+    """`reset()` の後、部位別 EMA も全体値と同じタイミングで立ち上がり直す。"""
+    depths = _depths(SYMMETRIC_POINTS)
+    skewed = list(SYMMETRIC_POINTS)
+    skewed[19] = (0.20, SYMMETRIC_POINTS[19][1])
+
+    analyzer = _analyzer()
+    for index in range(1, 6):
+        analyzer.analyze(
+            _depth_frame(SYMMETRIC_POINTS, frame_id=index, depths=depths), at=index * 0.1
+        )
+    before_reset = analyzer.analyze(_depth_frame(tuple(skewed), frame_id=6, depths=depths), at=0.6)
+
+    assert before_reset.symmetry_3d is not None
+    assert before_reset.part_distances_3d_smooth is not None
+    raw_mouth_before = before_reset.symmetry_3d.distance("mouth")
+    smooth_mouth_before = before_reset.part_distances_3d_smooth["mouth"]
+    assert raw_mouth_before is not None and smooth_mouth_before is not None
+    assert smooth_mouth_before != pytest.approx(raw_mouth_before, abs=1e-9)
+
+    analyzer.reset()
+    after_reset = None
+    for index in range(7, 12):
+        after_reset = analyzer.analyze(
+            _depth_frame(tuple(skewed), frame_id=index, depths=depths), at=1.0 + index * 0.1
+        )
+
+    assert after_reset is not None
+    assert after_reset.state.status is Status.OK
+    assert after_reset.symmetry_3d is not None
+    assert after_reset.part_distances_3d_smooth is not None
+    raw_mouth_after = after_reset.symmetry_3d.distance("mouth")
+    smooth_mouth_after = after_reset.part_distances_3d_smooth["mouth"]
+    assert raw_mouth_after is not None
+    # reset 後にゲートが開いた瞬間(= 部位別 EMA への最初の更新)は必ず生値と一致
+    # する。前セッションの値が漏れていない証拠である。
+    assert smooth_mouth_after == pytest.approx(raw_mouth_after, abs=1e-6)
+
+
+def test_a_prolonged_face_loss_resets_the_per_part_three_dimensional_smoothing_too() -> None:
+    """顔を `FACE_LOST_RESET_SECONDS` 以上見失うと、全体値と同じく部位別 EMA も
+    リセットされる。"""
+    depths = _depths(SYMMETRIC_POINTS)
+    skewed = list(SYMMETRIC_POINTS)
+    skewed[19] = (0.20, SYMMETRIC_POINTS[19][1])
+
+    analyzer = _analyzer()
+    for index in range(1, 6):
+        analyzer.analyze(_depth_frame(tuple(skewed), frame_id=index, depths=depths), at=index * 0.1)
+
+    analyzer.analyze(_frame(frame_id=6, face_count=0), at=1.0)
+    analyzer.analyze(_frame(frame_id=7, face_count=0), at=2.0)
+    recovered = None
+    for index in range(8, 13):
+        recovered = analyzer.analyze(
+            _depth_frame(tuple(skewed), frame_id=index, depths=depths), at=2.0 + index * 0.1
+        )
+
+    assert recovered is not None
+    assert recovered.symmetry_3d is not None
+    assert recovered.part_distances_3d_smooth is not None
+    raw_mouth = recovered.symmetry_3d.distance("mouth")
+    smooth_mouth = recovered.part_distances_3d_smooth["mouth"]
+    assert raw_mouth is not None
+    assert smooth_mouth == pytest.approx(raw_mouth, abs=1e-6)
+
+
+def _sparse_config_3d() -> MetricConfig:
+    """欠測部位テスト専用の 3D bundle。各部位に 1 ペア分の余裕(`min_pairs`)を
+    持たせ、末尾の 1 ペアを切り落としても重ね合わせ自体(全体)は成立し続ける
+    ようにする(`tests/domain/test_symmetry_3d.py` の
+    `test_a_missing_part_does_not_make_the_overall_distance_missing` と同じ手法)。
+    共有の `_config_3d()` は全部位 `min_pairs` に余裕が無く(pairs 数と同数)、
+    1 ペア欠けただけで全体まで欠測になってしまうため、この test 専用に切り出す。
+    """
+    return build_metric_config(
+        metric_version="symmetry-3d/test",
+        landmark_map_version="test/1.0.0",
+        landmark_count=len(SYMMETRIC_POINTS),
+        left_eye_corners=(0, 1),
+        right_eye_corners=(2, 3),
+        midline_indices=(4, 5, 6),
+        parts={
+            "contour": PartMap(pairs=((7, 8), (9, 10), (11, 12)), min_pairs=2),
+            # eyes だけは余裕を持たせない: (25, 26) が落ちると 2 ペアのみになり、
+            # min_pairs=3 を下回って欠測になる。
+            "eyes": PartMap(pairs=((0, 3), (1, 2), (25, 26)), min_pairs=3),
+            "nose": PartMap(pairs=((13, 14), (15, 16), (17, 18)), min_pairs=2),
+            "mouth": PartMap(pairs=((19, 20), (21, 22), (23, 24)), min_pairs=2),
+        },
+    )
+
+
+def test_a_missing_part_does_not_update_that_parts_smoothing_while_others_advance() -> None:
+    """§8.7 改訂/不変条件 11: 部位が欠測のフレームでは、その部位の EMA を
+    更新しない(0 で埋めない)。他の部位・全体の EMA は通常どおり動き続け、
+    欠測から復帰すると欠測前の値から連続して動く(リセットではない)。
+    「欠測時に 0 や前回の生値を書き込む実装」・「欠測をまたいで内部状態を
+    リセットする実装」のいずれでもこの assertion 群のどれかが落ちる(罠)。
+    """
+    depths = _depths(SYMMETRIC_POINTS)
+    config_3d = _sparse_config_3d()
+    analyzer = FrameAnalyzer(
+        config=_config(), config_3d=config_3d, skin_pairs=((7, 8), (9, 10), (11, 12))
+    )
+
+    def _frame_with(points, depths_, *, frame_id):
+        return build_landmark_frame(
+            frame_id=frame_id,
+            face_count=1,
+            points=points,
+            depths=depths_,
+            pose=FacePose(yaw_deg=0.0, pitch_deg=0.0, roll_deg=0.0),
+            width=640,
+            height=480,
+        )
+
+    # 眉ペア (25, 26) を非対称にする。全体・他部位ではなく eyes だけの生値を動かす。
+    skewed = list(SYMMETRIC_POINTS)
+    skewed[25] = (skewed[25][0] - 0.05, skewed[25][1])
+    skewed = tuple(skewed)
+
+    # 1) 対称な顔でゲートを開き、eyes の EMA を 0 付近へ落ち着かせる。
+    for index in range(1, 6):
+        analyzer.analyze(_frame_with(SYMMETRIC_POINTS, depths, frame_id=index), at=index * 0.1)
+
+    # 2) ゲートが開いた状態のまま眉を非対称にする(まだ切り落とさない)。生値は
+    #    跳ね上がるが EMA はまだ追いつききっていない(ラグが残る)。
+    jumped = analyzer.analyze(_frame_with(skewed, depths, frame_id=6), at=0.6)
+    assert jumped.symmetry_3d is not None
+    raw_eyes_jumped = jumped.symmetry_3d.distance("eyes")
+    assert raw_eyes_jumped is not None and raw_eyes_jumped > 0.0
+    assert jumped.part_distances_3d_smooth is not None
+    before_missing_eyes = jumped.part_distances_3d_smooth["eyes"]
+    before_missing_contour = jumped.part_distances_3d_smooth["contour"]
+    assert before_missing_eyes is not None
+    assert before_missing_contour is not None
+    assert 0.0 < before_missing_eyes < raw_eyes_jumped  # ラグが残っている証拠
+
+    # 3) 末尾 2 点 (25, 26、eyes の 3 番目のペア) を切り落とし、eyes だけを部位別の
+    #    最小ペア数 (3) 未満にする。他の部位・全体の重ね合わせは成立し続ける。
+    truncated_points = skewed[:25]
+    truncated_depths = depths[:25]
+    missing = analyzer.analyze(_frame_with(truncated_points, truncated_depths, frame_id=7), at=0.7)
+
+    assert missing.symmetry_3d is not None
+    assert missing.symmetry_3d.overall is not None  # 全体は生き残る
+    assert missing.symmetry_3d.distance("eyes") is None  # eyes だけ欠測
+    assert missing.part_distances_3d_smooth is not None
+    assert missing.part_distances_3d_smooth["eyes"] is None  # 0 や前回値で埋めない
+    # 欠測していない部位の EMA は通常どおり更新され続ける。
+    assert missing.part_distances_3d_smooth["contour"] is not None
+
+    # 4) 次のフレームで eyes が復帰すると、EMA は欠測前の値から連続して動く
+    #    (内部状態がリセットされずに保持されていた証拠)。リセットされていれば
+    #    最初の更新は生値そのものと一致してしまう。
+    recovered = analyzer.analyze(_frame_with(skewed, depths, frame_id=8), at=0.8)
+    assert recovered.symmetry_3d is not None
+    raw_eyes_recovered = recovered.symmetry_3d.distance("eyes")
+    assert raw_eyes_recovered is not None
+    assert recovered.part_distances_3d_smooth is not None
+    recovered_eyes = recovered.part_distances_3d_smooth["eyes"]
+    assert recovered_eyes is not None
+    assert recovered_eyes != pytest.approx(raw_eyes_recovered, abs=1e-9)
+    assert before_missing_eyes < recovered_eyes < raw_eyes_recovered

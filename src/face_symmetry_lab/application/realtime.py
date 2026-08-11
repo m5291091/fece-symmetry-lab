@@ -100,6 +100,12 @@ class PipelineSnapshot:
     analysis: AnalysisOutcome | None = None
     #: §14.3, FR-022〜024: `DemographicSampler` が別周期で生成する。
     demographic_estimate: DemographicEstimate | None = None
+    #: §14.3e (H1): `SessionRecorder.segment_id` の読み戻し。HUD の折れ線グラフ
+    #: が世代識別子として流用する（`ui.hud.build_hud_payload` の `gen`）。
+    #: セッションの Reset・入力ソースの切替・指標に影響する設定変更のいずれで
+    #: も `SessionRecorder` 側で更新されるため、ここでも同じタイミングで動く。
+    #: recorder 未接続なら `None`。
+    segment_id: str | None = None
 
     @property
     def needs_recovery(self) -> bool:
@@ -309,6 +315,7 @@ class RealtimeLandmarkPipeline:
                 demographic_estimate=(
                     demographic_sample[0] if demographic_sample is not None else None
                 ),
+                segment_id=self._recorder.segment_id if self._recorder is not None else None,
             )
         return painted, analysis
 

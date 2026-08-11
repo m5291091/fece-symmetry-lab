@@ -199,3 +199,22 @@ def test_a_still_image_never_reports_a_smoothed_three_dimensional_distance() -> 
     assert analysis.outcome.symmetry_3d.overall is not None
     assert analysis.outcome.symmetry_3d.overall.distance > 0.0  # z が非対称なので 0 ではない
     assert analysis.outcome.overall_distance_3d_smooth is None
+
+
+def test_a_still_image_never_reports_smoothed_part_distances_either() -> None:
+    """§8.7 改訂（H1）: 部位別 (`d_3d,p`) の平滑値も、全体値と同じ理由で
+    stateless な静止画では欠測へ落とす。`FrameAnalyzer` を毎回新しく作るため、
+    何もしなければ部位別 EMA への最初の更新(=生値と等しい非 null 値)を返して
+    しまう(全体値と同じ罠)。UI は §8.6.3 のとおり部位別の生値へフォールバック
+    する。
+    """
+    analysis = analyze_still_image(
+        DepthAwareLandmarker(),
+        np.zeros((480, 640, 3), dtype=np.uint8),
+        config=_still_metric_config("symmetry-2d/test"),
+        config_3d=_still_metric_config("symmetry-3d/test"),
+    )
+
+    assert analysis.outcome.symmetry_3d is not None
+    assert analysis.outcome.symmetry_3d.distance("mouth") is not None
+    assert analysis.outcome.part_distances_3d_smooth is None

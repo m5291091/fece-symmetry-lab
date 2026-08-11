@@ -189,6 +189,10 @@ class RecorderSpy:
         self.reset_kwargs: list[dict[str, object]] = []
         self.demographic_attachments: list[tuple[DemographicEstimate, int]] = []
         self.resize_calls: list[int] = []
+        #: §14.3e (H1): HUD の折れ線グラフが読む世代識別子（`PipelineSnapshot.
+        #: segment_id`）の由来。実物の `SessionRecorder.segment_id` と同じ
+        #: 「常に文字列を返す」契約に合わせておく。
+        self.segment_id = "recorder-spy-segment"
 
     def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
         self.analysis_frames.append(frame.frame_id)
@@ -520,6 +524,25 @@ def test_snapshot_reports_scoring_timing_with_an_analyzer() -> None:
     pipeline.process(_rgb())
 
     assert pipeline.snapshot().scoring_ms > 0.0
+
+
+def test_snapshot_carries_the_recorders_segment_id() -> None:
+    """§14.3e (H1): HUD の折れ線グラフの世代識別子は `SessionRecorder.segment_id`
+    を流用する（`PipelineSnapshot.segment_id`）。"""
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), recorder=recorder)
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().segment_id == recorder.segment_id
+
+
+def test_snapshot_segment_id_is_none_without_a_recorder() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().segment_id is None
 
 
 def test_close_releases_the_landmarker_and_stops_processing() -> None:

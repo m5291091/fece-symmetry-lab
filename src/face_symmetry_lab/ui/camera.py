@@ -618,7 +618,11 @@ def _render_panel_layout_control() -> None:
         options=HUD_POSITION_OPTIONS,
         key=HUD_POSITION_STATE_KEY,
         horizontal=True,
-        help="映像へ重ねる対称度・参考年齢・参考性別の位置です。映像自体は加工しません。",
+        help=(
+            "映像へ重ねる「ライブ解析」の吹き出し"
+            "（全体の対称度・全体のスコア・部位別4つ・参考年齢・参考性別・折れ線グラフ）"
+            "の位置です。映像自体は加工しません。"
+        ),
     )
 
 

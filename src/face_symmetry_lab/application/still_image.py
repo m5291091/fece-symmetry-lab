@@ -113,6 +113,18 @@ def analyze_still_image(
     # （§8.6.3, §9.2）、明示的に欠測へ落として「平滑化された」という誤った
     # 含意を持たせない（不変条件 11）。UI はこの欠測時、`symmetry_3d.overall`
     # の生値へ自然にフォールバックする（`ui.scores.resolve_overall_distance`）。
-    if outcome.overall_distance_3d_smooth is not None:
-        outcome = dataclasses.replace(outcome, overall_distance_3d_smooth=None)
+    # §8.7 改訂（H1）: 部位別 (`part_distances_3d_smooth`) も同じ理由で新しい
+    # EMA への最初の更新にすぎないため、同じく明示的に欠測へ落とす。UI は
+    # `ui.scores.resolve_part_distance_3d` 経由で部位別の生値へフォールバック
+    # する。
+    has_smoothed_3d = (
+        outcome.overall_distance_3d_smooth is not None
+        or outcome.part_distances_3d_smooth is not None
+    )
+    if has_smoothed_3d:
+        outcome = dataclasses.replace(
+            outcome,
+            overall_distance_3d_smooth=None,
+            part_distances_3d_smooth=None,
+        )
     return StillImageAnalysis(landmarks=landmarks, outcome=outcome)

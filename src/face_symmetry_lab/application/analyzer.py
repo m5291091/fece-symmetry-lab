@@ -19,7 +19,7 @@ from face_symmetry_lab.domain.landmarks import (
     to_pixel_array,
     to_pixel_array_3d,
 )
-from face_symmetry_lab.domain.metrics import MetricConfig
+from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
 from face_symmetry_lab.domain.skin_quality import (
@@ -65,10 +65,28 @@ class AnalysisOutcome:
     #: 独立に掛けたもの。`overall_distance_smooth` とは別の EMA インスタンスで
     #: あり、値も共有しない。
     overall_distance_3d_smooth: float | None = None
+    #: §8.7 改訂（H1）: `symmetry_3d` の部位別距離 `d_3d,p` へ、`d_3d` と同じ
+    #: tau・同じ式の EMA を部位ごとに独立して掛けたもの。キーは
+    #: `domain.metrics.PART_NAMES`。`symmetry_3d` 自体が欠測のフレームは
+    #: `None`（コンテナごと欠測）。`symmetry_3d` は成立していても特定の部位だけ
+    #: 欠測のフレームでは、その部位のキーだけ `None` になり、EMA も更新しない
+    #: （0 で埋めない、不変条件 11）。表示は §8.6.3 のとおりこの平滑値を主表示
+    #: する。エクスポートへは接続しない（`distance3d_*_raw` は生値のまま）。
+    part_distances_3d_smooth: dict[str, float | None] | None = None
 
     @property
     def overall_distance_raw(self) -> float | None:
         return self.symmetry.overall if self.symmetry is not None else None
+
+
+def _new_part_emas(tau_seconds: float) -> dict[str, TimeBasedEma]:
+    """§8.7 改訂（H1）: 部位ごとに独立した `TimeBasedEma` の集合を作る。
+
+    `d_3d` 用の EMA と同じ `tau`・同じ式であり、新しい自由パラメータは導入しない
+    （§8.6 の原則）。`__init__` と `update()`（Advanced 設定の差し替え）の両方が
+    「新しく作ってから差し替える」という同じ規約に従うため、ここへ集約する。
+    """
+    return {name: TimeBasedEma(tau_seconds=tau_seconds) for name in PART_NAMES}
 
 
 class FrameAnalyzer:
@@ -88,6 +106,9 @@ class FrameAnalyzer:
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
         self._ema_3d = TimeBasedEma(tau_seconds=tau_seconds)
+        # §8.7 改訂（H1）: 部位ごとに独立したインスタンス。`d_3d` 用の `_ema_3d`
+        # とも値を共有しない。
+        self._ema_3d_parts = _new_part_emas(tau_seconds)
         self._lost_since: float | None = None
         self._skin_pairs = skin_pairs
 
@@ -124,6 +145,7 @@ class FrameAnalyzer:
         self._gate = QualityGate(thresholds)
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
         self._ema_3d = TimeBasedEma(tau_seconds=tau_seconds)
+        self._ema_3d_parts = _new_part_emas(tau_seconds)
         self._lost_since = None
 
     def reset(self) -> None:
@@ -131,6 +153,11 @@ class FrameAnalyzer:
         self._gate.reset()
         self._ema.reset()
         self._ema_3d.reset()
+        # §8.7 改訂（H1）: 部位別 EMA も全体値とまったく同じタイミングでリセット
+        # する。片方だけ漏れると、リセット後に古い部位別の値が新しい区間へ
+        # 混ざる（W3 と同じ注意）。
+        for part_ema in self._ema_3d_parts.values():
+            part_ema.reset()
         self._lost_since = None
 
     def analyze(
@@ -181,6 +208,21 @@ class FrameAnalyzer:
         if symmetry_3d is not None and symmetry_3d.overall is not None:
             smooth_3d = self._ema_3d.update(symmetry_3d.overall.distance, at=at)
 
+        # §8.7 改訂（H1）: `d_3d,p` にも部位ごとに独立した同じ時間ベース EMA を
+        # 適用する。`symmetry_3d` 自体が欠測のフレームはコンテナごと欠測にする
+        # （`overall_distance_3d_smooth` と同じ「更新しない・0 で埋めない」規約）。
+        # `symmetry_3d` が成立していても特定の部位だけ欠測の場合は、その部位の
+        # EMA だけ更新をスキップし、キーは `None` を返す（不変条件 11）。他の
+        # 部位の EMA は通常どおり動き続ける。
+        smooth_3d_parts: dict[str, float | None] | None = None
+        if symmetry_3d is not None:
+            smooth_3d_parts = {}
+            for name in PART_NAMES:
+                raw_part = symmetry_3d.distance(name)
+                smooth_3d_parts[name] = (
+                    None if raw_part is None else self._ema_3d_parts[name].update(raw_part, at=at)
+                )
+
         skin_quality: SkinQualityResult | None = None
         if state.status is Status.OK and rgb_image is not None:
             try:
@@ -205,6 +247,7 @@ class FrameAnalyzer:
             skin_quality=skin_quality,
             symmetry_3d=symmetry_3d,
             overall_distance_3d_smooth=smooth_3d,
+            part_distances_3d_smooth=smooth_3d_parts,
         )
 
     def _track_face_loss(self, status: Status, at: float) -> None:
@@ -216,3 +259,7 @@ class FrameAnalyzer:
         elif at - self._lost_since >= FACE_LOST_RESET_SECONDS:
             self._ema.reset()
             self._ema_3d.reset()
+            # §8.7 改訂（H1）: 顔喪失リセットも部位別 EMA まで含めて全体値と同じ
+            # ように扱う。
+            for part_ema in self._ema_3d_parts.values():
+                part_ema.reset()
