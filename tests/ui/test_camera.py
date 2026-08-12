@@ -21,7 +21,6 @@ from face_symmetry_lab.ui.camera import (
     FULLSCREEN_STATE_KEY,
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
-    PANEL_LAYOUT_STATE_KEY,
     SYMMETRIZATION_STATE_KEY,
     build_video_frame_callback,
 )
@@ -341,55 +340,6 @@ def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
 # --- §5.1 レイアウト: 映像を最上部に保つ --------------------------------------
 
 
-def test_the_layout_split_reads_the_stored_preset_without_rendering_a_widget() -> None:
-    """§5.1: そのパネルを動かす操作子よりも前に映像を配置する。
-
-    分割はセクション先頭で決める必要がある一方、それを変えるラジオは下の設定
-    タブにある。そのため widget を描かず設定値だけを読む。
-    """
-    at = AppTest.from_string(
-        "import streamlit as st\n"
-        "from face_symmetry_lab.ui.camera import _split_for_panel_layout\n"
-        "preview, headline = _split_for_panel_layout()\n"
-        "st.session_state['stacked'] = headline is None\n"
-    )
-    at.session_state[PANEL_LAYOUT_STATE_KEY] = "動画の下"
-    at.run()
-
-    assert not at.exception
-    assert at.session_state["stacked"] is True
-    assert not at.radio  # プリセットの widget は設定タブに属する
-
-
-def test_the_default_layout_places_the_headline_beside_the_video() -> None:
-    at = AppTest.from_string(
-        "import streamlit as st\n"
-        "from face_symmetry_lab.ui.camera import _split_for_panel_layout\n"
-        "preview, headline = _split_for_panel_layout()\n"
-        "st.session_state['stacked'] = headline is None\n"
-    )
-    at.run()
-
-    assert not at.exception
-    assert at.session_state["stacked"] is False
-
-
-def test_the_panel_layout_control_writes_the_key_the_split_reads() -> None:
-    """設定タブでの変更が、次の実行で分割処理へ届かなければならない。"""
-    at = AppTest.from_string(
-        "from face_symmetry_lab.ui.camera import _render_panel_layout_control\n"
-        "_render_panel_layout_control()\n"
-    )
-    at.run()
-
-    assert not at.exception
-    assert at.radio[0].key == PANEL_LAYOUT_STATE_KEY
-
-    at.radio[0].set_value("動画の左").run()
-
-    assert at.session_state[PANEL_LAYOUT_STATE_KEY] == "動画の左"
-
-
 def test_the_camera_section_puts_the_video_above_every_tab() -> None:
     """§5.1/AC-LAYOUT-01: 設定が表示を画面外へ押し出してはならない。
 
@@ -404,7 +354,6 @@ def test_the_camera_section_puts_the_video_above_every_tab() -> None:
     source = inspect.getsource(camera.render_camera_section)
 
     assert source.index("webrtc_streamer(") < source.index("st.tabs(")
-    assert source.index("_split_for_panel_layout()") < source.index("webrtc_streamer(")
     assert source.index("webrtc_streamer(") < source.index("_render_display_controls(")
 
 
@@ -426,17 +375,72 @@ def test_every_below_video_panel_lives_in_a_tab() -> None:
         assert source.index(panel) > tabs_at, panel
 
 
-# --- §14.3e HUD の配線 --------------------------------------------------------
-
-
-def test_the_hud_is_published_from_the_existing_headline_fragment() -> None:
-    """3 つ目の 5 Hz fragment は純粋な負荷だった。payload は相乗りさせる。"""
+def test_render_camera_section_does_not_split_the_video_with_columns() -> None:
+    """項目26（H3）: 「ライブ解析」パネルの配置プリセット（`_split_for_panel_layout`）
+    が消え、映像は `st.columns` で分割せず画面幅いっぱいを使う。"""
     import inspect
 
     from face_symmetry_lab.ui import camera
 
-    assert not hasattr(camera, "_render_hud_fragment")
-    assert "render_hud_payload(" in inspect.getsource(camera._render_headline_fragment)
+    source = inspect.getsource(camera.render_camera_section)
+    before_video = source[: source.index("webrtc_streamer(")]
+
+    assert "st.columns(" not in before_video
+
+
+# --- 項目26（H3）: 「ライブ解析」パネルの削除 ----------------------------------
+
+
+def test_the_headline_panel_and_its_wiring_are_fully_removed() -> None:
+    """パネル本体・配置プリセット・Camera 側の `render_tracking_status` /
+    `guidance_message` の呼び出しを跡形もなく消す（requirement.md §14.3e、
+    項目26、H3）。HUD が同じ内容を表示するようになったため、これらが残って
+    いれば同じ測定値が画面上の 2 か所へ出てしまう。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    for name in (
+        "_render_headline_panel",
+        "_render_headline_fragment",
+        "_split_for_panel_layout",
+        "PANEL_LAYOUT_STATE_KEY",
+    ):
+        assert not hasattr(camera, name), name
+
+    source = inspect.getsource(camera)
+    for symbol in ("render_headline_metrics", "render_tracking_status", "guidance_message"):
+        assert symbol not in source, symbol
+
+
+# --- §14.3e HUD の配線 --------------------------------------------------------
+
+
+def test_the_hud_is_published_from_a_single_existing_fragment() -> None:
+    """3 つ目の 5 Hz fragment は純粋な負荷だった。payload は既存 fragment へ
+    相乗りさせ、増やさない——モジュール全体で `@st.fragment` はちょうど 2 個
+    （HUD publish 用と詳細用）のままである。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    assert "render_hud_payload(" in inspect.getsource(camera._render_hud_fragment)
+    assert inspect.getsource(camera).count("@st.fragment(") == 2
+
+
+def test_the_hud_fragment_only_publishes_and_never_renders_a_panel() -> None:
+    """項目26（H3）: この fragment は payload の publish だけを行い、見出しパネル
+    が描いていたもの（`st.metric`・`render_headline_metrics`・枠付き container）
+    を一切持たない。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_hud_fragment)
+
+    assert "st.metric" not in source
+    assert "render_headline_metrics" not in source
+    assert "st.container(border=True)" not in source
 
 
 def test_the_bridge_is_installed_once_and_never_inside_a_fragment() -> None:
@@ -447,7 +451,40 @@ def test_the_bridge_is_installed_once_and_never_inside_a_fragment() -> None:
     source = inspect.getsource(camera.render_camera_section)
 
     assert "render_hud_bridge(" in source
-    assert "render_hud_bridge" not in inspect.getsource(camera._render_headline_fragment)
+    assert "render_hud_bridge" not in inspect.getsource(camera._render_hud_fragment)
+
+
+def test_the_hud_position_control_renders_a_single_radio() -> None:
+    """項目26（H3）: 「ライブ解析」パネルの配置プリセットが消えたので、この
+    コントロールが描く radio は映像上 HUD の位置だけになる。"""
+    from face_symmetry_lab.ui.hud import HUD_POSITION_STATE_KEY
+
+    at = AppTest.from_string(
+        "from face_symmetry_lab.ui.camera import _render_hud_position_control\n"
+        "_render_hud_position_control()\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert len(at.radio) == 1
+    assert at.radio[0].key == HUD_POSITION_STATE_KEY
+
+
+def test_the_detail_fragment_suppresses_the_duplicated_part_breakdown() -> None:
+    """項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示
+    するため、詳細タブでは `show_parts=False` を渡して重複を避ける。
+
+    罠: 既定のまま（`show_parts` を渡さず）呼ぶ実装ではこの assertion が落ちる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_detail_fragment)
+
+    assert (
+        "render_score_details(snapshot.analysis, show_smoothed=False, show_parts=False)" in source
+    )
 
 
 def test_the_frame_path_is_untouched_by_the_overlay_work() -> None:

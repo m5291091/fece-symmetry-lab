@@ -12,13 +12,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import av
 import numpy as np
 import streamlit as st
-from streamlit.delta_generator import DeltaGenerator
-from streamlit_webrtc import WebRtcMode, WebRtcStreamerContext, webrtc_streamer
+from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
 from face_symmetry_lab import __version__
 from face_symmetry_lab.adapters.imaging.piecewise_warp import OpenCvPiecewiseWarper
@@ -51,12 +50,10 @@ from face_symmetry_lab.application.realtime import (
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
-from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.export_panel import render_export_panel
-from face_symmetry_lab.ui.guidance import guidance_message
 from face_symmetry_lab.ui.hud import (
     HUD_POSITION_OPTIONS,
     HUD_POSITION_STATE_KEY,
@@ -77,12 +74,8 @@ from face_symmetry_lab.ui.scores import (
     DEVIATION_UNIT_CAPTION,
     format_distance,
     render_demographic_estimate,
-    render_headline_metrics,
     render_score_details,
     render_symmetrized_image,
-    render_tracking_status,
-    resolve_equal_weight_distance,
-    resolve_overall_distance,
 )
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
@@ -90,17 +83,6 @@ _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
     BackgroundMode.BLACK: "黒",
     BackgroundMode.WHITE: "白",
 }
-
-#: FR-032: 表示位置のプリセット。採点には一切影響しない。
-_PANEL_LAYOUT_RIGHT: Final[str] = "動画の右"
-_PANEL_LAYOUT_LEFT: Final[str] = "動画の左"
-_PANEL_LAYOUT_BELOW: Final[str] = "動画の下"
-_PANEL_LAYOUT_OPTIONS: Final[tuple[str, ...]] = (
-    _PANEL_LAYOUT_RIGHT,
-    _PANEL_LAYOUT_LEFT,
-    _PANEL_LAYOUT_BELOW,
-)
-PANEL_LAYOUT_STATE_KEY = "camera_panel_layout"
 
 FULLSCREEN_STATE_KEY = "camera_fullscreen"
 DEMOGRAPHIC_ENABLED_STATE_KEY = "camera_demographic_enabled"
@@ -145,13 +127,6 @@ SYMMETRIZATION_STATE_KEY = "symmetrization_view"
 #: §11 NFR-003: 結果パネルは映像の fps とは独立に 4〜5 Hz で更新する。
 STATUS_REFRESH_INTERVAL = "200ms"
 
-_STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
-    TrackingStatus.NO_FACE: "顔が見つかりません。カメラの正面に入ってください。",
-    TrackingStatus.SINGLE_FACE: "1 名の顔を追跡しています。",
-    TrackingStatus.MULTI_FACE: "2 名以上が写っています。1 名だけが写るようにしてください。",
-    TrackingStatus.ERROR: "このフレームを処理できませんでした。そのままお待ちください。",
-}
-
 VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
 
@@ -161,8 +136,8 @@ def build_video_frame_callback(pipeline: RealtimeLandmarkPipeline) -> VideoFrame
     FR-013: pipeline が描くのはランドマークと正中線だけである（1 フレーム
     あたり約 1ms）。数値パネルを意図的にここへ描かないのは、720p/30fps で 1
     フレームに使える 33ms のうち 18.6ms を消費し、それが遅延として表面化した
-    ためである。数値は映像の隣のパネルが受け持つ。画素が変わらなかった場合は、
-    届いたフレームを再エンコードせずそのまま返す。
+    ためである。数値は映像へ描かず、ブラウザ側の表示層が受け持つ（§14.3e）。
+    画素が変わらなかった場合は、届いたフレームを再エンコードせずそのまま返す。
     """
 
     def callback(frame: av.VideoFrame) -> av.VideoFrame:
@@ -277,73 +252,42 @@ def release_session_pipeline() -> None:
 
 
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
-def _render_headline_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
-    """不変 snapshot を 5 Hz で読み、見出しブロックだけを描画する。
+def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
+    """不変 snapshot を 5 Hz で読み、映像上の HUD へ payload を publish するだけ。
 
-    FR-013/FR-032: 全体の対称度・全体のスコア・参考性別・参考年齢・追跡状態・
-    位置誘導は映像の隣（配置はプリセットに従う）へ置き、カメラから目を離さず
-    に読めるようにする。見出しは §5.1・不変条件 5 に従い、左右差 2 つ・参考値
-    2 つの 2 行に分ける（`render_headline_metrics` へ委譲）。それ以外は詳細で
-    あり、常に画面幅いっぱいで下に出る `_render_detail_fragment` が受け持つ
-    （§5.1, AC-LAYOUT-01）。
+    項目26（H3）: 映像の隣にあった「ライブ解析」パネル（見出しの数値・追跡状態・
+    位置誘導）を削除した。HUD（`ui.hud`）が同じ内容を吹き出しとして表示する
+    ため、ここでは何も描画しない。fragment 自体は残す——`render_hud_payload`
+    が書く隠し要素をこれが 5 Hz で更新し続けないと、HUD の数値が動かなくなる
+    ためである。
     """
     snapshot = pipeline.snapshot()
-    with st.container(border=True):
-        # §8.6.3/§8.7: 全体の対称度・全体のスコアは主指標 symmetry-3d/1.0.0 から作る。
-        overall = (
-            resolve_overall_distance(snapshot.analysis) if snapshot.analysis is not None else None
-        )
-        equal_weight = (
-            resolve_equal_weight_distance(snapshot.analysis)
-            if snapshot.analysis is not None
-            else None
-        )
-        render_headline_metrics(
-            overall=overall,
-            equal_weight=equal_weight,
-            estimate=snapshot.demographic_estimate,
-        )
-        st.divider()
-        render_tracking_status(snapshot.status, _STATUS_MESSAGES)
-
-        if snapshot.analysis is not None:
-            guidance = guidance_message(snapshot.analysis.state)
-            if guidance is not None:
-                st.warning(guidance)
-        if snapshot.needs_recovery:
-            st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
-
-    # §14.3e: 3 つ目の fragment を新設せず、既存の 5 Hz fragment へ相乗りさせる。
-    # 対象要素は隠されていて id で参照されるため、DOM 上のどこへ出ても構わない。
     render_hud_payload(
         snapshot,
         show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
     )
 
 
-def _render_headline_panel(
-    pipeline: RealtimeLandmarkPipeline,
-    context: WebRtcStreamerContext[Any, Any],
-) -> None:
-    """「ライブ解析」の見出しと見出しブロック。配置は FR-032 のプリセットに従う。"""
-    st.markdown("#### ライブ解析")
-    if context.state.playing:
-        _render_headline_fragment(pipeline)
-    else:
-        st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
-
-
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
 def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
-    """不変 snapshot を 5 Hz で読み、画面幅いっぱいの詳細ブロックを描画する。"""
+    """不変 snapshot を 5 Hz で読み、画面幅いっぱいの詳細ブロックを描画する。
+
+    項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示する
+    ため、`render_score_details` へ `show_parts=False` を渡して重複を避ける。
+    """
     snapshot = pipeline.snapshot()
     with st.container(border=True):
+        # §14.4: 回復導線。以前は映像隣の見出しパネルにあったが、パネルの削除
+        # に伴いここへ移した。
+        if snapshot.needs_recovery:
+            st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
+
         # 測定結果を先頭に置く。下の実行時カウンタは診断用であり、利用者が
         # 手を打てないフレーム統計で結果を埋もれさせていた。
         if snapshot.analysis is not None:
-            render_score_details(snapshot.analysis)
+            render_score_details(snapshot.analysis, show_smoothed=False, show_parts=False)
         else:
-            st.info("品質ゲートを満たすと、ここに部位別の数値が表示されます。")
+            st.info("品質ゲートを満たすと、ここに計算過程などの数値が表示されます。")
 
         if snapshot.demographic_estimate is not None:
             st.divider()
@@ -378,9 +322,9 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def _render_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
-    """部位別・姿勢・肌表面参考値などの詳細結果。配置プリセットに関わらず常に
+    """HUD が持たない計算過程・姿勢・肌表面参考値などの詳細結果。
 
-    動画とヘッダー結果の下へ画面幅いっぱいで表示する（FR-032, AC-LAYOUT-01）。
+    常に動画の下へ画面幅いっぱいで表示する（FR-032, AC-LAYOUT-01）。
     """
     _render_detail_fragment(pipeline)
 
@@ -548,12 +492,14 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
     pipeline.set_midline_enabled(show_midline)
     pipeline.set_demographic_enabled(show_demographics)
 
-    # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。同じ情報は映像の
-    # 隣のパネルにテキストとしても残している。
+    # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。色以外の手掛かりは、
+    # ゲートが閉じている間は詳細結果タブの状態文言と理由、ゲートが閉じると
+    # HUD・詳細結果の数値が「—」へ変わること（値の有無）の 2 つで保つ（項目26）。
     st.caption(
         "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
         "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
-        "同じ状態は映像の隣のテキストでも確認できます。"
+        "同じ状態は、条件を満たしていない間は詳細結果タブの文言と理由でも確認でき、"
+        "満たすと HUD・詳細結果の数値が「—」から実際の値へ変わることでも分かります。"
     )
 
     background_column, status_column = st.columns(2)
@@ -575,51 +521,21 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
         _render_auto_tune_status(pipeline)
 
 
-def _split_for_panel_layout() -> tuple[DeltaGenerator, DeltaGenerator | None]:
-    """保存済みの FR-032 プリセットに対応する (preview, headline) の列を返す。
-
-    widget を描画せず設定値だけを読む。§5.1 は映像を最上部に置くと定めている
-    一方、それを変える操作子は下の「表示設定」タブにあるためである。widget は
-    同じセッション状態のキーへ書くので、変更はそれが起こす再実行で反映される。
-
-    表示専用であり、マウスのドラッグではなくプリセット選択で「動く」（§14.3e）。
-    headline 列が ``None`` のときは「映像の下へ積む」という意味で、これだけが
-    専用の列を必要としないプリセットである。§5.1 の 7:5 比は headline が
-    どちら側へ来ても保たれる。
-    """
-    panel_layout = st.session_state.get(PANEL_LAYOUT_STATE_KEY, _PANEL_LAYOUT_RIGHT)
-    if panel_layout == _PANEL_LAYOUT_BELOW:
-        return st.container(), None
-    if panel_layout == _PANEL_LAYOUT_LEFT:
-        result_column, preview_column = st.columns([5, 7], gap="large")
-        return preview_column, result_column
-    preview_column, result_column = st.columns([7, 5], gap="large")
-    return preview_column, result_column
-
-
-def _render_panel_layout_control() -> None:
+def _render_hud_position_control() -> None:
     """FR-032 のプリセット widget。「表示設定」タブの中で描画する。
 
     `st.tabs` はどのタブが画面に出ていても毎回すべてのタブの中身を構築する
-    ため、この widget は常に存在し、値も保たれる。
+    ため、この widget は常に存在し、値も保たれる。項目26（H3）で映像の隣の
+    見出しパネルとその配置プリセット（右・左・下）を削除したため、ここで
+    描く radio は映像上 HUD の位置だけになる。
     """
-    st.radio(
-        "「ライブ解析」パネルの配置",
-        options=_PANEL_LAYOUT_OPTIONS,
-        key=PANEL_LAYOUT_STATE_KEY,
-        horizontal=True,
-        help=(
-            "見出し（全体の対称度・全体のスコア・参考性別・参考年齢・状態）の位置だけを"
-            "変えます。数値は変わりません。"
-        ),
-    )
     st.radio(
         "映像上の HUD の位置",
         options=HUD_POSITION_OPTIONS,
         key=HUD_POSITION_STATE_KEY,
         horizontal=True,
         help=(
-            "映像へ重ねる「ライブ解析」の吹き出し"
+            "映像へ重ねる HUD の吹き出し"
             "（全体の対称度・全体のスコア・部位別4つ・参考年齢・参考性別・折れ線グラフ）"
             "の位置です。映像自体は加工しません。"
         ),
@@ -664,9 +580,9 @@ def render_camera_section() -> None:
     st.subheader("リアルタイム ランドマーク表示")
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "映像にはランドマークと中心線だけを重ね、全体の対称度・全体のスコア・"
-        "参考性別・参考年齢は映像のすぐ隣に大きく表示します。設定と詳しい数値は"
-        "映像の下のタブにまとめています。"
+        "映像にはランドマークと中心線だけを重ね、主要な数値は映像へ重ねる"
+        "HUD（吹き出し）に表示します。設定と詳しい数値は映像の下のタブに"
+        "まとめています。"
     )
 
     model_path = resolve_ready_landmarker()
@@ -699,9 +615,10 @@ def render_camera_section() -> None:
         with st.container(key="fsl_exit_fullscreen"):
             st.button("✕ 全画面を終了", key="exit_fullscreen", on_click=_exit_fullscreen)
 
-    preview_column, result_column = _split_for_panel_layout()
-
-    with preview_column, st.container(border=True, key="camera_preview_frame"):
+    # 項目26（H3）: 「ライブ解析」パネルの削除に伴い、映像はもう `st.columns`
+    # で分割せず、画面幅いっぱいを使う。`key="camera_preview_frame"` は HUD の
+    # CSS（`.st-key-camera_preview_frame`）が参照するため変えない。
+    with st.container(border=True, key="camera_preview_frame"):
         context = webrtc_streamer(
             key=WEBRTC_KEY,
             mode=WebRtcMode.SENDRECV,
@@ -712,19 +629,19 @@ def render_camera_section() -> None:
             async_processing=True,
         )
 
-    if result_column is None:
-        _render_headline_panel(pipeline, context)
-    else:
-        with result_column:
-            _render_headline_panel(pipeline, context)
-
     if not context.state.playing:
+        # 不変条件 3: 明示的な同意の後にだけカメラ許可を求める導線を保つ。
+        st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
         # 開始前でも設定は画面上にあるべきだが、提示できる結果・取り込み・
         # エクスポートはまだ無い。
         with st.expander("表示設定"):
             _render_display_controls(pipeline)
-            _render_panel_layout_control()
+            _render_hud_position_control()
         return
+
+    # 項目26（H3）: 映像に隣接して数値を出すのは映像上の HUD だけである。この
+    # fragment は payload の publish だけを行い、それ自体は何も描画しない。
+    _render_hud_fragment(pipeline)
 
     if fullscreen:
         # 映像がビューポートを覆っている間、その下の要素へは到達できない。
@@ -745,7 +662,7 @@ def render_camera_section() -> None:
         _render_symmetrization_panel(pipeline)
     with settings_tab:
         _render_display_controls(pipeline)
-        _render_panel_layout_control()
+        _render_hud_position_control()
         st.divider()
         _render_session_controls(pipeline)
     with export_tab:

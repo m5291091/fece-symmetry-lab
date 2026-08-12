@@ -1,10 +1,12 @@
 """Turn a quality-gate reason into one actionable Japanese instruction.
 
 `REASON_GUIDANCE` is §6.3's 既定ガイド column, and the only place the app
-answers "what do we tell the user about this reason code": the live "ライブ
-解析" banner (FR-031) reads the primary reason through `guidance_message`,
-and `ui.scores.render_guidance` walks every blocking reason through the same
-table, so the two can never word the same condition differently.
+answers "what do we tell the user about this reason code": the detail
+result's `ui.scores.render_guidance` walks every blocking reason through this
+table (both Camera and Image), so no condition is ever worded twice. Camera
+used to also read the primary reason through `guidance_message` for its
+video-side "ライブ解析" panel, but that panel and the helper were removed in
+項目26 (H3, 2026-08-12) once the HUD took over showing the same values.
 
 Nothing here is ever drawn onto the video *frame*: FR-013 keeps the camera
 preview a pass-through, and Japanese text could not be painted onto it anyway
@@ -15,7 +17,7 @@ It does not extend to the DOM layer. §5.2's overlay exception lets
 `ui.camera` composite a HUD and a gate-coloured border *over* the video with
 CSS (§14.3e), which the browser draws and the frame path never sees — so it
 adds nothing to `processing_ms` and has no font constraint. This guidance
-text stays in the side panel regardless: §5.4 requires the state to be
+text stays in the detail tab regardless: §5.4 requires the state to be
 readable without relying on the overlay or on colour.
 """
 
@@ -23,7 +25,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from face_symmetry_lab.domain.models import AnalysisState, ReasonCode
+from face_symmetry_lab.domain.models import ReasonCode
 
 #: すべての `ReasonCode` を、短く実行可能な 1 つの指示へ対応付ける。ここで新しい
 #: 判断は一切行わない。品質ゲート（`application.quality.QualityGate`）がすでに
@@ -46,15 +48,3 @@ REASON_GUIDANCE: Final[dict[ReasonCode, str]] = {
     ReasonCode.BLUR: "カメラを固定し、ピントを合わせてください",
     ReasonCode.STALE_RESULT: "処理が遅延しています。しばらくお待ちください",
 }
-
-
-def guidance_message(state: AnalysisState) -> str | None:
-    """`state.reason` に対応する短い日本語の指示。条件を満たしていれば None。
-
-    §14.3e: 新たな優先順位を導かず、品質ゲート自身の主たる理由（同時に成立
-    しうる複数の `reason_codes` のうち、すでに先頭にあるもの）をそのまま使う。
-    これにより、他所で表示される状態と食い違うことがない。
-    """
-    if state.reason is None:
-        return None
-    return REASON_GUIDANCE.get(state.reason)

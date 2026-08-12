@@ -665,6 +665,80 @@ def test_the_part_level_variation_note_applies_equally_to_all_four_parts() -> No
     assert "撮影" in PART_LEVEL_VARIATION_CAPTION
 
 
+# --- 項目26（H3）: Camera の詳細タブから重複数値を除く（show_parts） --------
+
+
+def test_show_parts_false_hides_the_part_metrics_but_keeps_the_required_notices() -> None:
+    """項目26（H3）: Camera は HUD が既に部位別 4 つを表示するため描かないが、
+    §5.3 が義務付ける揺れ幅の注記と H2 の計算過程は詳細タブが唯一の受け皿なので
+    描き続ける。罠: 「部位別セクションを丸ごと削る」実装だと、注記と計算過程も
+    一緒に消えてこの assertion が落ちる。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    labels = [metric.label for metric in at.metric]
+    for hidden in ("輪郭", "目", "鼻", "口"):
+        assert hidden not in labels
+
+    headings = [element.value for element in at.subheader]
+    assert SCORE_HEADING in headings
+    infos = " ".join(element.value for element in at.info)
+    assert "試験中の指標" in infos
+
+    captions = " ".join(element.value for element in at.caption)
+    assert PART_LEVEL_VARIATION_CAPTION in captions
+
+    walkthrough = " ".join(element.value for element in at.code)
+    for label in ("輪郭", "目", "鼻", "口"):
+        assert label in walkthrough
+
+
+def test_show_parts_false_still_shows_pose_and_metric_version_captions() -> None:
+    """HUD が持たない値（姿勢・指標の版）は `show_parts=False` でも描き続ける。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    captions = " ".join(element.value for element in at.caption)
+    # `_outcome_for_display` は pose=None を渡すため、render_pose の None 分岐の
+    # 文言が出る。値の有無に関わらず render_pose 自体が呼ばれたことの確認になる。
+    assert "姿勢: 取得できません" in captions
+    assert f"metric {_METRIC_VERSION_3D}" in captions
+
+
+def test_render_score_details_show_parts_defaults_to_true() -> None:
+    """Image はこの既定値のまま呼ぶ。既定を `False` に変えると Image 側からも
+    部位別が消えるため、パラメータの既定値そのものを固定する。"""
+    import inspect
+
+    from face_symmetry_lab.ui.scores import render_score_details
+
+    signature = inspect.signature(render_score_details)
+
+    assert signature.parameters["show_parts"].default is True
+
+
 # --- §8.6.3(H2): 「全体のスコア」の計算過程の開示 ----------------------------
 
 
@@ -721,6 +795,44 @@ def test_the_calculation_walkthrough_matches_the_part_level_metrics_above_it() -
         assert format_distance(smoothed).rstrip("%") in walkthrough
     for raw_deviation in ("1.00", "2.00", "3.00", "1.50"):
         assert raw_deviation not in walkthrough
+
+
+def test_the_calculation_walkthrough_matches_resolve_part_distance_when_hidden() -> None:
+    """AC-DISPLAY-04: Camera（`show_parts=False`）では部位別メトリクスが描かれ
+    ないため、上の表示とは比較できない。代わりに、計算過程が使う値が
+    `resolve_part_distance_3d`（HUD が `format_symmetry` を通す前と同じ値）から
+    直接一致することを確認する。罠: 計算過程だけ別の値（例えば生値）を使う実装
+    はこの assertion が落ちる。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        "    part_smooth_3d={\n"
+        "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
+        "    },\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert not at.metric  # HUD が既に部位別を表示しているため、ここには無い
+
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.018,
+        part_smooth_3d={"contour": 0.004, "eyes": 0.006, "nose": 0.009, "mouth": 0.005},
+    )
+    walkthrough = " ".join(element.value for element in at.code)
+    for name in ("contour", "eyes", "nose", "mouth"):
+        value = resolve_part_distance_3d(outcome, name)
+        assert format_distance(value).rstrip("%") in walkthrough
 
 
 def test_the_calculation_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:

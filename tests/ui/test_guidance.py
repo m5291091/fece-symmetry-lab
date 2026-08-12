@@ -1,31 +1,24 @@
 import pytest
 
-from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
-from face_symmetry_lab.ui.guidance import guidance_message
-
-
-def test_guidance_message_is_none_when_the_gate_is_satisfied() -> None:
-    state = AnalysisState(status=Status.OK, reason=None, reason_codes=())
-
-    assert guidance_message(state) is None
+from face_symmetry_lab.domain.models import ReasonCode
+from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
 
 @pytest.mark.parametrize("reason", list(ReasonCode))
 def test_every_reason_code_has_a_japanese_guidance_message(reason: ReasonCode) -> None:
-    state = AnalysisState(status=Status.HOLD, reason=reason, reason_codes=(reason,))
+    """AC-GUIDE-01: `ReasonCode` の全メンバーに指示文が定義されている。
 
-    message = guidance_message(state)
+    `guidance_message`（ライブ解析パネル専用の 1 件取得ヘルパー）は項目26（H3）
+    でパネルごと削除したため、唯一の呼び出し元になった詳細結果
+    （`ui.scores.render_guidance`）と同じ辞書を直接検証する。
+    """
+    message = REASON_GUIDANCE.get(reason)
 
     assert message is not None
     assert message != ""
 
 
-def test_guidance_message_is_actionable_for_common_reasons() -> None:
-    too_far = AnalysisState(
-        status=Status.HOLD, reason=ReasonCode.TOO_FAR, reason_codes=(ReasonCode.TOO_FAR,)
-    )
-    too_close = AnalysisState(
-        status=Status.HOLD, reason=ReasonCode.TOO_CLOSE, reason_codes=(ReasonCode.TOO_CLOSE,)
-    )
-
-    assert guidance_message(too_far) != guidance_message(too_close)
+def test_guidance_is_actionable_for_common_reasons() -> None:
+    """§6.3: 近すぎる・遠すぎるは逆方向の操作を指すので、文言も異ならなければ
+    ならない。"""
+    assert REASON_GUIDANCE[ReasonCode.TOO_FAR] != REASON_GUIDANCE[ReasonCode.TOO_CLOSE]

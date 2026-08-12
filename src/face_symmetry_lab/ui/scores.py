@@ -251,8 +251,9 @@ GENDER_LABELS: Final[dict[GenderLabel, str]] = {
 #: §14.3e: 品質ゲートの状態ごとの色。映像の枠線と HUD の輪郭に使う。これらは
 #: **状態の識別子であって評価ではない**。緑は「計測条件を満たしている」という
 #: 意味であって、「良い顔である」ではない。§5.4 は色だけで意味を伝えることを
-#: 禁じているため、どの呼び出し側も `render_tracking_status` /
-#: `guidance_message` のテキストを併記し続ける。
+#: 禁じているため、ゲートが閉じている間は詳細結果タブの `render_guidance` が
+#: 状態文言と理由を示し、ゲートが閉じると HUD・詳細結果の数値が `—` へ変わる
+#: こと（値の有無）と合わせて色以外の手掛かりを保つ（項目26）。
 GATE_COLORS: Final[dict[Status, str]] = {
     Status.OK: "#2E9E5B",
     Status.HOLD: "#D9A21B",
@@ -459,7 +460,12 @@ def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
         st.caption(SCORE_CALCULATION_MEASURED_RANGE_CAPTION)
 
 
-def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True) -> None:
+def render_score_details(
+    outcome: AnalysisOutcome,
+    *,
+    show_smoothed: bool = True,
+    show_parts: bool = True,
+) -> None:
     """見出しの総合値を除く、左右差に関するすべてを描画する。
 
     見出し（`render_headline_metrics`）は全体の対称度・全体のスコアの両方を
@@ -467,6 +473,15 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
     描画する。いずれもその下の画面幅いっぱいの詳細セクションに属する
     （§5.1, FR-013, AC-LAYOUT-01）。**全体のスコア（`s_3d`）は見出しへ表示する
     ため、ここでは重複して描画しない。**
+
+    ``show_parts`` は表示専用のパラメータで、部位別 4 つのメトリクスと生値の
+    併記を描くかどうかを切り替える（項目26、H3）。**Camera** は映像上の HUD が
+    既に部位別 4 つを表示するため ``False`` を渡し、詳細タブでの重複を避ける。
+    **Image** は HUD を持たないため既定の ``True`` のまま描画する。``False``
+    でも `PART_LEVEL_VARIATION_CAPTION`（§5.3 が義務付ける部位別の揺れ幅の
+    注記）と `_render_score_calculation_detail`（H2 の計算過程）は描き続ける。
+    HUD には注記を置く場所が無く、この注記の唯一の受け皿が詳細タブになる
+    ためである。
 
     §8.6.3 のとおり、部位別は主指標 `symmetry-3d/1.0.0`
     （`outcome.symmetry_3d`）から作る。`outcome.symmetry`（`symmetry-2d/2.0.0`）
@@ -501,24 +516,30 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
             f"（ずれ {format_distance(overall_3d_raw)}）"
         )
 
-    # §8.6.5: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
-    # 見出しの値にはならない。見出しは全対応ペアをまとめて 1 回だけ
-    # 折りたたんで求めるためである。3D 一式が欠測なら 4 部位とも `—`。
-    # §8.7 改訂（H1）: 部位別も全体値と同じく平滑値を主表示し、生値を併記する
-    # （`resolve_part_distance_3d` が「平滑値を優先し、無ければ生値」を解決
-    # する）。片方が生値・片方が平滑値という 2 つの表示規則を作らないため。
-    st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
-    columns = st.columns(len(PART_NAMES))
-    for column, name in zip(columns, PART_NAMES, strict=True):
-        distance = resolve_part_distance_3d(outcome, name)
-        column.metric(
-            PART_LABELS[name],
-            format_symmetry(distance),
-            help=f"ずれ {format_distance(distance)}",
-        )
-        if show_smoothed:
-            raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
-            column.caption(f"生値 {format_symmetry(raw)}")
+    if show_parts:
+        # §8.6.5: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
+        # 見出しの値にはならない。見出しは全対応ペアをまとめて 1 回だけ
+        # 折りたたんで求めるためである。3D 一式が欠測なら 4 部位とも `—`。
+        # §8.7 改訂（H1）: 部位別も全体値と同じく平滑値を主表示し、生値を併記
+        # する（`resolve_part_distance_3d` が「平滑値を優先し、無ければ生値」
+        # を解決する）。片方が生値・片方が平滑値という 2 つの表示規則を作らない
+        # ため。
+        st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
+        columns = st.columns(len(PART_NAMES))
+        for column, name in zip(columns, PART_NAMES, strict=True):
+            distance = resolve_part_distance_3d(outcome, name)
+            column.metric(
+                PART_LABELS[name],
+                format_symmetry(distance),
+                help=f"ずれ {format_distance(distance)}",
+            )
+            if show_smoothed:
+                raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
+                column.caption(f"生値 {format_symmetry(raw)}")
+    # §5.3: 部位別メトリクスの表示可否（show_parts）に関わらず、揺れ幅の注記と
+    # H2 の計算過程は描き続ける。Camera では HUD が部位別を表示し続ける一方、
+    # 吹き出しには注記を置く場所が無いため、この注記の唯一の受け皿が詳細タブに
+    # なる（項目26、H3）。
     st.caption(PART_LEVEL_VARIATION_CAPTION)
     _render_score_calculation_detail(outcome)
 
@@ -552,7 +573,7 @@ def render_score_details(outcome: AnalysisOutcome, *, show_smoothed: bool = True
     st.caption(
         "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
         "部位別の値を平均しても全体の対称度にはなりません（全体の対称度は全対応ペアを"
-        "まとめて 1 回だけ折りたたんで求めるためです）。見出しの「全体のスコア」は"
+        "まとめて 1 回だけ折りたたんで求めるためです）。「全体のスコア」は"
         "部位別の値から明示的に組み立てた別の値で、全体の対称度とは重みだけが異なります。"
     )
     st.caption(

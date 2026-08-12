@@ -8,11 +8,12 @@
 値の整形は必ず `ui.scores` の共通フォーマッタを通す。HUD がパネルとは別の
 表示規則へ分岐すると、同じ測定値が画面上で二通りに見えてしまう。
 
-H1（2026-08-11）で「ライブ解析」パネルの内容（全体・スコア・部位別 4 つ・
-参考値）と、直近の推移を示す折れ線グラフへ拡張した。グラフの移動平均も
-`ui.scores`・`FrameAnalyzer` 側の §8.7 改訂で計算済みの値を運ぶだけであり、
-HUD（JS）側では一切平滑化しない。同じ理由——HUD が独自の 2 つ目の表示規則へ
-分岐しない——による。
+H1（2026-08-11）で HUD の内容を全体・スコア・部位別 4 つ・参考値へ拡張し、
+直近の推移を示す折れ線グラフを追加した。H3（2026-08-12）で映像の隣にあった
+「ライブ解析」パネルを削除し、Camera で同じ内容を表示するのはこの HUD だけに
+一本化した。グラフの移動平均も `ui.scores`・`FrameAnalyzer` 側の §8.7 改訂で
+計算済みの値を運ぶだけであり、HUD（JS）側では一切平滑化しない。同じ理由
+——HUD が独自の 2 つ目の表示規則へ分岐しない——による。
 """
 
 from __future__ import annotations
@@ -298,10 +299,11 @@ HUD_RUNTIME_JS: Final[str] = """
     hud = document.createElement('div');
     hud.id = 'fsl-hud';
     hud.hidden = true;
-    // H1: 「ライブ解析」パネルと同じ内容（全体・スコア・部位別 4 つ・参考値）
-    // と、折れ線グラフの骨格（svg 要素・polyline 要素 5 本・軸ラベル・凡例）を
-    // ここで 1 度だけ作る。5Hz の tick（sync）はこの骨格を作り直さず、
-    // textContent と points 属性だけを書き換える。
+    // H1: 全体・スコア・部位別 4 つ・参考値の内容（H3 以降、Camera でこれらを
+    // 表示するのはこの HUD だけである）と、折れ線グラフの骨格（svg 要素・
+    // polyline 要素 5 本・軸ラベル・凡例）をここで 1 度だけ作る。5Hz の
+    // tick（sync）はこの骨格を作り直さず、textContent と points 属性だけを
+    // 書き換える。
     hud.innerHTML =
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
@@ -540,7 +542,8 @@ def build_hud_payload(
     position: str,
     generation: str,
 ) -> dict[str, object]:
-    """§14.3e の HUD が表示する値（H1 で「ライブ解析」パネルの内容へ拡張）。
+    """§14.3e の HUD が表示する値（H1 で内容を拡張し、H3 で映像隣の
+    「ライブ解析」パネルを削除して表示をこの HUD へ一本化した）。
 
     純粋関数で、Streamlit も markup も副作用も持たない。数値はすべてパネルと
     同じフォーマッタ（`format_symmetry`、`GENDER_LABELS`）を通す。HUD が同じ
