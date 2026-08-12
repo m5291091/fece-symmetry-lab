@@ -281,9 +281,9 @@ def test_the_overlay_stylesheet_survives_the_render() -> None:
         markup と inline の `style` 属性だけが通るので、stylesheet が消えて
         吹き出しが `position: static` のまま画像の下へ流れ落ちた。
     (b) Streamlit は要素を `.stElementContainer`（`position: relative`）で包む。
-        これを静的へ戻さないと、包含ブロックが画像の直後にある高さ 0 の
-        ラッパーになり、吹き出しが画像の外へ出て、さらに `max-height` の % が
-        高さ 0 に対して解決されて中身が潰れた。
+        これを静的へ戻さないと、包含ブロックが画像の直後にある高さ 0 のラッパーに
+        なり、吹き出しが画像の外へ出て、`max-height` の % も高さ 0 に対して解決
+        されて中身が潰れた。
 
     どちらも「テストは通るのに画面には出ない」種類の壊れ方なので、markup の側で
     固定する。罠: `st.html` へ戻すと (a) で、neutraliser を消すと (b) で落ちる。
@@ -295,9 +295,9 @@ def test_the_overlay_stylesheet_survives_the_render() -> None:
     markup = _rendered_html(at)
     assert "<style>" in markup
     assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{" in markup
-    assert "position: relative" in markup
     assert ".stElementContainer:has(.fsl-still-hud)" in markup
     assert "position: absolute" in markup
+    assert "position: fixed" in markup  # ドラッグ後の `.fsl-still-floating`
 
 
 def test_the_container_width_is_pinned_to_the_preview_width() -> None:
@@ -367,17 +367,86 @@ def test_the_drag_runtime_delegates_instead_of_binding_to_the_element() -> None:
     assert "closest('.fsl-still-grip')" in script
 
 
-def test_the_drag_runtime_clamps_inside_the_image() -> None:
-    """§14.3e: 移動範囲は包含ブロック（画像とキャプション）の内側。外へ出すと、
-    画像の下の詳細結果に重なって読めなくなる。"""
+def test_the_drag_runtime_clamps_to_the_viewport_not_the_image() -> None:
+    """§14.3e（2026-08-12 改訂）: 移動範囲はページ全体。
+
+    画像の内側だけに閉じ込めると、写真の全面に顔が写っている場合に退ける先が
+    無くなる。HUD と同じく viewport に対して、自身の幅・高さぶんだけ右端・下端も
+    制限する。罠: 包含ブロック（`offsetParent`）へ clamp する実装は、
+    `innerWidth` を使わないのでここで落ちる。
+    """
     from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
 
     script = still_drag_bridge_script()
 
+    assert "innerWidth" in script
+    assert "innerHeight" in script
     assert "offsetWidth" in script
     assert "offsetHeight" in script
-    assert "Math.min" in script
-    assert "Math.max" in script
+    assert "offsetParent" not in script
+
+
+def test_the_overlay_is_visible_without_any_javascript() -> None:
+    """実障害の回帰（2026-08-12）: 画像アップロード後に吹き出しが見えなくなった。
+
+    途中の版は吹き出しを `display: none` の source として置き、画面へ出すのを
+    bridge の仕事にしていた。**bridge が動かない環境では吹き出しが丸ごと消える。**
+    表示は CSS の責任、移動は JS の上乗せ、と分ける。罠: markup を隠す実装や、
+    JS が作る要素へ移す実装はここで落ちる。
+    """
+    markup = _overlay()
+
+    assert 'class="fsl-still-hud"' in markup
+    assert "hidden" not in markup
+    assert "display: none" not in markup.split("</style>")[-1]
+    assert "position: absolute" in markup
+
+
+def test_the_drag_runtime_never_destroys_streamlit_owned_dom() -> None:
+    """実障害の回帰（2026-08-12）: 画像アップロード後に吹き出しが完全に消えた。
+
+    最初の実装は Streamlit が描いた吹き出しの要素そのものを `<body>` へ移し、
+    プレビューのコンテナが見つからないときは `remove()` していた。**再描画の
+    途中ではコンテナが一瞬だけ消える**ため、そこで描画済みの吹き出しごと巻き
+    添えに消え、Streamlit 側は「その要素はもう描いてある」と思っているので二度と
+    描き直さなかった。
+
+    したがって runtime は Streamlit の DOM を読むだけにする。source が無い間は
+    自前のホストを隠すだけで、何も削除しない。罠: `remove()` を書き戻すと落ちる。
+    """
+    from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
+
+    script = still_drag_bridge_script()
+
+    assert ".remove()" not in script.split("<script>")[-1].split("var previous")[0]
+    assert "appendChild(fresh" not in script
+    assert "innerHTML" not in script
+
+
+def test_the_drag_promotes_from_the_current_on_screen_position() -> None:
+    """§14.3e: 初期位置は CSS が決める画像の左上。掴んだ瞬間に飛ばないよう、
+    最初のドラッグでいまの見た目の位置をそのまま viewport 座標へ写し取る。"""
+    from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
+
+    script = still_drag_bridge_script()
+
+    assert "getBoundingClientRect" in script
+    assert "classList.contains" in script
+
+
+def test_the_drag_runtime_only_toggles_a_class_and_coordinates() -> None:
+    """§14.3e: bridge の仕事は class と `left`/`top` の書き換えだけ。
+
+    要素の生成・移動・削除をしないので、Streamlit の再描画と競合しない。
+    Camera へ切り替えれば Streamlit が画像セクションごと消すため、掃除も要らない。
+    """
+    from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
+
+    script = still_drag_bridge_script()
+
+    assert "fsl-still-floating" in script
+    assert "classList.add" in script
+    assert "createElement('div')" not in script
 
 
 def test_the_drag_runtime_keeps_no_storage() -> None:

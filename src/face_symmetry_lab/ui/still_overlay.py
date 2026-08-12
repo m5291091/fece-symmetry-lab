@@ -85,20 +85,19 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
     position: relative; max-width: 100%; margin-inline: auto;
 }}
 .st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{ display: block; }}
-/* Streamlit は要素 1 つずつを `.stElementContainer` で包み、それへ
-   `position: relative` を付ける。**この中間ラッパーを静的へ戻さないと、
-   吹き出しの包含ブロックがキー付きコンテナではなくラッパーになる。** ラッパーは
-   画像の直後に高さ 0 で置かれるので、`top: 18px` が画像の下端 + 18px を指し、
-   吹き出しが画像の外へ落ちる。さらに `max-height` の % が高さ 0 に対して解決され、
-   中身が 32px へ潰れる（実ブラウザで両方とも確認した実際の症状）。
+/* Streamlit は要素 1 つずつを `.stElementContainer`（`position: relative`）で
+   包む。これを静的へ戻さないと、吹き出しの包含ブロックがキー付きコンテナでは
+   なく、画像の直後にある高さ 0 のラッパーになる（実ブラウザで確認した症状）。
    `:has()` を使うのは、この stylesheet 自身がラッパーの内側へ出力されるため、
-   親を選ぶ手段が他に無いからである。子ではなく子孫で照合し、Streamlit が
-   ラッパーを 1 枚増やしても壊れないようにする。 */
+   親を選ぶ手段が他に無いからである。 */
 .st-key-{STILL_OVERLAY_CONTAINER_KEY} .stElementContainer:has(.fsl-still-hud) {{
     position: static;
 }}
+/* **既定では JS を一切必要とせず、CSS だけで画像の上に見える。**
+   ここを JS 依存（隠しておいて JS が出す）にした版で、bridge が動かない環境では
+   吹き出しが丸ごと消えた。表示は CSS の責任、移動は JS の上乗せ、と分ける。 */
 .st-key-{STILL_OVERLAY_CONTAINER_KEY} .fsl-still-hud {{
-    position: absolute; top: 18px; left: 18px; z-index: 10;
+    position: absolute; top: 18px; left: 18px; z-index: 1000050;
     background: rgba(0,0,0,.72); color: #fff;
     padding: 14px 20px; border-radius: 16px;
     pointer-events: none;
@@ -107,6 +106,12 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
     /* 縦長の写真（上限 520px 高 = 幅 390px 前後）で 76% を占めて顔を隠したため、
        割合側を絞った。ドラッグで退けられるとはいえ、既定で顔を覆わない。 */
     max-width: min(320px, 64%); max-height: 88%; overflow-y: auto;
+}}
+/* ドラッグが始まると bridge がこの class を付け、viewport 基準へ切り替える。
+   要素は Streamlit が置いた場所に留まる（動かすと再描画と競合する）。 */
+.st-key-{STILL_OVERLAY_CONTAINER_KEY} .fsl-still-hud.fsl-still-floating {{
+    position: fixed;
+    max-width: min(320px, 88vw); max-height: 88vh;
 }}
 .fsl-still-value {{ font-size: 2.2rem; font-weight: 700; line-height: 1; }}
 .fsl-still-label {{ font-size: .8rem; opacity: .75; margin-bottom: 10px; }}
@@ -140,12 +145,18 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
 #: ければ §3.4 の永続化の議論そのものが発生しない。
 _STILL_DRAG_JS: Final[str] = """
 (function () {
-  if (window.__fslStillDrag) return;
-  window.__fslStillDrag = true;
-
-  var dragging = null, offsetX = 0, offsetY = 0;
+  // **Streamlit が所有する DOM を、動かしも消しもしない。** 途中の版は要素を
+  // `<body>` へ移し、コンテナが見つからないときは `remove()` していた。再描画の
+  // 途中ではコンテナが一瞬だけ消えるため、そこで描画済みの吹き出しごと巻き添えに
+  // 消え、Streamlit は「もう描いてある」と判断して二度と描き直さなかった。
+  //
+  // **表示は CSS の責任で、JS は移動だけを上乗せする。** 隠しておいて JS が出す
+  // 形にした版では、bridge が動かない環境で吹き出しが丸ごと見えなくなった。
+  // ここで行うのは class と `left`/`top` の書き換えだけである。
+  var FLOATING = 'fsl-still-floating';
 
   var place = function (hud, x, y) {
+    hud.classList.add(FLOATING);
     hud.style.left = x + 'px';
     hud.style.top = y + 'px';
     hud.style.right = 'auto';
@@ -153,11 +164,36 @@ _STILL_DRAG_JS: Final[str] = """
     window.__fslStillPos = {x: x, y: y};
   };
 
+  // 既定は CSS の `absolute`（画像の内側）。最初のドラッグでいまの見た目の位置を
+  // そのまま viewport 座標へ写し取り、`fixed` へ切り替える。こうすると掴んだ
+  // 瞬間に飛ばない。
+  var promote = function (hud) {
+    if (hud.classList.contains(FLOATING)) return;
+    var box = hud.getBoundingClientRect();
+    place(hud, box.left, box.top);
+  };
+
+  // 再描画で作り直された吹き出しへ、直前の位置を貼り直す。
+  var restore = function () {
+    var saved = window.__fslStillPos;
+    if (!saved) return;
+    var hud = document.querySelector('.fsl-still-hud');
+    if (hud && !hud.classList.contains(FLOATING)) place(hud, saved.x, saved.y);
+  };
+  new MutationObserver(restore).observe(document.body, {childList: true, subtree: true});
+  restore();
+
+  if (window.__fslStillDrag) return;
+  window.__fslStillDrag = true;
+
+  var dragging = null, offsetX = 0, offsetY = 0;
+
   document.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest && event.target.closest('.fsl-still-grip');
     if (!grip) return;
     var hud = grip.closest('.fsl-still-hud');
     if (!hud) return;
+    promote(hud);
     var box = hud.getBoundingClientRect();
     dragging = hud;
     offsetX = event.clientX - box.left;
@@ -168,35 +204,20 @@ _STILL_DRAG_JS: Final[str] = """
 
   document.addEventListener('pointermove', function (event) {
     if (!dragging) return;
-    // 包含ブロック（キー付きコンテナ = 画像）の内側へ clamp する。外へ出せると
-    // 画像の下の詳細結果に重なって読めなくなる。HUD が viewport に対して行う
-    // 制限を、静止画では親要素に対して行う。
-    var host = dragging.offsetParent || dragging.parentElement;
-    if (!host) return;
-    var base = host.getBoundingClientRect();
-    var maxX = Math.max(0, host.offsetWidth - dragging.offsetWidth);
-    var maxY = Math.max(0, host.offsetHeight - dragging.offsetHeight);
-    var x = Math.min(maxX, Math.max(0, event.clientX - offsetX - base.left));
-    var y = Math.min(maxY, Math.max(0, event.clientY - offsetY - base.top));
+    // HUD と同じ viewport への clamp。自身の幅・高さぶんだけ右端・下端も
+    // 制限し、画面外へ完全に出て操作不能になることを防ぐ。
+    var maxX = Math.max(0, window.innerWidth - dragging.offsetWidth);
+    var maxY = Math.max(0, window.innerHeight - dragging.offsetHeight);
+    var x = Math.min(maxX, Math.max(0, event.clientX - offsetX));
+    var y = Math.min(maxY, Math.max(0, event.clientY - offsetY));
     place(dragging, x, y);
   });
 
   var stop = function () { dragging = null; };
   document.addEventListener('pointerup', stop);
   document.addEventListener('pointercancel', stop);
-
-  // 再実行で作り直された吹き出しへ、直前の位置を貼り直す。observer にするのは
-  // 「いつ作り直されるか」を Streamlit 側から知る手段が無いためである。
-  var restore = function () {
-    var saved = window.__fslStillPos;
-    if (!saved) return;
-    var hud = document.querySelector('.fsl-still-hud');
-    if (hud && hud.style.left === '') place(hud, saved.x, saved.y);
-  };
-  new MutationObserver(restore).observe(document.body, {childList: true, subtree: true});
-  restore();
 })();
-"""
+""".replace("__CONTAINER_KEY__", STILL_OVERLAY_CONTAINER_KEY)
 
 
 def still_overlay_html(
@@ -240,6 +261,9 @@ def still_overlay_html(
     grip = '<div class="fsl-still-grip">⠿ ドラッグで移動</div>'
     return (
         f"<style>{_STILL_OVERLAY_CSS}</style>"
+        # **この要素がそのまま画面に出る。** JS が動かなくても CSS だけで画像の
+        # 上に見える（`_STILL_OVERLAY_CSS` を参照）。bridge は class と座標を
+        # 書き換えるだけで、この要素を動かしも消しもしない。
         f'<div class="fsl-still-hud" style="border: 2px solid {gate};">'
         f'<div class="fsl-still-value">{payload["symmetry"]}</div>'
         f'<div class="fsl-still-label">{payload["label"]}</div>'
