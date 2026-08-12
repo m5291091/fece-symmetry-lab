@@ -37,7 +37,7 @@ from face_symmetry_lab.application.still_image import (
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.export import InputMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
-from face_symmetry_lab.domain.metrics import MetricConfig, MetricConfigError
+from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, MetricConfigError
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
@@ -55,14 +55,16 @@ from face_symmetry_lab.ui.model_setup import (
 from face_symmetry_lab.ui.scores import (
     DEVIATION_UNIT_CAPTION,
     format_distance,
+    gate_color,
     render_demographic_estimate,
-    render_headline_metrics,
     render_score_details,
     render_symmetrized_image,
     render_tracking_status,
     resolve_equal_weight_distance,
     resolve_overall_distance,
+    resolve_part_distance_3d,
 )
+from face_symmetry_lab.ui.still_overlay import render_image_with_overlay
 
 ESTIMATOR_STATE_KEY = "demographic_estimator"
 ESTIMATOR_PATH_KEY = "demographic_estimator_paths"
@@ -382,7 +384,9 @@ def _render_image_section() -> None:
         on_change=_clear_session_result,
     )
     if uploaded is None:
-        st.info("18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を写真の横に並べて表示します。")
+        st.info(
+            "18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を写真の上の吹き出しへ表示します。"
+        )
         return
 
     uploaded_bytes = uploaded.getvalue()
@@ -442,22 +446,27 @@ def _render_image_section() -> None:
     overall = resolve_overall_distance(analysis.outcome) if analysis is not None else None
     equal_weight = resolve_equal_weight_distance(analysis.outcome) if analysis is not None else None
 
-    # §5.1: 写真と見出し（全体の対称度・全体のスコア・参考性別・参考年齢+状態）
-    # を横に並べ、ひと目で必要なものがページの下方に隠れないようにする。
-    # 見出しは不変条件 5 に従い、左右差 2 つ・参考値 2 つの 2 行に分ける
-    # （`render_headline_metrics` へ委譲）。Camera と Image で同じ配置を使う。
-    preview_column, status_column = st.columns([7, 5], gap="large")
-    with preview_column:
-        if analysis is None:
-            st.info("ランドマークを表示できません。")
-        else:
-            st.image(analysis.landmarks.preview, caption="検出したランドマーク", width="stretch")
-
-    with status_column:
-        render_headline_metrics(overall=overall, equal_weight=equal_weight, estimate=estimate)
-        st.divider()
-        if analysis is not None:
-            render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
+    # §5.1/§14.3e（2026-08-12）: 画像に隣接して数値を出すのは画像上の吹き出し
+    # だけとし、隣の見出し結果は持たない。Camera が項目 26（H3）で解消したのと
+    # 同じ「同じ測定値が 2 か所へ出る」状態を Image でも作らないためである。
+    # 画像は画面幅いっぱいを使う（横に並べる相手がもう無い）。
+    if analysis is None:
+        st.info("ランドマークを表示できません。")
+    else:
+        # §8.6.3/§8.7: 部位別も見出し・HUD と同じ解決（平滑値優先、静止画は
+        # 平滑値を持たないため自然に生値へ落ちる）を通す。
+        parts = {name: resolve_part_distance_3d(analysis.outcome, name) for name in PART_NAMES}
+        render_image_with_overlay(
+            analysis.landmarks.preview,
+            caption="検出したランドマーク",
+            overall=overall,
+            equal_weight=equal_weight,
+            parts=parts,
+            estimate=estimate,
+            show_demographics=estimate is not None,
+            gate=gate_color(analysis.outcome.state),
+        )
+        render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
 
     # §5.1, AC-LAYOUT-01: 詳細結果は常に写真と見出しの下へ画面幅いっぱいで
     # 描画する。Camera 側の配置と対称にするためである。

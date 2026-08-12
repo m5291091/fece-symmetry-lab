@@ -112,39 +112,12 @@ def _outcome_for_display(
 def _run(body: str) -> AppTest:
     at = AppTest.from_string(
         "from face_symmetry_lab.domain.landmarks import TrackingStatus\n"
-        "from face_symmetry_lab.ui.scores import (\n"
-        "    render_headline_metrics,\n"
-        "    render_tracking_status,\n"
-        ")\n"
+        "from face_symmetry_lab.ui.scores import render_tracking_status\n"
         "MESSAGES = {status: status.name.lower().replace('_', ' ') for status in TrackingStatus}\n"
         f"{body}\n"
     )
     at.run()
     return at
-
-
-def _headline_metric_rows(at: AppTest) -> list[list[str]]:
-    """`render_headline_metrics` が作る `st.columns` のブロックごとに、含まれる
-    metric ラベルを描画順に取り出す。
-
-    §5.1・不変条件 5（§1.3.1）が求める「左右差の行」と「参考値の行」が実際に
-    分かれていることを、Streamlit の要素木から直接確認するためのヘルパー。
-    1 列に並ぶ順序だけでは行が分かれているかを示せないため、`st.columns` の
-    呼び出しごとに独立した `flex_container` ブロックが生まれることを利用する。
-    """
-    rows: list[list[str]] = []
-    for child in at.main.children.values():
-        if getattr(child, "type", None) != "flex_container":
-            continue
-        labels = [
-            metric.label
-            for column in child.children.values()
-            for metric in column.children.values()
-            if getattr(metric, "type", None) == "metric"
-        ]
-        if labels:
-            rows.append(labels)
-    return rows
 
 
 @pytest.mark.parametrize(
@@ -166,14 +139,6 @@ def test_each_tracking_state_renders_at_its_assigned_severity(
     expected = status.name.lower().replace("_", " ")
     assert not at.exception
     assert [element.value for element in getattr(at, severity)] == [expected]
-
-
-def test_missing_headline_values_render_as_a_dash_rather_than_a_number() -> None:
-    """NFR-013: 欠測は欠測として示し、古い値や 0 として見せない。"""
-    at = _run("render_headline_metrics(overall=None, equal_weight=None, estimate=None)")
-
-    assert not at.exception
-    assert [element.value for element in at.metric] == ["—", "—", "—", "—"]
 
 
 def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None:
@@ -245,37 +210,59 @@ def test_a_missing_distance_has_no_symmetry_reading() -> None:
     assert format_symmetry(None) == "—"
 
 
-def test_the_headline_leads_with_symmetry_and_still_states_the_deviation() -> None:
-    """§5.3: 両方の向きを画面に出すので、100% が目標として通ることはない。"""
+def test_the_detail_panel_states_the_deviation_beside_the_symmetry() -> None:
+    """§5.3/§8.6.3: 両方の向きを画面に出すので、100% が目標として通ることはない。
+
+    見出し結果の削除（2026-08-12）でこの併記の受け皿は詳細パネルだけになった。
+    罠: 併記ごと消した実装は、対称度が一方向からしか読めなくなってここで落ちる。
+    """
     at = AppTest.from_string(
-        "from face_symmetry_lab.ui.scores import render_headline_metrics\n"
-        "render_headline_metrics(overall=0.0215, equal_weight=None, estimate=None)\n"
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.0215\n"
+        "    ),\n"
+        "    smooth_3d=0.0215,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
     )
     at.run()
 
     assert not at.exception
-    assert at.metric[0].label == "全体の対称度"
-    assert at.metric[0].value == "97.85%"
     captions = " ".join(element.value for element in at.caption)
     assert "2.15%" in captions
+    assert "対称度との和は 100%" in captions
+
+
+def test_the_detail_panel_carries_the_score_help_that_the_headline_used_to_hold() -> None:
+    """§8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は必ず画面に出す。
+
+    見出し結果の削除（2026-08-12）で `help=` の置き場が無くなったため、計算過程の
+    節がこの説明の唯一の受け皿になる。罠: 見出しと一緒に説明ごと消した実装は、
+    引き伸ばした点数だけが何の断りもなく残ってここで落ちる。
+    """
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert PART_EQUAL_WEIGHT_HELP in [element.value for element in at.caption]
 
 
 def test_the_part_equal_weight_headline_label_uses_the_user_specified_wording() -> None:
     """ユーザー指定により「部位平均の対称度」ではなく「全体のスコア」を見出しの
     ラベルにする（2026-08-11、W5-fix）。"""
     assert PART_EQUAL_WEIGHT_LABEL == "全体のスコア"
-
-
-def test_symmetry_and_reference_metrics_render_on_separate_headline_rows() -> None:
-    """不変条件 5（§1.3.1）: 参考性別・参考年齢は、左右差（全体の対称度・全体の
-    スコア）と混ざらない別の行に置く（§5.1 の 2 行構成）。1 列に並ぶ順序だけでは
-    確認できないため、`st.columns` のブロックが実際に分かれていることを要素木
-    から直接確認する。"""
-    at = _run("render_headline_metrics(overall=0.02, equal_weight=0.05, estimate=None)")
-
-    assert not at.exception
-    rows = _headline_metric_rows(at)
-    assert rows == [["全体の対称度", PART_EQUAL_WEIGHT_LABEL], ["参考性別", "参考年齢"]]
 
 
 def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
@@ -499,68 +486,6 @@ def test_the_part_breakdown_shows_the_smoothed_value_as_primary_and_notes_the_ra
         assert raw in captions
 
 
-def test_the_headline_part_equal_weight_score_is_a_distinct_reading_from_the_overall() -> None:
-    """§8.6.5: 見出しの「全体のスコア」（`s_3d`）は「全体の対称度」（`d_3d`）と
-    重みだけが違う別の総合量で、一致しない。ここへ `d_3d` を誤って渡すと
-    （`equal_weight=resolve_overall_distance(outcome)`）この assertion が
-    落ちることを確認済み。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import (\n"
-        "    render_headline_metrics,\n"
-        "    resolve_equal_weight_distance,\n"
-        "    resolve_overall_distance,\n"
-        ")\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.005, eyes=0.005, nose=0.06, mouth=0.005, overall=0.02\n"
-        "    ),\n"
-        "    smooth_3d=0.02,\n"
-        ")\n"
-        "render_headline_metrics(\n"
-        "    overall=resolve_overall_distance(outcome),\n"
-        "    equal_weight=resolve_equal_weight_distance(outcome),\n"
-        "    estimate=None,\n"
-        ")\n"
-    )
-    at.run()
-
-    assert not at.exception
-    values = {metric.label: metric.value for metric in at.metric}
-    assert values["全体の対称度"] == format_symmetry(0.02)
-    assert values[PART_EQUAL_WEIGHT_LABEL] != values["全体の対称度"]
-
-
-def test_the_headline_score_is_missing_when_a_single_part_is_missing_but_overall_remains() -> None:
-    """§8.6.5: 部位が 1 つ欠測しても、見出しの「全体のスコア」だけが `—` になり、
-    「全体の対称度」は出続ける（AC-SCORE-10 と同じ非対称な欠測条件）。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import (\n"
-        "    render_headline_metrics,\n"
-        "    resolve_equal_weight_distance,\n"
-        "    resolve_overall_distance,\n"
-        ")\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=None, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_headline_metrics(\n"
-        "    overall=resolve_overall_distance(outcome),\n"
-        "    equal_weight=resolve_equal_weight_distance(outcome),\n"
-        "    estimate=None,\n"
-        ")\n"
-    )
-    at.run()
-
-    assert not at.exception
-    values = {metric.label: metric.value for metric in at.metric}
-    assert values["全体の対称度"] == format_symmetry(0.018)
-    assert values[PART_EQUAL_WEIGHT_LABEL] == "—"
-
-
 def test_a_single_missing_part_only_shows_that_parts_detail_reading_as_a_dash() -> None:
     """§8.6.5: 部位が 1 つ欠測しても、詳細タブの他の部位は出続ける
     （AC-SCORE-10 と同じ非対称な欠測条件）。「全体のスコア」の欠測は見出し側の
@@ -585,31 +510,6 @@ def test_a_single_missing_part_only_shows_that_parts_detail_reading_as_a_dash() 
     assert values["目"] == format_symmetry(0.02)
     assert values["口"] == format_symmetry(0.015)
     assert PART_EQUAL_WEIGHT_LABEL not in values
-
-
-def test_the_headline_shows_both_dashes_when_the_three_dimensional_result_is_missing() -> None:
-    """不変条件 11: §8.5.1 の重ね合わせが成立しないとき、見出しの「全体の対称度」
-    「全体のスコア」はどちらも 0 や前値ではなく `—`。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display\n"
-        "from face_symmetry_lab.ui.scores import (\n"
-        "    render_headline_metrics,\n"
-        "    resolve_equal_weight_distance,\n"
-        "    resolve_overall_distance,\n"
-        ")\n"
-        "outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)\n"
-        "render_headline_metrics(\n"
-        "    overall=resolve_overall_distance(outcome),\n"
-        "    equal_weight=resolve_equal_weight_distance(outcome),\n"
-        "    estimate=None,\n"
-        ")\n"
-    )
-    at.run()
-
-    assert not at.exception
-    values = {metric.label: metric.value for metric in at.metric}
-    assert values["全体の対称度"] == "—"
-    assert values[PART_EQUAL_WEIGHT_LABEL] == "—"
 
 
 def test_a_missing_three_dimensional_result_shows_every_part_reading_as_a_dash() -> None:
@@ -1029,22 +929,6 @@ def test_the_score_formatter_reports_points_and_never_a_percent_sign() -> None:
     assert format_score(0.0172) == "82.0 点"
     assert "%" not in format_score(0.0172)
     assert format_score(None) == "—"
-
-
-def test_the_headline_score_is_stretched_while_the_symmetry_stays_a_percent() -> None:
-    """§8.6.7: 見出しの 2 値は別々の目盛りを持つ。片方は点、片方は %。
-
-    罠: 「全体のスコア」を `format_symmetry` のままにした実装は、`98.28%` を
-    出してここで落ちる。
-    """
-    from face_symmetry_lab.ui.scores import format_score
-
-    at = _run("render_headline_metrics(overall=0.0172, equal_weight=0.0172, estimate=None)")
-
-    assert not at.exception
-    values = {metric.label: metric.value for metric in at.metric}
-    assert values[PART_EQUAL_WEIGHT_LABEL] == format_score(0.0172) == "82.0 点"
-    assert values["全体の対称度"] == format_symmetry(0.0172) == "98.28%"
 
 
 def test_a_missing_score_is_not_shown_as_zero_points() -> None:

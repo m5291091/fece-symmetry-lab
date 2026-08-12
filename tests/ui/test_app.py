@@ -297,21 +297,31 @@ def test_a_failed_estimate_does_not_stop_the_symmetry_panel_from_rendering(
         "    _maybe_estimate_image_demographics,\n"
         "    _render_image_demographic_detail,\n"
         ")\n"
-        "from face_symmetry_lab.ui.scores import render_headline_metrics\n"
+        "from face_symmetry_lab.ui.still_overlay import render_image_with_overlay\n"
         "age_input = np.zeros((62, 62, 3), dtype=np.uint8)\n"
         "_maybe_estimate_image_demographics(\n"
         "    age_input, input_fingerprint='fp-1', recorder=None,\n"
         ")\n"
         # 左右差側は年齢・性別の後に描画される。ここで例外を伝播させないことが
-        # 不変条件 12 の核心である。
-        "render_headline_metrics(overall=0.02, equal_weight=0.05, estimate=None)\n"
+        # 不変条件 12 の核心である。2026-08-12 以降、Image の左右差を画面へ出す
+        # のは画像上の吹き出しなので、見出し結果ではなくそれで確認する。
+        "render_image_with_overlay(\n"
+        "    np.zeros((8, 8, 3), dtype=np.uint8),\n"
+        "    caption='検出したランドマーク',\n"
+        "    overall=0.02,\n"
+        "    equal_weight=0.05,\n"
+        "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
+        "    estimate=None,\n"
+        "    show_demographics=False,\n"
+        "    gate='#2E9E5B',\n"
+        ")\n"
         "_render_image_demographic_detail(age_input)\n"
     )
     at.run()
 
     assert not at.exception
-    assert at.metric[0].label == "全体の対称度"
-    assert at.metric[0].value == "98.00%"
+    overlay = " ".join(element.value for element in at.markdown)
+    assert "98.00%" in overlay
     assert any("推定できませんでした" in element.value for element in at.error)
 
 

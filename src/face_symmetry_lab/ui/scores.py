@@ -384,62 +384,6 @@ def render_pose(outcome: AnalysisOutcome) -> None:
     )
 
 
-def render_headline_metrics(
-    *,
-    overall: float | None,
-    equal_weight: float | None,
-    estimate: DemographicEstimate | None,
-) -> None:
-    """FR-013/FR-014/FR-032: 見出しを 2 行に分けて映像や写真のすぐ隣に出す。
-
-    Camera と Image が共有し、両者が同じ見出し配置を使う（§5.1）。**見出しは
-    2 行構成である。** 1 行目は左右差の 2 値（全体の対称度・全体のスコア）、
-    2 行目は参考値の 2 値（参考性別・参考年齢）とする。不変条件 5（§1.3.1）は
-    参考年齢・参考性別と左右差を別々の結果として扱い、相関・因果を示唆しない
-    と定めており、1 行に 3〜4 項目を並置するより行を分けるほうがこの不変条件
-    に忠実である。
-
-    ``overall``（§8.6.3 の `d_3d`）と ``equal_weight``（同 `s_3d`）は、それぞれ
-    `resolve_overall_distance` / `resolve_equal_weight_distance` で解決した
-    値を渡すこと。どちらも重みだけが異なる並列の総合量で、通常は一致しない
-    （§8.6.5）。
-
-    ``estimate`` は性別・年齢へ分解済みの引数ではなく、まとめて受け取る。
-    §10.8 は 2 つの値を 1 つの観測として扱っており、どちらの呼び出し側も
-    同じ形で展開していたためである。欠測は古い値や 0 ではなく `—` を出す
-    （NFR-013）。
-    """
-    symmetry_column, score_column = st.columns(2)
-    symmetry_column.metric(
-        "全体の対称度",
-        format_symmetry(overall),
-        # §5.3: ずれを必ず併記する。数値をどちらの向きからも読めるようにし、
-        # 「100%」が達成された目標のように受け取られないようにするためである。
-        help=(
-            "100% から、左右対応点のずれ（両眼間隔比）を引いた値です。"
-            "100% は数学上の上限で目標値ではありません。"
-        ),
-    )
-    score_column.metric(
-        # §8.6.7: ここだけ目盛りが違う（点）。`format_symmetry` を使うと 98% 前後
-        # へ潰れ、全体の対称度と見分けが付かなくなる。
-        PART_EQUAL_WEIGHT_LABEL,
-        format_score(equal_weight),
-        help=PART_EQUAL_WEIGHT_HELP,
-    )
-    st.caption(f"ずれ {format_distance(overall)}（対称度との和は 100%）")
-
-    gender_column, age_column = st.columns(2)
-    gender_column.metric(
-        "参考性別",
-        "—" if estimate is None else GENDER_LABELS[estimate.gender],
-    )
-    age_column.metric(
-        "参考年齢",
-        "—" if estimate is None else f"{estimate.estimated_age_years:.0f}歳",
-    )
-
-
 def _score_calculation_walkthrough(part_values: Mapping[str, float]) -> str | None:
     """H2: 「全体のスコア」を実数値で組み立てる計算過程のテキストを作る。
 
@@ -491,6 +435,10 @@ def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
     使って数値を組み立ててしまう（不変条件 11 違反）。
     """
     with st.expander(f"{PART_EQUAL_WEIGHT_LABEL}の計算過程を見る"):
+        # §8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は help・説明文
+        # として必ず出す。見出し結果の削除（2026-08-12）で `help=` の置き場が
+        # 無くなったため、ここが唯一の受け皿になる。
+        st.caption(PART_EQUAL_WEIGHT_HELP)
         st.caption(SCORE_CALCULATION_DEVIATION_INTRO)
 
         walkthrough: str | None = None
@@ -519,13 +467,14 @@ def render_score_details(
     show_smoothed: bool = True,
     show_parts: bool = True,
 ) -> None:
-    """見出しの総合値を除く、左右差に関するすべてを描画する。
+    """総合値そのものを除く、左右差に関するすべてを描画する。
 
-    見出し（`render_headline_metrics`）は全体の対称度・全体のスコアの両方を
-    映像や写真のすぐ隣に出す。こちらは部位別の内訳・姿勢・肌表面参考値を
-    描画する。いずれもその下の画面幅いっぱいの詳細セクションに属する
-    （§5.1, FR-013, AC-LAYOUT-01）。**全体のスコア（`s_3d`）は見出しへ表示する
-    ため、ここでは重複して描画しない。**
+    全体の対称度・全体のスコアの数値は、映像上の HUD（Camera）と画像上の
+    吹き出し（Image）が出す。**見出し結果の区画はどちらの入力にも無い**
+    （§5.1、2026-08-12）。こちらは吹き出しが持てないもの——ずれの併記・部位別の
+    内訳・計算過程・§5.3 の注記・姿勢・肌表面参考値——を、その下の画面幅いっぱい
+    の詳細セクションへ描画する（§5.1, FR-013, AC-LAYOUT-01）。**総合値そのものを
+    メトリクスとして重複表示しない。**
 
     ``show_parts`` は表示専用のパラメータで、部位別 4 つのメトリクスと生値の
     併記を描くかどうかを切り替える（項目26、H3）。**Camera** は映像上の HUD が
@@ -556,6 +505,15 @@ def render_score_details(
         render_guidance(outcome)
         render_pose(outcome)
         return
+
+    # §5.3/§8.6.3: ずれを必ず併記する。数値をどちらの向きからも読めるようにし、
+    # 「100%」が達成された目標のように受け取られないようにするためである。
+    # 見出し結果の削除（2026-08-12）で吹き出しだけが総合値を出すようになったが、
+    # 吹き出しには併記を置く場所が無い。この行がその唯一の受け皿である。
+    st.caption(
+        f"全体の対称度のずれ {format_distance(resolve_overall_distance(outcome))}"
+        "（対称度との和は 100%）"
+    )
 
     symmetry_3d = outcome.symmetry_3d
     overall_3d_raw = (
