@@ -71,11 +71,13 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_status,
 )
 from face_symmetry_lab.ui.scores import (
-    DEVIATION_UNIT_CAPTION,
-    format_distance,
     render_demographic_estimate,
     render_score_details,
-    render_symmetrized_image,
+)
+from face_symmetry_lab.ui.symmetrization_panel import (
+    SYMMETRIZATION_HEADING,
+    render_symmetrization_view,
+    render_warp_checkbox,
 )
 
 _BACKGROUND_MODE_LABELS: Final[dict[BackgroundMode, str]] = {
@@ -370,7 +372,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     5 Hz の fragment の外に置いている。これは 1 フレームから一度だけ計算する
     静止結果であり、表示中もライブ表示はそのまま動き続ける（§14.3g）。
     """
-    st.markdown("#### 左右対称にそろえた位置との比較")
+    st.markdown(SYMMETRIZATION_HEADING)
     st.caption(
         "この瞬間の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
         "実測点と重ねて表示します。ズレの大きさを形で見るための表示で、"
@@ -379,14 +381,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
 
     # ボタンより前に読む。取り込みを起こすトグルの現在値が、その取り込みへ
     # 適用される値と一致するようにするためである。
-    warp = st.checkbox(
-        "左右対称にそろえた画像も生成する（幾何変形・処理が重くなります）",
-        key="camera_symmetrization_warp",
-        help=(
-            "ランドマークを結んだ三角形ごとに画素を変形し、左右対称にそろえた顔画像を作ります。"
-            "加工画像であり、無加工の写真ではありません。"
-        ),
-    )
+    warp = render_warp_checkbox(key="camera_symmetrization_warp")
 
     _consume_pending_capture(pipeline, warp=warp)
     controls = st.columns(2)
@@ -406,20 +401,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         st.warning(view)
         return
 
-    st.image(
-        view.overlay,
-        caption="実測点と、左右対称にそろえた位置（色違い）を線で結んだ表示",
-        width="stretch",
-    )
-    mean_column, max_column = st.columns(2)
-    mean_column.metric("平均のズレ", format_distance(view.mean_deviation))
-    max_column.metric("最大のズレ", format_distance(view.max_deviation))
-    st.caption(
-        f"対称化した点 {view.symmetrized_point_count} 点。"
-        "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
-    )
-    st.caption(DEVIATION_UNIT_CAPTION)
-    render_symmetrized_image(view, requested=warp)
+    render_symmetrization_view(view, warp_requested=warp)
     st.caption("取り込んだ映像はこのブラウザセッションのメモリだけに残り、保存も送信もしません。")
 
 

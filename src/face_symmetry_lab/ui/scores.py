@@ -1,36 +1,48 @@
-"""Camera と静止画の両セクションが共有する結果表示。
+"""Camera と静止画の両セクションが共有する詳細結果の描画。
 
 文言は §5.3 に従う。指標は実験的な左右差 *距離* として導入し、`HOLD` は次に
 取るべき操作へ言い換え、値の大小に価値判断を結び付けない。§8.6 で 0〜100 の
-変換を廃止したため、ここに出る値はすべて両眼間隔に対する正規化距離を百分率で
-示したものである。小さいという事実は対応点どうしが近いことだけを意味し、
-決して「良い」を意味しない。
+変換を廃止したため、ここに出る対称度はすべて両眼間隔に対する正規化距離を
+百分率で示したものである。小さいという事実は対応点どうしが近いことだけを
+意味し、決して「良い」を意味しない。
+
+**この module は「描画」と「文言」だけを持つ。** 表示値の解決と整形は
+`ui.readings`、計算過程の算術は `domain.score_explanation`、対称化パネルは
+`ui.symmetrization_panel` にある。§8.6.3（H4）でこの 3 つを外へ出したのは、
+以前ここが「文言・整形・値の解決・算術・描画」を 1 つの module に抱えており、
+HUD や吹き出しが数値を整形するためだけにこの描画 module へ依存していたため
+である。
 """
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping
 from typing import Final
 
 import streamlit as st
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
-from face_symmetry_lab.application.symmetrization import SymmetrizationView
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import PART_NAMES
-from face_symmetry_lab.domain.models import (
-    AnalysisState,
-    DemographicEstimate,
-    GenderLabel,
-    Status,
-)
+from face_symmetry_lab.domain.models import DemographicEstimate, Status
+from face_symmetry_lab.domain.score_explanation import ScoreExplanation, explain_score
 from face_symmetry_lab.domain.score_scale import (
     DISTANCE_AT_FULL_SCORE,
     DISTANCE_AT_ZERO_SCORE,
-    score_points,
+    POINTS_PER_DEVIATION_PERCENT,
 )
-from face_symmetry_lab.domain.symmetry_3d import equal_weight_distance_from_parts
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
+from face_symmetry_lab.ui.readings import (
+    GENDER_LABELS,
+    PART_LABELS,
+    format_distance,
+    format_score,
+    format_symmetry,
+    resolve_equal_weight_distance,
+    resolve_overall_distance,
+    resolve_part_distance_3d,
+)
 
 SCORE_HEADING = "対称度（実験値・両眼距離比）"
 
@@ -48,13 +60,12 @@ DISTANCE_UNIT_CAPTION = (
 )
 
 
-#: §8.6.3/§8.6.5: 見出しに出す `s_3d` のラベル。**ユーザー指定により
-#: 「部位平均の対称度」ではなく「全体のスコア」とする**（2026-08-11、
-#: W5-fix）。実体は §8.6.3 と同じ線形・無パラメータの変換で読んだ対称度であり、
-#: `s_3d` の重みは全部位について 1 に固定され調整の余地を持たないため、§8.6 が
-#: 禁じる較正されていない自由パラメータには当たらない（§8.6.3「表示語として
-#: のスコア」・§8.6.5）。採点・評価ではないことは help（`PART_EQUAL_WEIGHT_HELP`）
-#: で明示する。
+#: §8.6.3/§8.6.5: `s_3d` のラベル。**ユーザー指定により「部位平均の対称度」
+#: ではなく「全体のスコア」とする**（2026-08-11、W5-fix）。実体は §8.6.3 と
+#: 同じ線形・無パラメータの変換で読んだ対称度であり、`s_3d` の重みは全部位に
+#: ついて 1 に固定され調整の余地を持たないため、§8.6 が禁じる較正されていない
+#: 自由パラメータには当たらない（§8.6.3「表示語としてのスコア」・§8.6.5）。
+#: 採点・評価ではないことは help（`PART_EQUAL_WEIGHT_HELP`）で明示する。
 PART_EQUAL_WEIGHT_LABEL: Final[str] = "全体のスコア"
 
 #: §8.6.3/§8.6.5/§8.6.7: 「全体のスコア」の help。全体の対称度（対応点を 1 票ずつ
@@ -94,15 +105,55 @@ PART_LEVEL_VARIATION_CAPTION: Final[str] = (
 )
 
 
-#: §8.6.3(H2)・§5.3: 「全体のスコア」の計算過程を開示する expander の中身。
-#: 初学者向けに (1)「ずれ」の定義 (2) 実数値を代入した式 (3) 全体の対称度との
-#: 重みの違い (4) 高い数字になりやすい理由 (5) 実測レンジと被写体 1 名の但し書き、
-#: の順で並べる。価値判断語（§5.3・不変条件 8）と、母集団の分布を持たないため
-#: 基準値（「◯%以上なら対称」）のいずれも書かない。
+# --- §8.6.3(H4): 「全体のスコア」の計算過程を 3 ステップで開示する -------------
+#
+# 式を 1 つの塊で見せると、記号の意味・途中経過・目盛りの読み替えが同時に
+# 押し寄せて追えない。各ステップは「何をするか」の平叙文を先に置き、そのあとに
+# 実数値を代入した計算を続ける。ステップの区切りは表示の構造であり、計算そのもの
+# （`domain.score_explanation`）は変えない。
+#
+# 文言には価値判断語（§5.3・不変条件 8）も、母集団の分布を持たないため基準値
+# （「◯%以上なら対称」）も書かない。§5.2 が禁じる進捗バー・ゲージ・達成度の
+# 演出も用いず、目盛りの端点は数値と文章で示す。
+
+SCORE_STEP_TITLES: Final[tuple[str, str, str]] = (
+    "ステップ 1 — 4 つの部位それぞれの「ずれ」を読む",
+    "ステップ 2 — 4 つのずれを 1 つにまとめる",
+    "ステップ 3 — まとめたずれを「点」へ置き換える",
+)
+
 SCORE_CALCULATION_DEVIATION_INTRO: Final[str] = (
-    "この式に出てくる「ずれ」は、両目の間隔を100%としたときの、左右で対応する"
+    "ここでいう「ずれ」は、両目の間隔を100%としたときの、左右で対応する"
     "点どうしの離れ具合です。両目の間隔が6cmの人なら、ずれ1%はおよそ0.6mmに"
-    "あたります。"
+    "あたります。輪郭・目・鼻・口の4か所について、それぞれの値と、次のステップで"
+    "使う二乗を並べます。"
+)
+
+#: ステップ 2 の平叙文。**なぜ単純平均ではないのかを述べる。** ここが無いと
+#: 「二乗して平方根」が意味不明な儀式に見え、初学者が最初に脱落する箇所になる。
+SCORE_CALCULATION_COMBINE_INTRO: Final[str] = (
+    "4つのずれを、二乗して平均し、平方根をとって1つの数にまとめます"
+    "（二乗平均平方根）。単純に足して4で割らないのは、1か所だけ大きくずれている"
+    "ときに、その分が残り3部位に薄められてしまうためです。二乗すると大きいずれ"
+    "ほど強く残り、最後に平方根をとることで単位が元の「ずれ」に戻ります。"
+)
+
+#: ステップ 3 の平叙文。アンカー 2 点を数値として述べる。これが画面に無いと
+#: §8.6.3 が要求する可逆性（点から `s_3d` へ戻せること）が成立しない。
+SCORE_CALCULATION_SCALE_INTRO: Final[str] = (
+    "まとめたずれを、2つの目印にあてはめて点へ置き換えます。ずれが両眼間隔の"
+    "1.0%のとき100点、5.0%のとき0点とし、その間を直線でつなぎます。この2つの"
+    "目印は実測と文献から決めた固定の値で、母集団の中の位置を表すものでは"
+    "ありません。"
+)
+
+#: §8.6.7: 目盛りの傾き。数値は `domain.score_scale` の凍結アンカーから導く
+#: （`POINTS_PER_DEVIATION_PERCENT`）。UI 側に `25` を直書きすると、アンカーを
+#: 差し替えた版で注記だけが黙って嘘になる。
+SCORE_CALCULATION_SLOPE_NOTE: Final[str] = (
+    "この目盛りでは、ずれが1ポイント（両眼間隔の1%）動くと点が"
+    f"{POINTS_PER_DEVIATION_PERCENT:.0f}点動きます。"
+    "点の細かさは、測定の細かさではありません。"
 )
 
 #: §8.6.5・不変条件 11: 部位が 1 つでも欠測すると `s_3d` は欠測になる。そのとき
@@ -138,189 +189,194 @@ SCORE_CALCULATION_MEASURED_RANGE_CAPTION: Final[str] = (
 )
 
 
-#: §8.6.2 の点ごとのずれは §8.5 のペア距離の半分であり、§8.6.3 が向きを変える
-#: 量とは別物である。そのため対称度ではなく「ズレ」として述べ、専用の注記を
-#: 添える。
-DEVIATION_UNIT_CAPTION = (
-    "ズレは、両眼の間隔を 100% としたときの、実測点と左右対称にそろえた位置との距離です。"
-    "小さいほど両者が近いことだけを意味し、良し悪しを表しません。"
-)
+def _bare_percent(value: float) -> str:
+    """`format_distance` の数字だけ（`%` を落とす）。
 
-
-#: §5.3/§10.7: FR-035 の変形画像を利用者へ提示するときの枠付け。文言を直接
-#: 検証できるよう定数に切り出している。これは「補正済みの写真」と最も
-#: 取り違えられやすい出力である。
-SYMMETRIZED_IMAGE_CAPTION = "左右対称にそろえた画像（ランドマークを基準に画素を変形した加工画像）"
-SYMMETRIZED_IMAGE_NOTICE = (
-    "対応点を左右対称の位置へ移動させ、その間の画素を三角形ごとに変形した合成画像です。"
-    "実際の顔写真ではなく、より正しい・望ましい顔でもありません。"
-    "加工画像であることを明示せずに提示・共有しないでください。"
-)
-SYMMETRIZED_IMAGE_LIMITS = (
-    "ランドマークが覆わない髪・耳・首・背景は、画像の外周を固定したまま"
-    "顔の変形に緩やかに追従するため、境界付近に不自然さが残ることがあります。"
-)
-
-
-def format_distance(value: float | None) -> str:
-    """正規化距離を百分率で表示する。欠測時は `—` を返す。"""
-    return "—" if value is None else f"{value * 100.0:.2f}%"
-
-
-def symmetry_percent(value: float | None) -> float | None:
-    """§8.6.3 の対称度変換を、文字列ではなく数値のまま返す。
-
-    `format_symmetry` と同じ式を共有する唯一の実装であり、`ui.hud` の折れ線
-    グラフが数値を必要とする場所（テキスト表示とは別に、SVG の `points` 属性
-    を計算する箇所）はここを経由する。式を 2 箇所に書くと、グラフとテキストが
-    別々の表示規則へ分岐しうる（`ui.hud` の docstring と同じ理由）。
-
-    ずれが両眼間隔そのものを超える退化ケースのために 0% で下限を設ける。
-    それ以外の場所では `d` は上限のない値のままである（§8.6.3）。
+    式の中では単位を 1 行の末尾へ 1 度だけ置くほうが読みやすい。丸め規則を
+    3 つ目に増やさないよう、値そのものは共有フォーマッタを通す。
     """
-    if value is None:
+    return format_distance(value).rstrip("%")
+
+
+def _square_percent(square: float) -> str:
+    """距離の二乗を「パーセントポイントの二乗」として整形する。
+
+    ステップ 1 の表とステップ 2 の合計が同じ単位系で並ぶようにするための
+    単位換算であり（距離² → %²）、新しい計算ではない。`format_distance` が
+    距離へ 100 を掛けるのと同じ位置付けである。
+    """
+    return f"{square * 10_000.0:.2f}"
+
+
+def _display_width(text: str) -> int:
+    """等幅フォントで占める桁数。全角は 2 桁として数える。
+
+    `str.ljust` / `f"{x:>8}"` はどちらも **文字数** で詰めるため、「輪郭」
+    （2 文字 = 4 桁）と「目」（1 文字 = 2 桁）が揃わない。表の桁を合わせないと、
+    ステップ 1 が「読者が縦に目で追える表」として機能しない。
+    """
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
+def _cell(text: str, cells: int, *, right: bool = False) -> str:
+    padding = " " * max(0, cells - _display_width(text))
+    return padding + text if right else text + padding
+
+
+#: ステップ 1 の表の桁。部位ラベル（左寄せ）・ずれ・二乗（どちらも右寄せ）。
+_PART_COLUMN_CELLS: Final[int] = 8
+_VALUE_COLUMN_CELLS: Final[int] = 9
+
+
+def _deviation_row(label: str, deviation: str, square: str) -> str:
+    return (
+        _cell(label, _PART_COLUMN_CELLS)
+        + _cell(deviation, _VALUE_COLUMN_CELLS, right=True)
+        + _cell(square, _VALUE_COLUMN_CELLS, right=True)
+    )
+
+
+def _step_deviations_block(explanation: ScoreExplanation) -> str:
+    """ステップ 1: 部位ごとのずれと二乗を 1 行ずつ並べる。"""
+    return "\n".join(
+        [
+            _deviation_row("部位", "ずれ", "ずれ²"),
+            *(
+                _deviation_row(
+                    PART_LABELS[part.name],
+                    format_distance(part.distance),
+                    _square_percent(part.square),
+                )
+                for part in explanation.parts
+            ),
+        ]
+    )
+
+
+#: 実数値を代入する前の、ステップ 2 の式そのもの。`s_3d` が欠測のときはこれだけ
+#: を示す（不変条件 11: 古い値や 0 で埋めない）。
+SCORE_FORMULA_COMBINE: Final[str] = (
+    "まとめたずれ = √( (輪郭のずれ² + 目のずれ² + 鼻のずれ² + 口のずれ²) ÷ 4 )"
+)
+
+
+def _step_combine_block(explanation: ScoreExplanation) -> str:
+    """ステップ 2: 二乗和 → 平均 → 平方根の途中経過を、実数値で示す。"""
+    squares = " + ".join(_square_percent(part.square) for part in explanation.parts)
+    return "\n".join(
+        (
+            SCORE_FORMULA_COMBINE,
+            "",
+            f"  ずれ² の合計 = {squares} = {_square_percent(explanation.square_sum)}",
+            f"  {len(explanation.parts)} 部位で平均 ="
+            f" {_square_percent(explanation.square_sum)}"
+            f" ÷ {len(explanation.parts)} = {_square_percent(explanation.mean_square)}",
+            f"  平方根をとる = √{_square_percent(explanation.mean_square)}"
+            f" = {format_distance(explanation.combined_distance)}  ← まとめたずれ",
+        )
+    )
+
+
+def _score_formula_scale(*, zero_anchor: float, full_anchor: float) -> str:
+    """実数値を代入する前の、ステップ 3 の式そのもの。
+
+    アンカーは `domain.score_scale` の版付き定数から組み立てる（UI 側に写しを
+    作らない）。
+    """
+    return (
+        f"{PART_EQUAL_WEIGHT_LABEL} = 100 × ({format_distance(zero_anchor)} - まとめたずれ)"
+        f" ÷ ({format_distance(zero_anchor)} - {format_distance(full_anchor)})"
+    )
+
+
+def _step_scale_block(explanation: ScoreExplanation) -> str:
+    """ステップ 3: アンカー 2 点を明示したうえで、点へ換算する。"""
+    zero_anchor = _bare_percent(explanation.distance_at_zero_score)
+    full_anchor = _bare_percent(explanation.distance_at_full_score)
+    combined = _bare_percent(explanation.combined_distance)
+    formula = _score_formula_scale(
+        zero_anchor=explanation.distance_at_zero_score,
+        full_anchor=explanation.distance_at_full_score,
+    )
+    # 続く 2 行の `=` を 1 行目の `=` の真下へ置く。ラベルは全角なので、文字数
+    # ではなく表示桁で詰める（`_display_width`）。
+    padding = " " * (_display_width(PART_EQUAL_WEIGHT_LABEL) + 1)
+    return "\n".join(
+        (
+            formula,
+            f"{padding}= 100 × ({zero_anchor} - {combined}) ÷ ({zero_anchor} - {full_anchor})",
+            f"{padding}= {format_score(explanation.combined_distance)}",
+        )
+    )
+
+
+def _resolve_explanation(outcome: AnalysisOutcome) -> ScoreExplanation | None:
+    """計算過程に使う `ScoreExplanation` を、詳細タブの主表示と同じ値から作る。
+
+    部位別の値は `resolve_part_distance_3d`（このすぐ上で描画済みの部位別
+    メトリクスと同じ、平滑値優先）を通す。完備性の判定は
+    `resolve_equal_weight_distance`（その時点の生値、§8.6.5・§8.7）で行う。
+    `resolve_part_distance_3d` は平滑値が欠測部位を「保持」しうる（H1 改訂）
+    ため、部位別の値そのものではなくこの生値ベースの判定をゲートに使う。
+    さもないと、今のフレームでは欠測している部位の古い平滑値を使って数値を
+    組み立ててしまう（不変条件 11 違反）。
+    """
+    if resolve_equal_weight_distance(outcome) is None:
         return None
-    return min(100.0, max(0.0, (1.0 - value) * 100.0))
+    return explain_score({name: resolve_part_distance_3d(outcome, name) for name in PART_NAMES})
 
 
-def format_symmetry(value: float | None) -> str:
-    """正規化距離を §8.6.3 の対称度パーセントとして表示する。
+def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
+    """§5.3/§8.6.3（H4）: 「全体のスコア」の計算過程を 3 ステップで開示する。
 
-    `100% - ずれ%` は線形かつ可逆で、係数を持たない。したがって同じ測定値の
-    読む向きを変えるだけであり、採点ではない。指標そのもの、エクスポートの
-    列、`metric_version` はいずれもこれによって変わらない。
+    畳んだ `st.expander` の中に、ステップごとの平叙文と実数値の計算を対にして
+    置き、そのあとに 4 つの注記（重みの違い・目盛りを広げた理由・実測レンジ・
+    アンカー付きの help）を続ける。ステップの中へ注記を混ぜない——手順と、
+    手順の読み方に対する留保は別のものである。
+
+    `s_3d` が欠測のときは式の形だけを示し、数値を当てはめない（不変条件 11）。
     """
-    percent = symmetry_percent(value)
-    return "—" if percent is None else f"{percent:.2f}%"
+    with st.expander(f"{PART_EQUAL_WEIGHT_LABEL}の計算過程を見る"):
+        explanation = _resolve_explanation(outcome)
+
+        st.markdown(f"**{SCORE_STEP_TITLES[0]}**")
+        st.caption(SCORE_CALCULATION_DEVIATION_INTRO)
+        if explanation is None:
+            st.info(SCORE_CALCULATION_UNAVAILABLE_NOTICE)
+        else:
+            st.code(_step_deviations_block(explanation), language="text")
+
+        st.markdown(f"**{SCORE_STEP_TITLES[1]}**")
+        st.caption(SCORE_CALCULATION_COMBINE_INTRO)
+        st.code(
+            SCORE_FORMULA_COMBINE if explanation is None else _step_combine_block(explanation),
+            language="text",
+        )
+
+        st.markdown(f"**{SCORE_STEP_TITLES[2]}**")
+        st.caption(SCORE_CALCULATION_SCALE_INTRO)
+        st.code(
+            _score_formula_scale(
+                zero_anchor=DISTANCE_AT_ZERO_SCORE,
+                full_anchor=DISTANCE_AT_FULL_SCORE,
+            )
+            if explanation is None
+            else _step_scale_block(explanation),
+            language="text",
+        )
+        st.caption(SCORE_CALCULATION_SLOPE_NOTE)
+
+        st.divider()
+        # §8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は help・説明文
+        # として必ず出す。見出し結果の削除（2026-08-12）で `help=` の置き場が
+        # 無くなったため、ここが唯一の受け皿になる。
+        st.caption(PART_EQUAL_WEIGHT_HELP)
+        st.caption(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION)
+        st.caption(SCORE_CALCULATION_HIGH_VALUE_NOTE)
+        st.caption(SCORE_CALCULATION_MEASURED_RANGE_CAPTION)
 
 
-def format_score(value: float | None) -> str:
-    """§8.6.7: `s_3d` を「全体のスコア」の点として表示する。
-
-    **`%` を付けない。** 対称度（`format_symmetry`）と同じ目盛りに見えると、
-    82 点と 98% が同じ量の 2 つの読み方だと誤解される。両者は目盛りが違う。
-
-    小数 1 桁で止める。§14.4 のセッション間全幅が 6.8 点であるため、それより
-    細かい桁は撮り直しで消える。欠測は `—` であり、0 点ではない（0 点は
-    「ずれ 5.0% 以上」という測定結果である、不変条件 11）。
-    """
-    points = score_points(value)
-    return "—" if points is None else f"{points:.1f} 点"
-
-
-#: 実数値を代入する前の、式そのものの形。`s_3d` が欠測のときはこれだけを示す。
-#: アンカーは `domain.score_scale` の版付き定数から組み立てる（UI 側に写しを
-#: 作らない）。`format_distance` を使うのは、丸め規則を 3 つ目に増やさないため
-#: であり、そのためこの定数は共有フォーマッタより後ろに置く。
-SCORE_CALCULATION_FORMULA_LINE: Final[str] = (
-    "ずれ = √( (輪郭のずれ² + 目のずれ² + 鼻のずれ² + 口のずれ²) ÷ 4 )\n"
-    f"全体のスコア = 100 × ({format_distance(DISTANCE_AT_ZERO_SCORE)} - ずれ)"
-    f" ÷ ({format_distance(DISTANCE_AT_ZERO_SCORE)} - {format_distance(DISTANCE_AT_FULL_SCORE)})"
-)
-
-
-def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
-    """§8.6.3/§8.7: 「全体の対称度」として表示する 3D の総合距離を 1 か所で決める。
-
-    平滑値（`overall_distance_3d_smooth`）を優先し、無ければ生値
-    （`symmetry_3d.overall.distance`）へ落ちる。静止画は §8.7 のとおり平滑値を
-    持たない（`application.still_image.analyze_still_image` が明示的に欠測へ
-    落とす）ため、この関数は自然に生値へ落ちる——呼び出し側が入力モードを
-    分岐する必要はない。3D 一式が丸ごと欠測なら `None`（`—`）を返し、`symmetry`
-    （2D）へは決してフォールバックしない。
-
-    Camera（見出し・HUD）と Image のどの呼び出し側もこの解決を個別に書かない
-    よう、ここへ集約している。
-    """
-    if outcome.overall_distance_3d_smooth is not None:
-        return outcome.overall_distance_3d_smooth
-    symmetry_3d = outcome.symmetry_3d
-    if symmetry_3d is not None and symmetry_3d.overall is not None:
-        return symmetry_3d.overall.distance
-    return None
-
-
-def resolve_equal_weight_distance(outcome: AnalysisOutcome) -> float | None:
-    """§8.6.3/§8.6.5: 見出しの「全体のスコア」として表示する `s_3d` を 1 か所で決める。
-
-    `s_3d` は §8.6.5・§8.7 のとおり EMA の対象に含めないため、常に生値である
-    （`resolve_overall_distance` と異なり、平滑値へのフォールバックを持たない
-    ——そもそも平滑値が存在しない）。3D 一式が欠測、または部位が 1 つでも
-    欠測していれば `None`（`—`）を返し、0 や前回値へ置換しない（不変条件 11）。
-    `Symmetry3DResult.equal_weight_distance` が「部位が 1 つでも欠測なら欠測に
-    する。使える部位だけで平均しない」を実装しているので、ここではそれを
-    そのまま読むだけでよい。
-
-    Camera（見出し）と Image のどちらの呼び出し側もこの解決を個別に書かないよう、
-    `resolve_overall_distance` と同じくここへ集約している。
-    """
-    symmetry_3d = outcome.symmetry_3d
-    if symmetry_3d is None:
-        return None
-    return symmetry_3d.equal_weight_distance
-
-
-def resolve_part_distance_3d(outcome: AnalysisOutcome, name: str) -> float | None:
-    """§8.6.3/§8.7 改訂(H1): 部位別 `d_3d,p` の平滑値を 1 か所で決める。
-
-    `resolve_overall_distance` と同じ「平滑値を優先し、無ければ生値」という
-    解決を部位別にも適用する。`outcome.part_distances_3d_smooth` がコンテナ
-    ごと欠測(静止画・3D 一式欠測)、またはその部位のキーだけ欠測(不変条件 11、
-    部位が個別に欠測したフレーム)のいずれでも自然に生値へ落ちる。詳細タブと
-    HUD のどちらの呼び出し側もこの解決を個別に書かないよう、ここへ集約する
-    (表示の一貫性: 片方が生値・片方が平滑値という 2 つの表示規則を作らない)。
-    """
-    smoothed = outcome.part_distances_3d_smooth
-    if smoothed is not None:
-        value = smoothed.get(name)
-        if value is not None:
-            return value
-    symmetry_3d = outcome.symmetry_3d
-    if symmetry_3d is None:
-        return None
-    return symmetry_3d.distance(name)
-
-
-PART_LABELS: Final[dict[str, str]] = {
-    "contour": "輪郭",
-    "eyes": "目",
-    "nose": "鼻",
-    "mouth": "口",
-}
-
-GENDER_LABELS: Final[dict[GenderLabel, str]] = {
-    GenderLabel.FEMALE: "女性",
-    GenderLabel.MALE: "男性",
-}
-
-#: §14.3e: 品質ゲートの状態ごとの色。映像の枠線と HUD の輪郭に使う。これらは
-#: **状態の識別子であって評価ではない**。緑は「計測条件を満たしている」という
-#: 意味であって、「良い顔である」ではない。§5.4 は色だけで意味を伝えることを
-#: 禁じているため、ゲートが閉じている間は詳細結果タブの `render_guidance` が
-#: 状態文言と理由を示し、ゲートが閉じると HUD・詳細結果の数値が `—` へ変わる
-#: こと（値の有無）と合わせて色以外の手掛かりを保つ（項目26）。
-GATE_COLORS: Final[dict[Status, str]] = {
-    Status.OK: "#2E9E5B",
-    Status.HOLD: "#D9A21B",
-    Status.NO_FACE: "#B4433B",
-    Status.MULTI_FACE: "#B4433B",
-    Status.ERROR: "#6B6B6B",
-}
-
-#: 解析がまだ 1 つも無いとき、および表が取りこぼした状態のときに使う。判定を
-#: 匂わせる色ではなく、`Status.ERROR` の中立的な灰色を選ぶ。
-_UNKNOWN_GATE_COLOR: Final[str] = GATE_COLORS[Status.ERROR]
-
-
-def gate_color(state: AnalysisState | None) -> str:
-    """ゲート状態 1 つに対する §14.3e の表示色。
-
-    ``None``（このセッションでまだ解析が無い）は中立的な灰色として読む。
-    待機中の表示が「条件を満たしている」色を借りることがないようにする。
-    """
-    if state is None:
-        return _UNKNOWN_GATE_COLOR
-    return GATE_COLORS.get(state.status, _UNKNOWN_GATE_COLOR)
+# --- 状態と姿勢 ---------------------------------------------------------------
 
 
 _STATUS_HEADLINE: Final[dict[Status, str]] = {
@@ -384,81 +440,58 @@ def render_pose(outcome: AnalysisOutcome) -> None:
     )
 
 
-def _score_calculation_walkthrough(part_values: Mapping[str, float]) -> str | None:
-    """H2: 「全体のスコア」を実数値で組み立てる計算過程のテキストを作る。
+# --- 詳細結果 -----------------------------------------------------------------
 
-    ``part_values`` は呼び出し側が `resolve_part_distance_3d` で解決した値
-    （部位別メトリクスの主表示と同じ、平滑値優先）をそのまま渡す。4 部位が
-    揃わない場合は `None` を返す（呼び出し側はこれを「今は値が揃っていない」
-    として扱う）。数値は `format_distance` / `format_score`
-    （`equal_weight_distance_from_parts` と `domain.score_scale` の式）だけを
-    通し、3 つ目の丸め規則は作らない。
 
-    最後の 1 行は §8.6.7 の点への換算である。**アンカー 2 点を数字として書く。**
-    これがあるので、利用者は点から `s_3d` へ戻せる（§8.6.3 の可逆性）。
+def _render_part_breakdown(outcome: AnalysisOutcome, *, show_smoothed: bool) -> None:
+    """§8.6.5: ずれがどこにあるかを見るための診断的な内訳。
+
+    これらを足しても全体の対称度にはならない。全体は全対応ペアをまとめて 1 回
+    だけ折りたたんで求めるためである。3D 一式が欠測なら 4 部位とも `—`。
+
+    §8.7 改訂（H1）: 部位別も全体値と同じく平滑値を主表示し、生値を併記する
+    （`resolve_part_distance_3d` が「平滑値を優先し、無ければ生値」を解決する）。
+    片方が生値・片方が平滑値という 2 つの表示規則を作らないためである。
     """
-    combined = equal_weight_distance_from_parts(part_values)
-    if combined is None:
-        return None
+    st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
+    symmetry_3d = outcome.symmetry_3d
+    for column, name in zip(st.columns(len(PART_NAMES)), PART_NAMES, strict=True):
+        distance = resolve_part_distance_3d(outcome, name)
+        column.metric(
+            PART_LABELS[name],
+            format_symmetry(distance),
+            help=f"ずれ {format_distance(distance)}",
+        )
+        if show_smoothed:
+            raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
+            column.caption(f"生値 {format_symmetry(raw)}")
 
-    def _bare(value: float) -> str:
-        return format_distance(value).rstrip("%")
 
-    deviation_line = "   ".join(
-        f"{PART_LABELS[name]} {format_distance(part_values[name])}" for name in PART_NAMES
+def _render_skin_quality(outcome: AnalysisOutcome) -> None:
+    """§8.6.1: 幾何とは独立した、撮影補正後の肌表面参考値（実験値）。"""
+    skin = outcome.skin_quality
+    if skin is None:
+        return
+    st.divider()
+    st.markdown("#### 撮影補正後の肌表面参考値（実験値）")
+    st.metric("肌表面参考値", "—" if skin.score is None else f"{skin.score:.1f}")
+    tone_column, texture_column = st.columns(2)
+    tone_column.metric(
+        "色調均一性",
+        "—" if skin.tone_uniformity is None else f"{skin.tone_uniformity:.1f}",
     )
-    squares = " + ".join(f"{_bare(part_values[name])}²" for name in PART_NAMES)
-    zero_anchor = _bare(DISTANCE_AT_ZERO_SCORE)
-    full_anchor = _bare(DISTANCE_AT_FULL_SCORE)
-    return (
-        f"{SCORE_CALCULATION_FORMULA_LINE}\n\n"
-        f"  {deviation_line}\n"
-        f"  √(({squares}) ÷ 4) = {format_distance(combined)}\n"
-        f"  100 × ({zero_anchor} - {_bare(combined)}) ÷ ({zero_anchor} - {full_anchor})"
-        f" = {format_score(combined)}"
+    texture_column.metric(
+        "テクスチャ均一性",
+        "—" if skin.texture_uniformity is None else f"{skin.texture_uniformity:.1f}",
     )
-
-
-def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
-    """§5.3/§8.6.3（H2）: 「全体のスコア」の計算過程を、初学者向けに開示する。
-
-    畳んだ `st.expander` の中に (1) 「ずれ」の定義 (2) 実数値を代入した式
-    (3) 全体の対称度との重みの違い (4) 高い数字になりやすい理由 (5) 実測レンジと
-    被写体 1 名の但し書き、の順で示す。
-
-    計算過程が使う部位別の値は、この関数のすぐ上で描画済みの部位別メトリクス
-    （主表示、`resolve_part_distance_3d`）と必ず同じものを使う。`s_3d` の完備性
-    は `resolve_equal_weight_distance` （その時点の生値、§8.6.5・§8.7）で判定
-    する。`resolve_part_distance_3d` は平滑値が欠測部位を「保持」しうる
-    （H1 改訂）ため、部位別の値そのものではなく、この生値ベースの判定を
-    ゲートに使う。さもないと、今のフレームでは欠測している部位の古い平滑値を
-    使って数値を組み立ててしまう（不変条件 11 違反）。
-    """
-    with st.expander(f"{PART_EQUAL_WEIGHT_LABEL}の計算過程を見る"):
-        # §8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は help・説明文
-        # として必ず出す。見出し結果の削除（2026-08-12）で `help=` の置き場が
-        # 無くなったため、ここが唯一の受け皿になる。
-        st.caption(PART_EQUAL_WEIGHT_HELP)
-        st.caption(SCORE_CALCULATION_DEVIATION_INTRO)
-
-        walkthrough: str | None = None
-        if resolve_equal_weight_distance(outcome) is not None:
-            part_values: dict[str, float] = {}
-            for name in PART_NAMES:
-                value = resolve_part_distance_3d(outcome, name)
-                if value is not None:
-                    part_values[name] = value
-            walkthrough = _score_calculation_walkthrough(part_values)
-
-        if walkthrough is None:
-            st.code(SCORE_CALCULATION_FORMULA_LINE, language="text")
-            st.info(SCORE_CALCULATION_UNAVAILABLE_NOTICE)
-        else:
-            st.code(walkthrough, language="text")
-
-        st.caption(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION)
-        st.caption(SCORE_CALCULATION_HIGH_VALUE_NOTE)
-        st.caption(SCORE_CALCULATION_MEASURED_RANGE_CAPTION)
+    st.caption(
+        "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
+        "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。"
+    )
+    if skin.correction is not None:
+        gains = skin.correction.gains
+        st.caption(f"補正gain RGB {gains[0]:.2f} / {gains[1]:.2f} / {gains[2]:.2f}")
+    st.caption(f"skin metric {skin.metric_version} · 未校正")
 
 
 def render_score_details(
@@ -481,7 +514,7 @@ def render_score_details(
     既に部位別 4 つを表示するため ``False`` を渡し、詳細タブでの重複を避ける。
     **Image** は HUD を持たないため既定の ``True`` のまま描画する。``False``
     でも `PART_LEVEL_VARIATION_CAPTION`（§5.3 が義務付ける部位別の揺れ幅の
-    注記）と `_render_score_calculation_detail`（H2 の計算過程）は描き続ける。
+    注記）と `_render_score_calculation_detail`（H4 の計算過程）は描き続ける。
     HUD には注記を置く場所が無く、この注記の唯一の受け皿が詳細タブになる
     ためである。
 
@@ -516,41 +549,23 @@ def render_score_details(
     )
 
     symmetry_3d = outcome.symmetry_3d
-    overall_3d_raw = (
-        symmetry_3d.overall.distance
-        if symmetry_3d is not None and symmetry_3d.overall is not None
-        else None
-    )
     if show_smoothed:
+        overall_3d_raw = (
+            symmetry_3d.overall.distance
+            if symmetry_3d is not None and symmetry_3d.overall is not None
+            else None
+        )
         st.caption(
             f"平滑化前の生値 {format_symmetry(overall_3d_raw)}"
             f"（ずれ {format_distance(overall_3d_raw)}）"
         )
 
     if show_parts:
-        # §8.6.5: ずれがどこにあるかを見るための診断的な内訳。これらを足しても
-        # 見出しの値にはならない。見出しは全対応ペアをまとめて 1 回だけ
-        # 折りたたんで求めるためである。3D 一式が欠測なら 4 部位とも `—`。
-        # §8.7 改訂（H1）: 部位別も全体値と同じく平滑値を主表示し、生値を併記
-        # する（`resolve_part_distance_3d` が「平滑値を優先し、無ければ生値」
-        # を解決する）。片方が生値・片方が平滑値という 2 つの表示規則を作らない
-        # ため。
-        st.caption("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）")
-        columns = st.columns(len(PART_NAMES))
-        for column, name in zip(columns, PART_NAMES, strict=True):
-            distance = resolve_part_distance_3d(outcome, name)
-            column.metric(
-                PART_LABELS[name],
-                format_symmetry(distance),
-                help=f"ずれ {format_distance(distance)}",
-            )
-            if show_smoothed:
-                raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
-                column.caption(f"生値 {format_symmetry(raw)}")
+        _render_part_breakdown(outcome, show_smoothed=show_smoothed)
+
     # §5.3: 部位別メトリクスの表示可否（show_parts）に関わらず、揺れ幅の注記と
-    # H2 の計算過程は描き続ける。Camera では HUD が部位別を表示し続ける一方、
-    # 吹き出しには注記を置く場所が無いため、この注記の唯一の受け皿が詳細タブに
-    # なる（項目26、H3）。
+    # 計算過程は描き続ける。Camera では HUD が部位別を表示し続ける一方、吹き出し
+    # には注記を置く場所が無いため、この注記の唯一の受け皿が詳細タブになる。
     st.caption(PART_LEVEL_VARIATION_CAPTION)
     # §8.6.7: 目盛りを引き伸ばした帰結（ばらつきも同じ倍率で拡大する）は、
     # expander を開かなくても読める位置に置く。開かないと見えない場所へ置くと、
@@ -559,31 +574,8 @@ def render_score_details(
     _render_score_calculation_detail(outcome)
 
     render_pose(outcome)
-    if outcome.skin_quality is not None:
-        skin = outcome.skin_quality
-        st.divider()
-        st.markdown("#### 撮影補正後の肌表面参考値（実験値）")
-        st.metric(
-            "肌表面参考値",
-            "—" if skin.score is None else f"{skin.score:.1f}",
-        )
-        tone_column, texture_column = st.columns(2)
-        tone_column.metric(
-            "色調均一性",
-            "—" if skin.tone_uniformity is None else f"{skin.tone_uniformity:.1f}",
-        )
-        texture_column.metric(
-            "テクスチャ均一性",
-            "—" if skin.texture_uniformity is None else f"{skin.texture_uniformity:.1f}",
-        )
-        st.caption(
-            "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
-            "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。"
-        )
-        if skin.correction is not None:
-            gains = skin.correction.gains
-            st.caption(f"補正gain RGB {gains[0]:.2f} / {gains[1]:.2f} / {gains[2]:.2f}")
-        st.caption(f"skin metric {skin.metric_version} · 未校正")
+    _render_skin_quality(outcome)
+
     st.caption(DISTANCE_UNIT_CAPTION)
     st.caption(
         "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
@@ -603,25 +595,7 @@ def render_score_details(
     )
 
 
-def render_symmetrized_image(view: SymmetrizationView, *, requested: bool) -> None:
-    """FR-035: 変形画像を、加工であるという枠付けのまま表示する。
-
-    Camera と Image が共有する。この文言が効く唯一の場所を、両者の間で
-    食い違わせないためである。§5.3/§10.7: 対称化した写真は「補正済み」や
-    「より良い」顔と最も取り違えられやすい出力なので、幾何変形であることを
-    明示し、before/after としては決して見せない。
-
-    fail-soft である。変形を要求されたが変位ガードや画像化の段階が拒否した
-    場合は理由を示し、上の点オーバーレイだけで成立させる（AC-SYMM-02）。
-    """
-    if not requested:
-        return
-    if view.warped is None:
-        st.info(view.warp_unavailable_reason or "対称化した画像は生成されていません。")
-        return
-    st.image(view.warped, caption=SYMMETRIZED_IMAGE_CAPTION, width="stretch")
-    st.caption(SYMMETRIZED_IMAGE_NOTICE)
-    st.caption(SYMMETRIZED_IMAGE_LIMITS)
+# --- 参考年齢・参考性別 -------------------------------------------------------
 
 
 def render_demographic_estimate(

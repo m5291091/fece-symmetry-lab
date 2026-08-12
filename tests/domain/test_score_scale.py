@@ -18,6 +18,7 @@ from face_symmetry_lab.domain.score_scale import (
     DISPLAY_SCALE_VERSION,
     DISTANCE_AT_FULL_SCORE,
     DISTANCE_AT_ZERO_SCORE,
+    POINTS_PER_DEVIATION_PERCENT,
     score_points,
 )
 
@@ -92,6 +93,21 @@ def test_the_scale_is_linear_and_reversible_from_the_two_anchors() -> None:
         assert points is not None
         recovered = DISTANCE_AT_ZERO_SCORE - span * points / 100.0
         assert recovered == pytest.approx(distance)
+
+
+def test_the_published_slope_matches_the_actual_scale() -> None:
+    """§8.6.3 のステップ 3 が画面へ書く「1 ポイントで 25 点」の根拠。
+
+    罠: UI 側や注記へ `25` を直書きした実装は、アンカーを差し替えた版
+    （`display-scale/2.0.0`）で画面の説明だけが黙って嘘になる。定数が実際の
+    傾きと一致していることをここで固定する。
+    """
+    assert pytest.approx(25.0) == POINTS_PER_DEVIATION_PERCENT
+
+    before = score_points(0.020)
+    after = score_points(0.030)
+    assert before is not None and after is not None
+    assert before - after == pytest.approx(POINTS_PER_DEVIATION_PERCENT)
 
 
 def test_a_missing_distance_stays_missing_instead_of_scoring_zero() -> None:

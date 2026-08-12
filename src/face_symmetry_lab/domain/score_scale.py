@@ -43,6 +43,17 @@ DISTANCE_AT_FULL_SCORE: Final[float] = 0.010
 #: と同じ尺度上にある保証はない（§8.6.7）。
 DISTANCE_AT_ZERO_SCORE: Final[float] = 0.050
 
+#: ずれが 1 ポイント（両眼間隔の 1%）動いたときに点が動く量。§8.6.7 の
+#: `score_points = 25 × (symmetry_percent - 95)` と同じ傾きである。
+#:
+#: **アンカー 2 点から導き、`25.0` を直接書かない。** 直接書くと、アンカーを
+#: 差し替えた版（`display-scale/2.0.0`）で画面の注記だけが黙って嘘になる。
+#: 計算過程の開示（§8.6.3 のステップ 3）と `domain.score_explanation` は
+#: どちらもここを読む。
+POINTS_PER_DEVIATION_PERCENT: Final[float] = (
+    0.01 * 100.0 / (DISTANCE_AT_ZERO_SCORE - DISTANCE_AT_FULL_SCORE)
+)
+
 
 def score_points(distance: float | None) -> float | None:
     """部位等重み距離 `s_3d` を、§8.6.7 の 0〜100 点へ写す。

@@ -1,112 +1,29 @@
-import re
+"""`ui.scores`: 詳細結果の描画と、そこに出る §5.3 の文言。
+
+値の解決と整形は `test_readings.py`、対称化パネルは
+`test_symmetrization_panel.py`、計算過程の算術は
+`tests/domain/test_score_explanation.py` が受け持つ。ここで見るのは
+「画面に何がどの順で出るか」と「その言葉が §5.3 を守っているか」である。
+"""
+
+import unicodedata
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.domain.landmarks import TrackingStatus
-from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
-from face_symmetry_lab.domain.symmetry import SymmetryResult
-from face_symmetry_lab.domain.symmetry_3d import AxisSplit, Symmetry3DResult
+from face_symmetry_lab.domain.models import ReasonCode
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
+from face_symmetry_lab.ui.readings import format_distance, format_symmetry
 from face_symmetry_lab.ui.scores import (
     DISTANCE_UNIT_CAPTION,
-    GATE_COLORS,
     PART_EQUAL_WEIGHT_HELP,
     PART_EQUAL_WEIGHT_LABEL,
     PART_LEVEL_VARIATION_CAPTION,
     SCORE_HEADING,
-    SYMMETRIZED_IMAGE_CAPTION,
-    SYMMETRIZED_IMAGE_LIMITS,
-    SYMMETRIZED_IMAGE_NOTICE,
-    format_distance,
-    format_symmetry,
-    gate_color,
-    resolve_equal_weight_distance,
-    resolve_overall_distance,
-    resolve_part_distance_3d,
-    symmetry_percent,
+    SCORE_STEP_TITLES,
 )
-
-#: §8.6.5: 部位ごとの `d_3d,p`/`s_3d` から `AxisSplit`/`Symmetry3DResult` を直接
-#: 組み立てるテスト用 fixture。plane/depth の内訳はここでの表示テストには関係
-#: しないため distance と同じ値を入れる。
-_METRIC_VERSION_3D = "symmetry-3d/test"
-_LANDMARK_MAP_VERSION = "map/test"
-
-
-def _symmetry_3d_result(
-    *,
-    contour: float | None,
-    eyes: float | None,
-    nose: float | None,
-    mouth: float | None,
-    overall: float | None,
-) -> Symmetry3DResult | None:
-    """§8.6.5 の出力一式を、値だけから組み立てるテスト fixture。
-
-    `overall=None` は「重ね合わせ自体が成立しない」（§8.5.1 の全欠測）を表す。
-    """
-    if overall is None:
-        return None
-
-    def _split(value: float | None) -> AxisSplit | None:
-        return None if value is None else AxisSplit(distance=value, plane=value, depth=0.0)
-
-    return Symmetry3DResult(
-        splits={
-            "contour": _split(contour),
-            "eyes": _split(eyes),
-            "nose": _split(nose),
-            "mouth": _split(mouth),
-        },
-        overall=_split(overall),
-        metric_version=_METRIC_VERSION_3D,
-        landmark_map_version=_LANDMARK_MAP_VERSION,
-    )
-
-
-def _outcome_for_display(
-    *,
-    symmetry_3d: Symmetry3DResult | None,
-    smooth_3d: float | None,
-    symmetry_2d_overall: float | None = 0.5,
-    part_smooth_3d: dict[str, float | None] | None = None,
-) -> AnalysisOutcome:
-    """§8.6.3 の表示テスト用 `AnalysisOutcome`。
-
-    2D の値（既定 0.5）は 3D の値（テストでは概ね 0.0〜0.1）から大きく離す。
-    表示ロジックが誤って 2D を読んでいれば、この差で assertion が落ちる
-    （fixture 設計上の罠、いちばん重要な部分）。``part_smooth_3d`` は §8.7 改訂
-    （H1）の部位別平滑値で、既定 `None`（呼び出し側の多くは生値へのフォール
-    バックだけを確かめるため、指定しなくても動く）。
-    """
-    symmetry_2d = None
-    if symmetry_2d_overall is not None:
-        symmetry_2d = SymmetryResult(
-            distances={
-                "contour": symmetry_2d_overall,
-                "eyes": symmetry_2d_overall,
-                "nose": symmetry_2d_overall,
-                "mouth": symmetry_2d_overall,
-            },
-            overall=symmetry_2d_overall,
-            metric_version="symmetry-2d/test",
-            landmark_map_version=_LANDMARK_MAP_VERSION,
-        )
-    return AnalysisOutcome(
-        frame_id=1,
-        state=AnalysisState(status=Status.OK),
-        symmetry=symmetry_2d,
-        overall_distance_smooth=symmetry_2d_overall,
-        pose=None,
-        face_area_ratio=None,
-        metric_version="symmetry-2d/test",
-        landmark_map_version=_LANDMARK_MAP_VERSION,
-        symmetry_3d=symmetry_3d,
-        overall_distance_3d_smooth=smooth_3d,
-        part_distances_3d_smooth=part_smooth_3d,
-    )
+from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result
 
 
 def _run(body: str) -> AppTest:
@@ -118,6 +35,21 @@ def _run(body: str) -> AppTest:
     )
     at.run()
     return at
+
+
+def _render_details(*, body: str) -> AppTest:
+    """`render_score_details` を 1 回描画した `AppTest` を返す。"""
+    at = AppTest.from_string(
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n" + body
+    )
+    at.run()
+    assert not at.exception
+    return at
+
+
+def _code_text(at: AppTest) -> str:
+    return " ".join(element.value for element in at.code)
 
 
 @pytest.mark.parametrize(
@@ -174,40 +106,7 @@ def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None
     assert REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW] in rendered
 
 
-# --- §8.6.3 対称度パーセントの表示 ------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("distance", "expected"),
-    [
-        (0.0, "100.00%"),
-        (0.0215, "97.85%"),
-        (0.5, "50.00%"),
-        (1.0, "0.00%"),
-    ],
-)
-def test_a_distance_is_shown_as_its_complement(distance: float, expected: str) -> None:
-    """§8.6.3: `100% - ずれ%`, with no coefficient anywhere in the transform."""
-    assert format_symmetry(distance) == expected
-
-
-def test_the_symmetry_and_deviation_readings_always_sum_to_one_hundred() -> None:
-    """AC-DISPLAY-02: 2 つの向きは同じ測定値である。"""
-    for distance in (0.0, 0.004, 0.0215, 0.31, 0.999):
-        symmetry = float(format_symmetry(distance).rstrip("%"))
-        deviation = float(format_distance(distance).rstrip("%"))
-        assert symmetry + deviation == pytest.approx(100.0, abs=0.02)
-
-
-def test_a_deviation_beyond_the_interocular_distance_floors_at_zero() -> None:
-    """§8.6.3 がクランプするのは *表示* だけで、`d` 自体は上限を持たない。"""
-    assert format_symmetry(4.0) == "0.00%"
-    assert format_distance(4.0) == "400.00%"
-
-
-def test_a_missing_distance_has_no_symmetry_reading() -> None:
-    """NFR-013: 欠測が「完全に対称な 100%」と読めてはならない。"""
-    assert format_symmetry(None) == "—"
+# --- §5.3 の文言 --------------------------------------------------------------
 
 
 def test_the_detail_panel_states_the_deviation_beside_the_symmetry() -> None:
@@ -216,20 +115,18 @@ def test_the_detail_panel_states_the_deviation_beside_the_symmetry() -> None:
     見出し結果の削除（2026-08-12）でこの併記の受け皿は詳細パネルだけになった。
     罠: 併記ごと消した実装は、対称度が一方向からしか読めなくなってここで落ちる。
     """
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.0215\n"
-        "    ),\n"
-        "    smooth_3d=0.0215,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.0215\n"
+            "    ),\n"
+            "    smooth_3d=0.0215,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     captions = " ".join(element.value for element in at.caption)
     assert "2.15%" in captions
     assert "対称度との和は 100%" in captions
@@ -242,20 +139,18 @@ def test_the_detail_panel_carries_the_score_help_that_the_headline_used_to_hold(
     節がこの説明の唯一の受け皿になる。罠: 見出しと一緒に説明ごと消した実装は、
     引き伸ばした点数だけが何の断りもなく残ってここで落ちる。
     """
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     assert PART_EQUAL_WEIGHT_HELP in [element.value for element in at.caption]
 
 
@@ -297,334 +192,163 @@ def test_the_part_equal_weight_help_explains_the_term_is_not_a_calibrated_score(
         assert forbidden not in PART_EQUAL_WEIGHT_HELP
 
 
-# --- §8.6.3/§8.6.5: 表示・エクスポートを 3D 指標へ切り替える -----------------
-
-
-def test_the_resolved_overall_distance_prefers_the_three_dimensional_smoothed_value() -> None:
-    """§8.6.3/§8.7: 主表示は 3D の平滑値であり、2D の値ではない（罠 (a)）。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
-        ),
-        smooth_3d=0.021,
-        symmetry_2d_overall=0.5,
-    )
-
-    resolved = resolve_overall_distance(outcome)
-
-    assert resolved == pytest.approx(0.021)
-    assert resolved != pytest.approx(0.5)
-
-
-def test_the_resolved_overall_distance_falls_back_to_the_raw_three_dimensional_value() -> None:
-    """EMA が未確立（生値のみ）でも欠測にせず、3D の生値を使う。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
-        ),
-        smooth_3d=None,
-    )
-
-    assert resolve_overall_distance(outcome) == pytest.approx(0.018)
-
-
-def test_the_resolved_overall_distance_is_missing_without_a_three_dimensional_result() -> None:
-    """NFR-013: 3D 一式が欠測なら `—`（`None`）であり、0 や 2D の値で埋めない。"""
-    outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None, symmetry_2d_overall=0.5)
-
-    assert resolve_overall_distance(outcome) is None
-
-
-def test_the_resolved_equal_weight_distance_always_reads_the_raw_value() -> None:
-    """§8.6.5/§8.7: `s_3d` は EMA の対象に含めないため、`resolve_equal_weight_distance`
-    は常に生値を読む（`resolve_overall_distance` と異なり、平滑値へは決して
-    フォールバックしない——そもそも平滑値を持たない）。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
-        ),
-        smooth_3d=0.021,
-    )
-
-    resolved = resolve_equal_weight_distance(outcome)
-
-    assert resolved is not None
-    assert resolved != pytest.approx(resolve_overall_distance(outcome))
-
-
-def test_the_resolved_equal_weight_distance_is_missing_without_a_three_dimensional_result() -> None:
-    """NFR-013: 3D 一式が欠測なら `—`（`None`）であり、0 で埋めない。"""
-    outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)
-
-    assert resolve_equal_weight_distance(outcome) is None
-
-
-# --- §8.7 改訂（H1）: 部位別 (`d_3d,p`) の平滑値表示 -------------------------
-
-
-def test_symmetry_percent_agrees_with_the_formatted_string() -> None:
-    """`symmetry_percent` は `format_symmetry` と同じ変換を数値で返す
-    （HUD の折れ線グラフがテキストと別の表示規則へ分岐しないための共有経路）。"""
-    for distance in (0.0, 0.0215, 0.5, 1.0, 4.0):
-        percent = symmetry_percent(distance)
-        assert percent is not None
-        assert f"{percent:.2f}%" == format_symmetry(distance)
-
-
-def test_symmetry_percent_of_a_missing_value_is_missing() -> None:
-    assert symmetry_percent(None) is None
-
-
-def test_resolve_part_distance_prefers_the_smoothed_value_over_the_raw_one() -> None:
-    """§8.7 改訂: 部位別も全体値と同じく「平滑値を優先し、無ければ生値」の
-    解決を通す。「常に生値を読む実装」ではこの assertion が落ちる（罠）。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.05, eyes=0.05, nose=0.05, mouth=0.05, overall=0.05
-        ),
-        smooth_3d=0.05,
-        part_smooth_3d={"contour": 0.02, "eyes": 0.02, "nose": 0.02, "mouth": 0.02},
-    )
-
-    resolved = resolve_part_distance_3d(outcome, "contour")
-
-    assert resolved == pytest.approx(0.02)
-    assert resolved != pytest.approx(0.05)
-
-
-def test_resolve_part_distance_falls_back_to_raw_when_the_smoothed_container_is_missing() -> None:
-    """静止画（§8.7 改訂、`part_distances_3d_smooth is None`）は生値へ落ちる。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
-        ),
-        smooth_3d=None,
-        part_smooth_3d=None,
-    )
-
-    assert resolve_part_distance_3d(outcome, "nose") == pytest.approx(0.03)
-
-
-def test_resolve_part_distance_falls_back_per_part_when_only_that_key_is_missing() -> None:
-    """部位が個別に欠測(不変条件 11)しても、他の部位は平滑値を読み続ける。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
-        ),
-        smooth_3d=0.018,
-        part_smooth_3d={"contour": None, "eyes": 0.09, "nose": 0.09, "mouth": 0.09},
-    )
-
-    assert resolve_part_distance_3d(outcome, "contour") == pytest.approx(0.01)  # 生値へ回帰
-    assert resolve_part_distance_3d(outcome, "eyes") == pytest.approx(0.09)  # 平滑値のまま
-
-
-def test_resolve_part_distance_is_missing_without_a_three_dimensional_result() -> None:
-    """NFR-013: 3D 一式が欠測なら `—`（`None`）であり、0 で埋めない。"""
-    outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)
-
-    assert resolve_part_distance_3d(outcome, "mouth") is None
+# --- §8.6.3 部位別の内訳 ------------------------------------------------------
 
 
 def test_the_part_breakdown_reads_from_the_three_dimensional_result() -> None:
-    """§8.6.3: 部位別 4 部位は `d_3d,p` から作られる（2D の値ではない）。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        "    symmetry_2d_overall=0.5,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
+    """§8.6.3: 部位別 4 つは `d_3d,p` から作る。2D の値（0.5）ではない。"""
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     values = {metric.label: metric.value for metric in at.metric}
     assert values["輪郭"] == format_symmetry(0.01)
     assert values["目"] == format_symmetry(0.02)
     assert values["鼻"] == format_symmetry(0.03)
     assert values["口"] == format_symmetry(0.015)
-    for part_value in (values["輪郭"], values["目"], values["鼻"], values["口"]):
-        assert part_value != format_symmetry(0.5)
 
 
 def test_the_part_breakdown_shows_the_smoothed_value_as_primary_and_notes_the_raw_one() -> None:
-    """§8.7 改訂（H1）: 部位別の平滑値を持つときは、詳細タブも全体値と同じ
-    「平滑値を主表示し生値を併記する」構成にする（表示の一貫性、片方が生値・
-    片方が平滑値という 2 つの表示規則を作らない）。生値をそのまま出す実装では
-    ``values["輪郭"]`` の assertion が落ちる（罠）。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        "    part_smooth_3d={\n"
-        "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
-        "    },\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=True)\n"
-    )
-    at.run()
+    """§8.7 改訂（H1）: 主表示は平滑値、詳細タブは生値を併記する。
 
-    assert not at.exception
+    罠: 部位別だけ生値を主表示にする実装は、全体値と 2 つの表示規則を作る。
+    """
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.011, eyes=0.022, nose=0.033, mouth=0.024, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            "    part_smooth_3d={\n"
+            "        'contour': 0.014, 'eyes': 0.016, 'nose': 0.019, 'mouth': 0.015,\n"
+            "    },\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=True)\n"
+        )
+    )
+
     values = {metric.label: metric.value for metric in at.metric}
-    # 主表示は平滑値であり、生値(0.01 等)そのものではない。
-    assert values["輪郭"] == format_symmetry(0.004)
-    assert values["目"] == format_symmetry(0.006)
-    assert values["鼻"] == format_symmetry(0.009)
-    assert values["口"] == format_symmetry(0.005)
-    # 生値は併記される(全体値の「平滑化前の生値」と同じ構成)。
+    assert values["輪郭"] == format_symmetry(0.014)
     captions = " ".join(element.value for element in at.caption)
-    for raw in (format_symmetry(0.01), format_symmetry(0.02), format_symmetry(0.03)):
-        assert raw in captions
+    assert f"生値 {format_symmetry(0.011)}" in captions
 
 
 def test_a_single_missing_part_only_shows_that_parts_detail_reading_as_a_dash() -> None:
-    """§8.6.5: 部位が 1 つ欠測しても、詳細タブの他の部位は出続ける
-    （AC-SCORE-10 と同じ非対称な欠測条件）。「全体のスコア」の欠測は見出し側の
-    テストで確認する——詳細タブにはもう描画しないため、ここには現れない。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=None, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
+    """不変条件 11: 1 部位の欠測が他の 3 部位を巻き添えにしない。"""
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=None, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     values = {metric.label: metric.value for metric in at.metric}
     assert values["鼻"] == "—"
     assert values["輪郭"] == format_symmetry(0.01)
-    assert values["目"] == format_symmetry(0.02)
-    assert values["口"] == format_symmetry(0.015)
-    assert PART_EQUAL_WEIGHT_LABEL not in values
 
 
 def test_a_missing_three_dimensional_result_shows_every_part_reading_as_a_dash() -> None:
-    """不変条件 11: §8.5.1 の重ね合わせが成立しないとき、詳細タブの部位別は
-    すべて `—`（0 や前値ではない）。見出しの全体の対称度・全体のスコアは
-    別テストで確認する。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     values = {metric.label: metric.value for metric in at.metric}
-    for label in ("輪郭", "目", "鼻", "口"):
-        assert values[label] == "—"
-    assert PART_EQUAL_WEIGHT_LABEL not in values
+    assert [values[label] for label in ("輪郭", "目", "鼻", "口")] == ["—"] * 4
 
 
 def test_the_detail_panel_no_longer_duplicates_the_headline_score() -> None:
-    """全体のスコアは見出しへ表示するため、詳細タブでは重複して描画しない。
-    部位別 4 つと `PART_LEVEL_VARIATION_CAPTION`（揺れ幅の注記）は詳細タブに
-    残る。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
-    )
-    at.run()
+    """項目 23: 「全体のスコア」相当の表示は吹き出しと HUD の側にしかない。
 
-    assert not at.exception
+    罠: 詳細タブへメトリクスとして再掲する実装は、同じ測定値を 2 か所へ出す。
+    """
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
+    )
+
     labels = [metric.label for metric in at.metric]
     assert PART_EQUAL_WEIGHT_LABEL not in labels
-    for expected in ("輪郭", "目", "鼻", "口"):
-        assert expected in labels
-    captions = " ".join(element.value for element in at.caption)
-    assert PART_LEVEL_VARIATION_CAPTION in captions
 
 
 def test_the_part_level_variation_note_applies_equally_to_all_four_parts() -> None:
-    """§5.3: 撮影のたびに動く幅より小さい変化は読み取れないという注記を、特定の
-    部位（鼻など）だけを名指しして述べない。"""
-    for singled_out in ("鼻だけ", "鼻のみ", "鼻は使えません", "鼻は信頼できません"):
-        assert singled_out not in PART_LEVEL_VARIATION_CAPTION
-    assert "撮影" in PART_LEVEL_VARIATION_CAPTION
-
-
-# --- 項目26（H3）: Camera の詳細タブから重複数値を除く（show_parts） --------
+    """§5.3/OD-09: 特定の部位（鼻など）だけを名指しで「使えない」と述べない。"""
+    for part in ("鼻", "目", "口", "輪郭"):
+        assert part not in PART_LEVEL_VARIATION_CAPTION
+    assert "部位ごとに異なり" in PART_LEVEL_VARIATION_CAPTION
 
 
 def test_show_parts_false_hides_the_part_metrics_but_keeps_the_required_notices() -> None:
-    """項目26（H3）: Camera は HUD が既に部位別 4 つを表示するため描かないが、
-    §5.3 が義務付ける揺れ幅の注記と H2 の計算過程は詳細タブが唯一の受け皿なので
-    描き続ける。罠: 「部位別セクションを丸ごと削る」実装だと、注記と計算過程も
-    一緒に消えてこの assertion が落ちる。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+    """項目 26（H3）: Camera は HUD が部位別を出すため、詳細タブでは省く。
+
+    罠: 部位別セクションを丸ごと削る実装だと、§5.3 が義務付ける注記と計算過程
+    まで一緒に消えてここで落ちる。
+    """
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     labels = [metric.label for metric in at.metric]
-    for hidden in ("輪郭", "目", "鼻", "口"):
-        assert hidden not in labels
-
-    headings = [element.value for element in at.subheader]
-    assert SCORE_HEADING in headings
-    infos = " ".join(element.value for element in at.info)
-    assert "試験中の指標" in infos
+    for part in ("輪郭", "目", "鼻", "口"):
+        assert part not in labels
 
     captions = " ".join(element.value for element in at.caption)
     assert PART_LEVEL_VARIATION_CAPTION in captions
-
-    walkthrough = " ".join(element.value for element in at.code)
-    for label in ("輪郭", "目", "鼻", "口"):
-        assert label in walkthrough
+    assert SCORE_HEADING in [element.value for element in at.subheader]
+    assert any("試験中の指標" in element.value for element in at.info)
+    # 計算過程は残り続ける（部位別 4 つの値も、その中には出る）。
+    walkthrough = _code_text(at)
+    for deviation in ("2.11", "1.44", "0.62", "1.83"):
+        assert deviation in walkthrough
 
 
 def test_show_parts_false_still_shows_pose_and_metric_version_captions() -> None:
-    """HUD が持たない値（姿勢・指標の版）は `show_parts=False` でも描き続ける。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     captions = " ".join(element.value for element in at.caption)
-    # `_outcome_for_display` は pose=None を渡すため、render_pose の None 分岐の
-    # 文言が出る。値の有無に関わらず render_pose 自体が呼ばれたことの確認になる。
-    assert "姿勢: 取得できません" in captions
-    assert f"metric {_METRIC_VERSION_3D}" in captions
+    assert "姿勢" in captions
+    assert "symmetry-3d/test" in captions
 
 
 def test_render_score_details_show_parts_defaults_to_true() -> None:
@@ -639,91 +363,210 @@ def test_render_score_details_show_parts_defaults_to_true() -> None:
     assert signature.parameters["show_parts"].default is True
 
 
-# --- §8.6.3(H2): 「全体のスコア」の計算過程の開示 ----------------------------
+# --- §8.6.3(H4): 「全体のスコア」の計算過程を 3 ステップで開示する -------------
 
 
-def test_the_calculation_walkthrough_shows_the_four_parts_and_the_final_result() -> None:
-    """H2: 計算過程に、部位別 4 つの値・RMS の途中経過・最終値が出る。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
-    )
-    at.run()
+#: 3 ステップの検証で使い回す代表値。`s_3d` = 1.60%、点 = 85.0 点になる。
+#: どの値も §8.6.7 のアンカー表記（1.00 / 5.00）と衝突しない。
+_STEP_SAMPLE = (
+    "outcome = _outcome_for_display(\n"
+    "    symmetry_3d=_symmetry_3d_result(\n"
+    "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+    "    ),\n"
+    "    smooth_3d=0.018,\n"
+    ")\n"
+    "render_score_details(outcome, show_smoothed=False)\n"
+)
 
-    assert not at.exception
-    walkthrough = " ".join(element.value for element in at.code)
+
+def test_the_walkthrough_presents_three_numbered_steps_in_order() -> None:
+    """H4: 式を 1 つの塊で見せず、手順として順番に並べる。
+
+    罠: 見出しだけ足して中身が 1 ブロックのままの実装は、順序どおりに 3 つの
+    見出しが並ぶというこの assertion では通ってしまうが、続く 3 件
+    （各ステップの中身）が別々の `st.code` を要求するため落ちる。
+    """
+    at = _render_details(body=_STEP_SAMPLE)
+
+    rendered = [element.value for element in at.markdown]
+    positions = [rendered.index(f"**{title}**") for title in SCORE_STEP_TITLES]
+    assert positions == sorted(positions)
+
+
+def test_step_one_lists_each_part_with_its_deviation_and_square() -> None:
+    """ステップ 1: 4 部位のずれと、次で使う二乗を 1 行ずつ並べる。"""
+    at = _render_details(body=_STEP_SAMPLE)
+
+    blocks = [element.value for element in at.code]
+    step_one = next(block for block in blocks if "ずれ²" in block and "輪郭" in block)
     for label in ("輪郭", "目", "鼻", "口"):
-        assert label in walkthrough
-    for deviation in ("2.11", "1.44", "0.62", "1.83"):
-        assert deviation in walkthrough
-    assert "1.60" in walkthrough  # sqrt(mean(2.11²+1.44²+0.62²+1.83²)/4)
-    assert "85.0" in walkthrough  # §8.6.7: 100 × (5.00 - 1.60) ÷ (5.00 - 1.00)
+        assert label in step_one
+    for deviation in ("2.11%", "1.44%", "0.62%", "1.83%"):
+        assert deviation in step_one
+    # 二乗（パーセントポイントの二乗）。2.11² = 4.4521 → 4.45
+    assert "4.45" in step_one
 
 
-def test_the_calculation_walkthrough_matches_the_part_level_metrics_above_it() -> None:
-    """H2: 計算過程の部位別の値は、上の部位別メトリクス（主表示、H1 の平滑値）と
+def _cells(text: str) -> int:
+    """等幅フォントで占める桁数。**production の実装を借りない。**
+
+    `ui.scores._display_width` を使うと、その関数が壊れたときに測る側も一緒に
+    壊れ、桁ずれを検出できないテストになる（実際にそうなっていた）。ここでは
+    独立に数える。
+    """
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
+def test_step_one_aligns_its_columns_for_a_monospace_font() -> None:
+    """H4: 表として縦に目で追えなければ、ステップ 1 は表の意味を持たない。
+
+    罠: `str.ljust` や `f"{x:>8}"` は **文字数** で詰めるため、「輪郭」（2 文字
+    = 4 桁）と「目」（1 文字 = 2 桁）で桁がずれる。全角を 2 桁として数える実装
+    でなければここで落ちる。
+    """
+    at = _render_details(body=_STEP_SAMPLE)
+
+    blocks = [element.value for element in at.code]
+    step_one = next(block for block in blocks if "ずれ²" in block and "輪郭" in block)
+    rows = step_one.splitlines()
+
+    assert len(rows) == 5  # 見出し + 4 部位
+    widths = {_cells(row) for row in rows}
+    assert len(widths) == 1, f"桁が揃っていない: {[(_cells(row), row) for row in rows]}"
+
+
+def test_step_three_aligns_its_continuation_lines_under_the_first_equals() -> None:
+    """H4: 続く 2 行の `=` が 1 行目の `=` の真下に来る。
+
+    罠: ラベル「全体のスコア」は 6 文字 = 12 桁なので、`len()` で詰めた実装は
+    `=` が 6 桁ぶん左へずれ、式が階段状に崩れる。
+    """
+    at = _render_details(body=_STEP_SAMPLE)
+
+    blocks = [element.value for element in at.code]
+    step_three = next(block for block in blocks if PART_EQUAL_WEIGHT_LABEL in block)
+    columns = {_cells(row.split("=")[0]) for row in step_three.splitlines()}
+
+    assert len(columns) == 1, f"`=` の位置が揃っていない: {step_three}"
+
+
+def test_step_two_shows_the_sum_the_mean_and_the_square_root() -> None:
+    """ステップ 2: 途中経過を出す。**読者が電卓で追える形にする。**
+
+    罠: 最終値だけを出して途中を飛ばす実装（旧 H2 の 1 行式）はここで落ちる。
+    """
+    at = _render_details(body=_STEP_SAMPLE)
+
+    blocks = [element.value for element in at.code]
+    step_two = next(block for block in blocks if "ずれ² の合計" in block)
+    assert "4 部位で平均" in step_two
+    assert "平方根をとる" in step_two
+    assert "1.60%" in step_two  # sqrt(mean(2.11²+1.44²+0.62²+1.83²))
+
+
+def test_step_three_names_both_anchors_and_converts_into_points() -> None:
+    """§8.6.7: アンカー 2 点を明示したうえで点へ換算する。
+
+    罠: `100 - ずれ` のままの実装は `98.40` を出して落ちる。
+    """
+    at = _render_details(body=_STEP_SAMPLE)
+
+    blocks = [element.value for element in at.code]
+    step_three = next(block for block in blocks if PART_EQUAL_WEIGHT_LABEL in block)
+    for anchor in ("1.00", "5.00"):
+        assert anchor in step_three
+    assert "85.0 点" in step_three
+    assert "98.40" not in _code_text(at)
+
+
+def test_the_walkthrough_states_the_slope_from_the_frozen_anchors() -> None:
+    """§8.6.7: ずれが 1 ポイント動くと点は 25 点動く。
+
+    罠: UI 側へ `25` を直書きした実装は、アンカーを差し替えた版で嘘になる。
+    ここでは `domain.score_scale` の値から組み立てられていることを固定する。
+    """
+    from face_symmetry_lab.domain.score_scale import POINTS_PER_DEVIATION_PERCENT
+    from face_symmetry_lab.ui.scores import SCORE_CALCULATION_SLOPE_NOTE
+
+    assert f"{POINTS_PER_DEVIATION_PERCENT:.0f}点動きます" in SCORE_CALCULATION_SLOPE_NOTE
+
+    at = _render_details(body=_STEP_SAMPLE)
+    assert SCORE_CALCULATION_SLOPE_NOTE in [element.value for element in at.caption]
+
+
+def test_step_two_explains_why_the_mean_is_taken_over_squares() -> None:
+    """H4: 「二乗して平方根」が儀式に見えないよう、理由を平叙文で述べる。
+
+    ここが無いと初学者は最初のステップで脱落する。
+    """
+    from face_symmetry_lab.ui.scores import SCORE_CALCULATION_COMBINE_INTRO
+
+    assert "薄められて" in SCORE_CALCULATION_COMBINE_INTRO
+    assert "二乗平均平方根" in SCORE_CALCULATION_COMBINE_INTRO
+
+
+def test_step_one_gives_the_deviation_a_physical_size() -> None:
+    """H4: 「両眼間隔の 1%」だけでは大きさが掴めない。実寸の目安を添える。"""
+    from face_symmetry_lab.ui.scores import SCORE_CALCULATION_DEVIATION_INTRO
+
+    assert "0.6mm" in SCORE_CALCULATION_DEVIATION_INTRO
+
+
+def test_the_walkthrough_matches_the_part_level_metrics_above_it() -> None:
+    """H2/H4: 計算過程の部位別の値は、上の部位別メトリクス（主表示、H1 の平滑値）と
     文字列として一致する。罠 (b): 計算過程だけ生値（1.10/2.20/3.30/2.40）を使うと
     ここが落ちる。
 
     生値・平滑値のいずれも §8.6.7 のアンカー表記（`1.00` / `5.00`）と衝突しない
     値を選んでいる。衝突すると、生値が出ていないことをこの assertion で示せない。
     """
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.011, eyes=0.022, nose=0.033, mouth=0.024, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        "    part_smooth_3d={\n"
-        "        'contour': 0.014, 'eyes': 0.016, 'nose': 0.019, 'mouth': 0.015,\n"
-        "    },\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=True)\n"
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.011, eyes=0.022, nose=0.033, mouth=0.024, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            "    part_smooth_3d={\n"
+            "        'contour': 0.014, 'eyes': 0.016, 'nose': 0.019, 'mouth': 0.015,\n"
+            "    },\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=True)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
     metric_values = {metric.label: metric.value for metric in at.metric}
-    walkthrough = " ".join(element.value for element in at.code)
+    walkthrough = _code_text(at)
     for label, smoothed in (("輪郭", 0.014), ("目", 0.016), ("鼻", 0.019), ("口", 0.015)):
         assert metric_values[label] == format_symmetry(smoothed)
-        assert format_distance(smoothed).rstrip("%") in walkthrough
+        assert format_distance(smoothed) in walkthrough
     for raw_deviation in ("1.10", "2.20", "3.30", "2.40"):
         assert raw_deviation not in walkthrough
 
 
-def test_the_calculation_walkthrough_matches_resolve_part_distance_when_hidden() -> None:
+def test_the_walkthrough_matches_resolve_part_distance_when_the_metrics_are_hidden() -> None:
     """AC-DISPLAY-04: Camera（`show_parts=False`）では部位別メトリクスが描かれ
     ないため、上の表示とは比較できない。代わりに、計算過程が使う値が
     `resolve_part_distance_3d`（HUD が `format_symmetry` を通す前と同じ値）から
     直接一致することを確認する。罠: 計算過程だけ別の値（例えば生値）を使う実装
     はこの assertion が落ちる。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        "    part_smooth_3d={\n"
-        "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
-        "    },\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
-    )
-    at.run()
+    from face_symmetry_lab.ui.readings import resolve_part_distance_3d
 
-    assert not at.exception
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            "    part_smooth_3d={\n"
+            "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
+            "    },\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False, show_parts=False)\n"
+        )
+    )
+
     assert not at.metric  # HUD が既に部位別を表示しているため、ここには無い
 
     outcome = _outcome_for_display(
@@ -733,55 +576,110 @@ def test_the_calculation_walkthrough_matches_resolve_part_distance_when_hidden()
         smooth_3d=0.018,
         part_smooth_3d={"contour": 0.004, "eyes": 0.006, "nose": 0.009, "mouth": 0.005},
     )
-    walkthrough = " ".join(element.value for element in at.code)
+    walkthrough = _code_text(at)
     for name in ("contour", "eyes", "nose", "mouth"):
         value = resolve_part_distance_3d(outcome, name)
-        assert format_distance(value).rstrip("%") in walkthrough
+        assert format_distance(value) in walkthrough
 
 
-def test_the_calculation_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:
-    """H2/不変条件 11: `s_3d` が部位欠測で欠測のとき、計算過程は数値を代入しない
+def test_the_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:
+    """H4/不変条件 11: `s_3d` が部位欠測で欠測のとき、計算過程は数値を代入しない
     （罠: 欠測を 0 へ fallback すると `100.0 点` という偽の上限が出てしまう）。
 
     §8.6.7 のアンカー（`1.00%` / `5.00%`）は式の形の一部なので、値が無くても
     出続ける。輪郭の生値はそれと衝突しない `1.10%` にしてある。
     """
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.011, eyes=0.022, nose=None, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.011, eyes=0.022, nose=None, mouth=0.015, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
     )
-    at.run()
 
-    assert not at.exception
-    walkthrough = " ".join(element.value for element in at.code)
+    walkthrough = _code_text(at)
     assert "100.0 点" not in walkthrough
     assert "1.10" not in walkthrough  # 輪郭のずれを代入した行そのものが無い
+    assert "ずれ² の合計" not in walkthrough  # 途中経過も出ない
+    # 式の形とアンカーは残る（何を計算しているかは説明し続ける）。
+    assert "1.00" in walkthrough and "5.00" in walkthrough
     notices = " ".join(element.value for element in list(at.info) + list(at.caption))
     assert "当てはめられません" in notices
 
 
-def test_the_calculation_walkthrough_wording_avoids_value_judgements_and_thresholds() -> None:
-    """§5.3/§10.7/不変条件 8: 計算過程の説明文にも他の文言と同じ禁止語が適用され、
-    加えて母集団の分布を持たないため基準値も書かない。"""
+def test_the_walkthrough_keeps_the_caveats_after_the_steps_rather_than_inside_them() -> None:
+    """H4: 手順と、手順の読み方に対する留保は別のものである。
+
+    4 つの注記（重みの違い・目盛りを広げた理由・実測レンジ・help）は 3 つの
+    ステップがすべて終わったあとに置く。罠: ステップの間へ挟む実装は、手順を
+    追っている途中で読者を注意書きへ迷い込ませる。
+    """
     from face_symmetry_lab.ui.scores import (
-        SCORE_CALCULATION_DEVIATION_INTRO,
         SCORE_CALCULATION_HIGH_VALUE_NOTE,
         SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
         SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
     )
 
-    combined = (
-        SCORE_CALCULATION_DEVIATION_INTRO
-        + SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION
-        + SCORE_CALCULATION_HIGH_VALUE_NOTE
-        + SCORE_CALCULATION_MEASURED_RANGE_CAPTION
+    at = _render_details(body=_STEP_SAMPLE)
+
+    captions = [element.value for element in at.caption]
+    markdown = [element.value for element in at.markdown]
+    last_step_caption_index = captions.index(
+        next(caption for caption in captions if "1ポイント" in caption)
+    )
+    for note in (
+        PART_EQUAL_WEIGHT_HELP,
+        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
+        SCORE_CALCULATION_HIGH_VALUE_NOTE,
+        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
+    ):
+        assert captions.index(note) > last_step_caption_index
+    assert f"**{SCORE_STEP_TITLES[2]}**" in markdown
+
+
+def test_the_walkthrough_uses_no_progress_bar_or_gauge() -> None:
+    """§5.2: 「達成度」として演出しない。目盛りの端点は数値と文章で示す。
+
+    罠: 点数の位置をバーで見せる実装は、§8.6.7 のアンカーが母集団の分位で
+    あるかのように読ませる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import scores
+
+    source = inspect.getsource(scores)
+    for widget in ("st.progress", "st.slider", "progress_bar"):
+        assert widget not in source
+
+
+def test_the_walkthrough_wording_avoids_value_judgements_and_thresholds() -> None:
+    """§5.3/§10.7/不変条件 8: 計算過程の説明文にも他の文言と同じ禁止語が適用され、
+    加えて母集団の分布を持たないため基準値も書かない。"""
+    from face_symmetry_lab.ui.scores import (
+        SCORE_CALCULATION_COMBINE_INTRO,
+        SCORE_CALCULATION_DEVIATION_INTRO,
+        SCORE_CALCULATION_HIGH_VALUE_NOTE,
+        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
+        SCORE_CALCULATION_SCALE_INTRO,
+        SCORE_CALCULATION_SLOPE_NOTE,
+        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
+    )
+
+    combined = "".join(
+        (
+            *SCORE_STEP_TITLES,
+            SCORE_CALCULATION_DEVIATION_INTRO,
+            SCORE_CALCULATION_COMBINE_INTRO,
+            SCORE_CALCULATION_SCALE_INTRO,
+            SCORE_CALCULATION_SLOPE_NOTE,
+            SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
+            SCORE_CALCULATION_HIGH_VALUE_NOTE,
+            SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
+        )
     )
     for forbidden in (
         "良い",
@@ -794,176 +692,18 @@ def test_the_calculation_walkthrough_wording_avoids_value_judgements_and_thresho
         "低得点",
         "満点",
         "合格",
+        "理想",
     ):
         assert forbidden not in combined
     for threshold_phrase in ("以上なら対称", "%以上で対称", "以上あれば対称"):
         assert threshold_phrase not in combined
 
 
-def test_the_calculation_walkthrough_notes_the_single_subject_caveat() -> None:
+def test_the_walkthrough_notes_the_single_subject_caveat() -> None:
     """OD-09: 個人差は未検証であるため「被写体 1 名」の但し書きを必ず書く。"""
     from face_symmetry_lab.ui.scores import SCORE_CALCULATION_MEASURED_RANGE_CAPTION
 
     assert "被写体 1 名" in SCORE_CALCULATION_MEASURED_RANGE_CAPTION
-
-
-# --- FR-035 対称化画像の枠付け ----------------------------------------------
-
-
-def _warp_view(*, warped, reason=None):
-    """描画側が読む項目だけを持つ `SymmetrizationView` のスタブ。"""
-    from dataclasses import dataclass
-    from typing import Any
-
-    @dataclass
-    class _View:
-        warped: Any
-        warp_unavailable_reason: Any
-
-    return _View(warped=warped, warp_unavailable_reason=reason)
-
-
-def test_the_warped_image_is_not_rendered_unless_it_was_requested() -> None:
-    """§8.6.4 は任意指定である。要求されていない変形については何も述べない。"""
-    at = AppTest.from_string(
-        "import numpy as np, streamlit as st\n"
-        "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
-        "from tests.ui.test_scores import _warp_view\n"
-        "render_symmetrized_image(_warp_view(warped=None), requested=False)\n"
-    )
-    at.run()
-
-    assert not at.exception
-    assert not at.info
-    assert not at.image
-
-
-def test_a_refused_warp_explains_itself_instead_of_rendering_nothing() -> None:
-    """AC-SYMM-02: 理由を画面に出したうえで fail-soft する。"""
-    at = AppTest.from_string(
-        "import streamlit as st\n"
-        "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
-        "from tests.ui.test_scores import _warp_view\n"
-        "render_symmetrized_image(\n"
-        "    _warp_view(warped=None, reason='変形量が大きすぎるため画像を生成しません。'),\n"
-        "    requested=True,\n"
-        ")\n"
-    )
-    at.run()
-
-    assert not at.exception
-    assert any("変形量" in element.value for element in at.info)
-
-
-def test_the_warped_image_is_labelled_as_a_manipulated_image() -> None:
-    """§5.3/§10.7: 対称化した写真が、無加工の写真として通ってはならない。"""
-    at = AppTest.from_string(
-        "import numpy as np\n"
-        "from face_symmetry_lab.ui.scores import render_symmetrized_image\n"
-        "from tests.ui.test_scores import _warp_view\n"
-        "render_symmetrized_image(\n"
-        "    _warp_view(warped=np.zeros((8, 8, 3), dtype=np.uint8)),\n"
-        "    requested=True,\n"
-        ")\n"
-    )
-    at.run()
-
-    assert not at.exception
-    assert at.image
-    rendered = " ".join(element.value for element in at.caption)
-    assert "加工画像" in rendered
-    assert "実際の顔写真ではなく" in rendered
-
-
-def test_the_warped_image_wording_avoids_a_value_judgement() -> None:
-    """§10.7: 規範でも、補正でも、before/after でもない。
-
-    関数のソースではなく利用者に見える文字列に対して検証する。禁止する枠付けを
-    禁じるために名指しする docstring が、このチェックを落とさないようにする
-    ためである。
-    """
-    shown = SYMMETRIZED_IMAGE_CAPTION + SYMMETRIZED_IMAGE_NOTICE + SYMMETRIZED_IMAGE_LIMITS
-
-    for forbidden in ("理想", "正解", "補正後", "美化", "before", "after"):
-        assert forbidden not in shown
-    # そして、その画像が実際に何であるかを述べ続けなければならない。
-    assert "加工画像" in shown
-
-
-# --- §14.3e 品質ゲートの色 --------------------------------------------------
-
-
-def test_every_gate_status_has_a_colour() -> None:
-    """ゲートへ状態を追加したときに、KeyError へ落ちてはならない。"""
-    for status in Status:
-        assert gate_color(AnalysisState(status=status)) == GATE_COLORS[status]
-
-
-def test_gate_colours_are_valid_hex() -> None:
-    for colour in GATE_COLORS.values():
-        assert re.fullmatch(r"#[0-9A-Fa-f]{6}", colour), colour
-
-
-def test_a_missing_state_reads_as_the_neutral_colour() -> None:
-    """待機中の表示が「条件を満たしている」色を借りてはならない。"""
-    assert gate_color(None) == GATE_COLORS[Status.ERROR]
-
-
-def test_the_blocking_states_are_visually_distinct_from_ok() -> None:
-    """§5.4: 色は 1 つの伝達手段にすぎないが、それでも区別できなければならない。"""
-    assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.HOLD]
-    assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.NO_FACE]
-    assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.ERROR]
-
-
-# --- §8.6.7: 「全体のスコア」の表示スケール（AC-DISPLAY-05） ------------------
-
-
-def test_the_score_formatter_reports_points_and_never_a_percent_sign() -> None:
-    """§8.6.7: 単位は「点」であり %ではない。対称度 % と同じ数字として読ませない。
-
-    罠: `format_symmetry` を流用した実装（`98.28%`）はここで落ちる。
-    """
-    from face_symmetry_lab.ui.scores import format_score
-
-    assert format_score(0.0172) == "82.0 点"
-    assert "%" not in format_score(0.0172)
-    assert format_score(None) == "—"
-
-
-def test_a_missing_score_is_not_shown_as_zero_points() -> None:
-    """不変条件 11・§8.6.7: 0 点は「ずれ 5.0% 以上」という測定結果であり、欠測とは
-    別である。両者を同じ表示にしてはならない。"""
-    from face_symmetry_lab.ui.scores import format_score
-
-    assert format_score(None) == "—"
-    assert format_score(0.050) == "0.0 点"
-    assert format_score(0.080) == "0.0 点"
-
-
-def test_the_calculation_walkthrough_converts_the_deviation_into_points() -> None:
-    """§8.6.3(H2)/§8.6.7: 計算過程の最後の行は、アンカー 2 点を明示したうえで
-    点へ換算する。罠: `100 - ずれ` のままの実装は `98.40` を出して落ちる。"""
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
-    )
-    at.run()
-
-    assert not at.exception
-    walkthrough = " ".join(element.value for element in at.code)
-    assert "1.60" in walkthrough  # sqrt(mean(2.11²+1.44²+0.62²+1.83²)/4)
-    assert "85.0" in walkthrough  # 100 × (5.00 - 1.60) ÷ (5.00 - 1.00)
-    assert "98.40" not in walkthrough  # 旧 `100 - ずれ` の答え
-    for anchor in ("1.00", "5.00"):
-        assert anchor in walkthrough
 
 
 def test_the_score_help_states_the_anchors_and_denies_a_population_rank() -> None:
@@ -994,22 +734,10 @@ def test_the_score_scale_caption_warns_that_a_reshoot_moves_the_points() -> None
         assert forbidden not in SCORE_SCALE_CAPTION
 
 
-def test_the_score_scale_caption_is_rendered_in_the_detail_panel() -> None:
-    """§8.6.7: 注記は定数として存在するだけでなく、実際に画面へ出る。"""
+def test_the_score_scale_caption_is_rendered_outside_the_expander() -> None:
+    """§8.6.7: 注記は定数として存在するだけでなく、畳まれていない位置に出る。"""
     from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION
 
-    at = AppTest.from_string(
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
-        "from face_symmetry_lab.ui.scores import render_score_details\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.018,\n"
-        ")\n"
-        "render_score_details(outcome, show_smoothed=False)\n"
-    )
-    at.run()
+    at = _render_details(body=_STEP_SAMPLE)
 
-    assert not at.exception
     assert SCORE_SCALE_CAPTION in [element.value for element in at.caption]

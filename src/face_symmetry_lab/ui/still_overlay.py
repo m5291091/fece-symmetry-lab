@@ -37,7 +37,8 @@ from numpy.typing import NDArray
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.ui.hud import build_hud_payload
-from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL, PART_LABELS
+from face_symmetry_lab.ui.readings import PART_LABELS
+from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL
 
 #: 位置指定コンテキストを作るコンテナの key。`st.container(key=...)` は
 #: `.st-key-<key>` という class を吐くので、構造依存セレクタ（`nth-child` 等）

@@ -14,7 +14,11 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
-| 映像へ重ねる HUD の資産と組み立て | `src/face_symmetry_lab/ui/hud.py` |
+| 映像へ重ねる HUD の組み立てと配線 | `src/face_symmetry_lab/ui/hud.py` |
+| HUD がブラウザへ渡す CSS・実行時 JS | `src/face_symmetry_lab/ui/hud_assets.py` |
+| Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
+| 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
+| Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
@@ -34,6 +38,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Landmark map derivation | `scripts/derive_landmark_map.py` |
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
 | 3D object symmetry 指標（§8.5.1、並走） | `src/face_symmetry_lab/domain/symmetry_3d.py` |
+| 「全体のスコア」の表示スケール（§8.6.7） | `src/face_symmetry_lab/domain/score_scale.py` |
+| 「全体のスコア」の計算過程 DTO（§8.6.3 H4） | `src/face_symmetry_lab/domain/score_explanation.py` |
 | 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
 | 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
 | 対称化画像のピクセルワーピング | `src/face_symmetry_lab/adapters/imaging/piecewise_warp.py` |
@@ -75,6 +81,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Normalization / TLS midline / 3D 正規化 | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, FR-036, AC-SCORE-02, §8.5.1 |
 | Symmetry distances | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01, AC-SCORE-04 |
 | 3D object symmetry 距離（並走） | `domain/symmetry_3d.py` | `tests/domain/test_symmetry_3d.py` | FR-036, AC-SCORE-05〜09, §8.5.1, §8.6.5 |
+| 「全体のスコア」の表示スケール | `domain/score_scale.py` | `tests/domain/test_score_scale.py` | FR-013, §8.6.7, AC-DISPLAY-05 |
+| 「全体のスコア」の計算過程 DTO | `domain/score_explanation.py` | `tests/domain/test_score_explanation.py` | FR-013, §8.6.3, §8.6.5, §8.6.7, AC-DISPLAY-04 |
 | 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
 | 変形メッシュ・安全ガード | `domain/warp_mesh.py` | `tests/domain/test_warp_mesh.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
@@ -104,7 +112,10 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
-| 左右差の表示（距離の百分率整形を含む） | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3 |
+| 詳細結果の描画と §5.3 の文言 | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3, §8.6.3 |
+| 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
+| Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
+| Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
 | CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
@@ -113,10 +124,11 @@ Read this file once at the start of a task. After locating the relevant module, 
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
 | Camera composition（対称化キャプチャUIを含む） | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, FR-034, NFR-009 |
-| 映像へ重ねる HUD の資産 | `ui/hud.py` | `tests/ui/test_hud.py` | FR-013, FR-032, §5.2, §14.3e |
+| 映像へ重ねる HUD の組み立て | `ui/hud.py` | `tests/ui/test_hud.py` | FR-013, FR-032, §5.2, §14.3e |
+| HUD のブラウザ資産（CSS・実行時 JS） | `ui/hud_assets.py` | `tests/ui/test_hud_assets.py` | FR-013, FR-032, §5.2, §5.4, §14.3e |
 | 位置誘導メッセージ | `ui/guidance.py` | `tests/ui/test_guidance.py` | FR-031, AC-GUIDE-01 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
-| Streamlit flow | `ui/app.py` | future UI / E2E tests | AC-FLOW-01, AC-AGE-02 |
+| Analyze ページの骨格（同意・入力選択） | `ui/app.py` | `tests/ui/test_app.py` | FR-001, FR-004, AC-FLOW-01, AC-A11Y-01 |
 | About page | `ui/about_page.py` | `tests/ui/test_about_page.py` | §4.1, FR-014, §10.7 |
 
 ## Maintenance
@@ -128,7 +140,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `f6a00d828e057e8676574dbd511fa6925ff53a1a47f6c50913c4c35c02437969`_
+_File-list SHA-256: `d46387adad07548734fb598a5bbd1ec10a2db2f08e15726f82fcab93cce7855e`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -198,11 +210,11 @@ face-symmetry-lab/
     - `application/`
       - … (15 files)
     - `domain/`
-      - … (19 files)
+      - … (20 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (10 files)
+      - … (14 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -242,6 +254,7 @@ face-symmetry-lab/
     - `test_models.py`
     - `test_overlay.py`
     - `test_pose.py`
+    - `test_score_explanation.py`
     - `test_score_scale.py`
     - `test_skin_quality.py`
     - `test_smoothing.py`
@@ -265,14 +278,20 @@ face-symmetry-lab/
     - `test_display_cache.py`
     - `test_frame_scheduler.py`
   - `ui/`
+    - `__init__.py`
+    - `conftest.py`
     - `test_about_page.py`
     - `test_app.py`
     - `test_camera.py`
     - `test_guidance.py`
     - `test_hud.py`
+    - `test_hud_assets.py`
+    - `test_image_section.py`
     - `test_model_setup.py`
+    - `test_readings.py`
     - `test_scores.py`
     - `test_still_overlay.py`
+    - `test_symmetrization_panel.py`
   - `__init__.py`
   - `test_cli.py`
 - `.gitignore`
