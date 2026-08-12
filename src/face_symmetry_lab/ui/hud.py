@@ -30,6 +30,7 @@ from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.ui.scores import (
     GENDER_LABELS,
+    format_score,
     format_symmetry,
     gate_color,
     resolve_equal_weight_distance,
@@ -576,7 +577,9 @@ def build_hud_payload(
         "visible": visible,
         "symmetry": format_symmetry(overall),
         "label": "対称度（実験値）",
-        "score": format_symmetry(equal_weight),
+        # §8.6.7: 「全体のスコア」だけは点の目盛りである。`format_symmetry` を
+        # 使うと HUD だけが 98% 前後の別の目盛りを出し、見出しと食い違う。
+        "score": format_score(equal_weight),
         "parts": part_readings,
         "demo": demo,
         "gate": gate,

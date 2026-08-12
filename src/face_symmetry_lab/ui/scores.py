@@ -24,6 +24,11 @@ from face_symmetry_lab.domain.models import (
     GenderLabel,
     Status,
 )
+from face_symmetry_lab.domain.score_scale import (
+    DISTANCE_AT_FULL_SCORE,
+    DISTANCE_AT_ZERO_SCORE,
+    score_points,
+)
 from face_symmetry_lab.domain.symmetry_3d import equal_weight_distance_from_parts
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 
@@ -52,14 +57,30 @@ DISTANCE_UNIT_CAPTION = (
 #: で明示する。
 PART_EQUAL_WEIGHT_LABEL: Final[str] = "全体のスコア"
 
-#: §8.6.3/§8.6.5: 「全体のスコア」の help。全体の対称度（対応点を 1 票ずつ数える
-#: `d_3d`）とは重みだけが異なる並列の総合量であることと、採点ではないことの
-#: 両方を明示する。
+#: §8.6.3/§8.6.5/§8.6.7: 「全体のスコア」の help。全体の対称度（対応点を 1 票ずつ
+#: 数える `d_3d`）とは重みも目盛りも異なる並列の総合量であることと、採点でも順位
+#: でもないことを明示する。**アンカー 2 点を必ず含める。** これが画面に無いと、
+#: §8.6.3 が要求する可逆性（点から `s_3d` へ戻せること）が利用者側で成立しない。
 PART_EQUAL_WEIGHT_HELP: Final[str] = (
-    "部位を 1 票ずつ数えた対称度です。全体の対称度（対応点を 1 票ずつ）とは重みだけが"
-    "違い、鼻のようにペア数の少ない部位も、目のように多い部位と同じ重みで入ります。"
+    "部位を 1 票ずつ数えた対称度を、実測が集まる範囲へ合わせた目盛りで読み直した値です。"
+    "鼻のようにペア数の少ない部位も、目のように多い部位と同じ重みで入ります。"
+    "ずれが両眼間隔の 1.0% で 100 点、5.0% で 0 点になります。"
+    "全体の対称度（対応点を 1 票ずつ）とは重みも目盛りも違うため、数字の大小を直接比べられません。"
     "較正された感度係数や部位の重み付けを持たない値であり、採点ではありません。"
+    "母集団の分布を持たないため、順位や正常範囲を表しません。"
     "高い・低いは良し悪しを表しません。"
+)
+
+#: §8.6.7: 目盛りを引き伸ばしたことの帰結を開示する注記。**分解能は上がるが情報は
+#: 増えない。** 25 倍細かくすると、同じ 25 倍でばらつきも拡大する。実測
+#: （`docs/symmetry-metric-measurements.md` §14.4 のセッション間全幅 0.273pt =
+#: 6.8 点）を数字で示し、その幅より小さい点差を人物間の差として読ませない。
+SCORE_SCALE_CAPTION: Final[str] = (
+    "この目盛りは、実測が集まる範囲（ずれ 1.0〜5.0%）へ合わせて引き伸ばしてあります。"
+    "引き伸ばした分だけばらつきも拡大し、同じ人を同じ条件で撮り直しただけでも 6.8 点ほど動きます"
+    "（`docs/symmetry-metric-measurements.md` §14.4、被写体 1 名）。"
+    "それより小さい点差を、人と人の違いとして読まないでください。"
+    "点数は母集団内の順位ではありません。"
 )
 
 #: §5.3・§14.7（同 docs）: 部位別の値は同一条件で撮り直すだけでも動く幅がある。
@@ -84,11 +105,6 @@ SCORE_CALCULATION_DEVIATION_INTRO: Final[str] = (
     "あたります。"
 )
 
-#: 実数値を代入する前の、式そのものの形。`s_3d` が欠測のときはこれだけを示す。
-SCORE_CALCULATION_FORMULA_LINE: Final[str] = (
-    "全体のスコア = 100 - √( (輪郭のずれ² + 目のずれ² + 鼻のずれ² + 口のずれ²) ÷ 4 )"
-)
-
 #: §8.6.5・不変条件 11: 部位が 1 つでも欠測すると `s_3d` は欠測になる。そのとき
 #: 計算過程は数値を出さず、古い値や 0 でも埋めない。
 SCORE_CALCULATION_UNAVAILABLE_NOTICE: Final[str] = (
@@ -102,19 +118,23 @@ SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION: Final[str] = (
     "スコアが一致しない理由です。"
 )
 
+#: §8.6.7: なぜ目盛りを引き伸ばしたのかを、元の 1〜2% という事実から説明する。
+#: 「98%前後になる」という旧来の注記の役割を、引き伸ばし後の目盛りで置き換える。
 SCORE_CALCULATION_HIGH_VALUE_NOTE: Final[str] = (
-    "成人の顔の左右のずれは、両眼の間隔の1〜2%ほどです。この式ではそれが"
-    "そのまま「98%前後」という表示になります。高い数字が出やすい指標であり、"
-    "98%が「ほぼ完全」という意味ではありません。"
+    "成人の顔の左右のずれは、両眼の間隔の1〜2%ほどです。100からずれを引くだけの"
+    "目盛りでは、これが「98%前後」に集まって差が読めません。上の式はその1〜2%の"
+    "あたりを広げて読むための目盛りであり、点数そのものは母集団の中の位置を表しません。"
 )
 
 #: `docs/symmetry-metric-measurements.md` §12.0（文献の対称/非対称群差）・
-#: §12.1（撮り直しの表示値レンジ、take01/take02 3D、被写体 1 名）に基づく。
+#: §12.1（撮り直しの表示値レンジ、take01/take02 3D、被写体 1 名）・§14.4
+#: （3 セッションの中央値）を §8.6.7 の目盛りへ換算した値。
 SCORE_CALCULATION_MEASURED_RANGE_CAPTION: Final[str] = (
-    "同じ人を撮り直した実測（被写体 1 名）では、表示値は96〜99%の範囲に収まりました"
-    "（`docs/symmetry-metric-measurements.md` §12.1）。文献で「対称」とされた成人と"
-    "「非対称」とされた成人の差は2.11ポイントです（同§12.0）。そのため0.1ポイントの"
-    "違いも、この指標では小さくありません。"
+    "同じ人を撮り直した実測（被写体 1 名）では、セッションごとの中央値が81〜88点、"
+    "フレーム単位では46〜93点に散りました"
+    "（`docs/symmetry-metric-measurements.md` §12.1・§14.4）。文献で「対称」とされた"
+    "成人と「非対称」とされた成人の差2.11ポイントは、この目盛りでは52.8点にあたります"
+    "（同§12.0）。撮影条件だけで数点動くため、小さな点差を人物の違いとして読めません。"
 )
 
 
@@ -172,6 +192,31 @@ def format_symmetry(value: float | None) -> str:
     """
     percent = symmetry_percent(value)
     return "—" if percent is None else f"{percent:.2f}%"
+
+
+def format_score(value: float | None) -> str:
+    """§8.6.7: `s_3d` を「全体のスコア」の点として表示する。
+
+    **`%` を付けない。** 対称度（`format_symmetry`）と同じ目盛りに見えると、
+    82 点と 98% が同じ量の 2 つの読み方だと誤解される。両者は目盛りが違う。
+
+    小数 1 桁で止める。§14.4 のセッション間全幅が 6.8 点であるため、それより
+    細かい桁は撮り直しで消える。欠測は `—` であり、0 点ではない（0 点は
+    「ずれ 5.0% 以上」という測定結果である、不変条件 11）。
+    """
+    points = score_points(value)
+    return "—" if points is None else f"{points:.1f} 点"
+
+
+#: 実数値を代入する前の、式そのものの形。`s_3d` が欠測のときはこれだけを示す。
+#: アンカーは `domain.score_scale` の版付き定数から組み立てる（UI 側に写しを
+#: 作らない）。`format_distance` を使うのは、丸め規則を 3 つ目に増やさないため
+#: であり、そのためこの定数は共有フォーマッタより後ろに置く。
+SCORE_CALCULATION_FORMULA_LINE: Final[str] = (
+    "ずれ = √( (輪郭のずれ² + 目のずれ² + 鼻のずれ² + 口のずれ²) ÷ 4 )\n"
+    f"全体のスコア = 100 × ({format_distance(DISTANCE_AT_ZERO_SCORE)} - ずれ)"
+    f" ÷ ({format_distance(DISTANCE_AT_ZERO_SCORE)} - {format_distance(DISTANCE_AT_FULL_SCORE)})"
+)
 
 
 def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
@@ -376,8 +421,10 @@ def render_headline_metrics(
         ),
     )
     score_column.metric(
+        # §8.6.7: ここだけ目盛りが違う（点）。`format_symmetry` を使うと 98% 前後
+        # へ潰れ、全体の対称度と見分けが付かなくなる。
         PART_EQUAL_WEIGHT_LABEL,
-        format_symmetry(equal_weight),
+        format_score(equal_weight),
         help=PART_EQUAL_WEIGHT_HELP,
     )
     st.caption(f"ずれ {format_distance(overall)}（対称度との和は 100%）")
@@ -399,9 +446,12 @@ def _score_calculation_walkthrough(part_values: Mapping[str, float]) -> str | No
     ``part_values`` は呼び出し側が `resolve_part_distance_3d` で解決した値
     （部位別メトリクスの主表示と同じ、平滑値優先）をそのまま渡す。4 部位が
     揃わない場合は `None` を返す（呼び出し側はこれを「今は値が揃っていない」
-    として扱う）。数値は `format_distance` / `format_symmetry`
-    （`equal_weight_distance_from_parts` と同じ式）だけを通し、3 つ目の丸め
-    規則は作らない。
+    として扱う）。数値は `format_distance` / `format_score`
+    （`equal_weight_distance_from_parts` と `domain.score_scale` の式）だけを
+    通し、3 つ目の丸め規則は作らない。
+
+    最後の 1 行は §8.6.7 の点への換算である。**アンカー 2 点を数字として書く。**
+    これがあるので、利用者は点から `s_3d` へ戻せる（§8.6.3 の可逆性）。
     """
     combined = equal_weight_distance_from_parts(part_values)
     if combined is None:
@@ -414,11 +464,14 @@ def _score_calculation_walkthrough(part_values: Mapping[str, float]) -> str | No
         f"{PART_LABELS[name]} {format_distance(part_values[name])}" for name in PART_NAMES
     )
     squares = " + ".join(f"{_bare(part_values[name])}²" for name in PART_NAMES)
+    zero_anchor = _bare(DISTANCE_AT_ZERO_SCORE)
+    full_anchor = _bare(DISTANCE_AT_FULL_SCORE)
     return (
         f"{SCORE_CALCULATION_FORMULA_LINE}\n\n"
         f"  {deviation_line}\n"
         f"  √(({squares}) ÷ 4) = {format_distance(combined)}\n"
-        f"  100 - {_bare(combined)} = {format_symmetry(combined)}"
+        f"  100 × ({zero_anchor} - {_bare(combined)}) ÷ ({zero_anchor} - {full_anchor})"
+        f" = {format_score(combined)}"
     )
 
 
@@ -541,6 +594,10 @@ def render_score_details(
     # 吹き出しには注記を置く場所が無いため、この注記の唯一の受け皿が詳細タブに
     # なる（項目26、H3）。
     st.caption(PART_LEVEL_VARIATION_CAPTION)
+    # §8.6.7: 目盛りを引き伸ばした帰結（ばらつきも同じ倍率で拡大する）は、
+    # expander を開かなくても読める位置に置く。開かないと見えない場所へ置くと、
+    # 引き伸ばした数字だけが独り歩きする。
+    st.caption(SCORE_SCALE_CAPTION)
     _render_score_calculation_detail(outcome)
 
     render_pose(outcome)
@@ -574,7 +631,8 @@ def render_score_details(
         "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
         "部位別の値を平均しても全体の対称度にはなりません（全体の対称度は全対応ペアを"
         "まとめて 1 回だけ折りたたんで求めるためです）。「全体のスコア」は"
-        "部位別の値から明示的に組み立てた別の値で、全体の対称度とは重みだけが異なります。"
+        "部位別の値から明示的に組み立てた別の値で、全体の対称度とは重みも目盛りも"
+        "異なります（点と %）。"
     )
     st.caption(
         "同一人物・同一環境内の相対的な傾向を見るための値です。"

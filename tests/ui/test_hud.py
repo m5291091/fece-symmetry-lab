@@ -30,7 +30,12 @@ from face_symmetry_lab.ui.hud import (
     hud_bridge_script,
     hud_html,
 )
-from face_symmetry_lab.ui.scores import GENDER_LABELS, PART_LABELS, format_symmetry
+from face_symmetry_lab.ui.scores import (
+    GENDER_LABELS,
+    PART_LABELS,
+    format_score,
+    format_symmetry,
+)
 
 
 def _estimate(age: float = 34.0, female: float = 0.8):
@@ -124,9 +129,12 @@ def test_the_hud_carries_the_experimental_label() -> None:
 
 
 def test_the_hud_carries_the_headline_score_through_the_shared_formatter() -> None:
-    """§8.6.5: 「全体のスコア」（`s_3d`）も HUD へ、パネルと同じフォーマッタで届く。"""
-    assert _payload(equal_weight=0.031)["score"] == format_symmetry(0.031)
-    assert _payload(equal_weight=0.031)["score"] != format_symmetry(0.0215)
+    """§8.6.5/§8.6.7: 「全体のスコア」（`s_3d`）も HUD へ、パネルと同じフォーマッタ
+    で届く。**そのフォーマッタは点の `format_score` であり、%の `format_symmetry`
+    ではない**（罠: HUD だけ対称度%のままにすると見出しと 2 つの目盛りが並ぶ）。"""
+    assert _payload(equal_weight=0.031)["score"] == format_score(0.031)
+    assert _payload(equal_weight=0.031)["score"] != format_score(0.0215)
+    assert _payload(equal_weight=0.031)["score"] != format_symmetry(0.031)
 
 
 def test_the_hud_carries_all_four_parts_through_the_shared_formatter() -> None:

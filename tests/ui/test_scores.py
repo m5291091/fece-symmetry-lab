@@ -764,23 +764,27 @@ def test_the_calculation_walkthrough_shows_the_four_parts_and_the_final_result()
     for deviation in ("2.11", "1.44", "0.62", "1.83"):
         assert deviation in walkthrough
     assert "1.60" in walkthrough  # sqrt(mean(2.11²+1.44²+0.62²+1.83²)/4)
-    assert "98.40" in walkthrough  # 100 - 1.60
+    assert "85.0" in walkthrough  # §8.6.7: 100 × (5.00 - 1.60) ÷ (5.00 - 1.00)
 
 
 def test_the_calculation_walkthrough_matches_the_part_level_metrics_above_it() -> None:
     """H2: 計算過程の部位別の値は、上の部位別メトリクス（主表示、H1 の平滑値）と
-    文字列として一致する。罠 (b): 計算過程だけ生値（1.00/2.00/3.00/1.50）を使うと
-    ここが落ちる。"""
+    文字列として一致する。罠 (b): 計算過程だけ生値（1.10/2.20/3.30/2.40）を使うと
+    ここが落ちる。
+
+    生値・平滑値のいずれも §8.6.7 のアンカー表記（`1.00` / `5.00`）と衝突しない
+    値を選んでいる。衝突すると、生値が出ていないことをこの assertion で示せない。
+    """
     at = AppTest.from_string(
         "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
         "from face_symmetry_lab.ui.scores import render_score_details\n"
         "outcome = _outcome_for_display(\n"
         "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "        contour=0.011, eyes=0.022, nose=0.033, mouth=0.024, overall=0.018\n"
         "    ),\n"
         "    smooth_3d=0.018,\n"
         "    part_smooth_3d={\n"
-        "        'contour': 0.004, 'eyes': 0.006, 'nose': 0.009, 'mouth': 0.005,\n"
+        "        'contour': 0.014, 'eyes': 0.016, 'nose': 0.019, 'mouth': 0.015,\n"
         "    },\n"
         ")\n"
         "render_score_details(outcome, show_smoothed=True)\n"
@@ -790,10 +794,10 @@ def test_the_calculation_walkthrough_matches_the_part_level_metrics_above_it() -
     assert not at.exception
     metric_values = {metric.label: metric.value for metric in at.metric}
     walkthrough = " ".join(element.value for element in at.code)
-    for label, smoothed in (("輪郭", 0.004), ("目", 0.006), ("鼻", 0.009), ("口", 0.005)):
+    for label, smoothed in (("輪郭", 0.014), ("目", 0.016), ("鼻", 0.019), ("口", 0.015)):
         assert metric_values[label] == format_symmetry(smoothed)
         assert format_distance(smoothed).rstrip("%") in walkthrough
-    for raw_deviation in ("1.00", "2.00", "3.00", "1.50"):
+    for raw_deviation in ("1.10", "2.20", "3.30", "2.40"):
         assert raw_deviation not in walkthrough
 
 
@@ -837,13 +841,17 @@ def test_the_calculation_walkthrough_matches_resolve_part_distance_when_hidden()
 
 def test_the_calculation_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:
     """H2/不変条件 11: `s_3d` が部位欠測で欠測のとき、計算過程は数値を代入しない
-    （罠: 欠測を 0 へ fallback すると `100.00` という偽の満点が出てしまう）。"""
+    （罠: 欠測を 0 へ fallback すると `100.0 点` という偽の上限が出てしまう）。
+
+    §8.6.7 のアンカー（`1.00%` / `5.00%`）は式の形の一部なので、値が無くても
+    出続ける。輪郭の生値はそれと衝突しない `1.10%` にしてある。
+    """
     at = AppTest.from_string(
         "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
         "from face_symmetry_lab.ui.scores import render_score_details\n"
         "outcome = _outcome_for_display(\n"
         "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=None, mouth=0.015, overall=0.018\n"
+        "        contour=0.011, eyes=0.022, nose=None, mouth=0.015, overall=0.018\n"
         "    ),\n"
         "    smooth_3d=0.018,\n"
         ")\n"
@@ -853,8 +861,8 @@ def test_the_calculation_walkthrough_shows_no_numbers_when_a_part_is_missing() -
 
     assert not at.exception
     walkthrough = " ".join(element.value for element in at.code)
-    assert "100.00" not in walkthrough
-    assert "1.00" not in walkthrough  # 輪郭のずれを代入した行そのものが無い
+    assert "100.0 点" not in walkthrough
+    assert "1.10" not in walkthrough  # 輪郭のずれを代入した行そのものが無い
     notices = " ".join(element.value for element in list(at.info) + list(at.caption))
     assert "当てはめられません" in notices
 
@@ -1006,3 +1014,118 @@ def test_the_blocking_states_are_visually_distinct_from_ok() -> None:
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.HOLD]
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.NO_FACE]
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.ERROR]
+
+
+# --- §8.6.7: 「全体のスコア」の表示スケール（AC-DISPLAY-05） ------------------
+
+
+def test_the_score_formatter_reports_points_and_never_a_percent_sign() -> None:
+    """§8.6.7: 単位は「点」であり %ではない。対称度 % と同じ数字として読ませない。
+
+    罠: `format_symmetry` を流用した実装（`98.28%`）はここで落ちる。
+    """
+    from face_symmetry_lab.ui.scores import format_score
+
+    assert format_score(0.0172) == "82.0 点"
+    assert "%" not in format_score(0.0172)
+    assert format_score(None) == "—"
+
+
+def test_the_headline_score_is_stretched_while_the_symmetry_stays_a_percent() -> None:
+    """§8.6.7: 見出しの 2 値は別々の目盛りを持つ。片方は点、片方は %。
+
+    罠: 「全体のスコア」を `format_symmetry` のままにした実装は、`98.28%` を
+    出してここで落ちる。
+    """
+    from face_symmetry_lab.ui.scores import format_score
+
+    at = _run("render_headline_metrics(overall=0.0172, equal_weight=0.0172, estimate=None)")
+
+    assert not at.exception
+    values = {metric.label: metric.value for metric in at.metric}
+    assert values[PART_EQUAL_WEIGHT_LABEL] == format_score(0.0172) == "82.0 点"
+    assert values["全体の対称度"] == format_symmetry(0.0172) == "98.28%"
+
+
+def test_a_missing_score_is_not_shown_as_zero_points() -> None:
+    """不変条件 11・§8.6.7: 0 点は「ずれ 5.0% 以上」という測定結果であり、欠測とは
+    別である。両者を同じ表示にしてはならない。"""
+    from face_symmetry_lab.ui.scores import format_score
+
+    assert format_score(None) == "—"
+    assert format_score(0.050) == "0.0 点"
+    assert format_score(0.080) == "0.0 点"
+
+
+def test_the_calculation_walkthrough_converts_the_deviation_into_points() -> None:
+    """§8.6.3(H2)/§8.6.7: 計算過程の最後の行は、アンカー 2 点を明示したうえで
+    点へ換算する。罠: `100 - ずれ` のままの実装は `98.40` を出して落ちる。"""
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    walkthrough = " ".join(element.value for element in at.code)
+    assert "1.60" in walkthrough  # sqrt(mean(2.11²+1.44²+0.62²+1.83²)/4)
+    assert "85.0" in walkthrough  # 100 × (5.00 - 1.60) ÷ (5.00 - 1.00)
+    assert "98.40" not in walkthrough  # 旧 `100 - ずれ` の答え
+    for anchor in ("1.00", "5.00"):
+        assert anchor in walkthrough
+
+
+def test_the_score_help_states_the_anchors_and_denies_a_population_rank() -> None:
+    """§8.6.7/AC-DISPLAY-05: help はアンカー 2 点を述べ、順位ではないことを明示する。
+
+    アンカーが画面に無いと、§8.6.3 が要求する可逆性（`s_3d` へ戻せること）が
+    利用者側で成立しない。
+    """
+    assert "100 点" in PART_EQUAL_WEIGHT_HELP
+    assert "0 点" in PART_EQUAL_WEIGHT_HELP
+    assert "1.0%" in PART_EQUAL_WEIGHT_HELP
+    assert "5.0%" in PART_EQUAL_WEIGHT_HELP
+    assert "順位" in PART_EQUAL_WEIGHT_HELP
+    assert "採点" in PART_EQUAL_WEIGHT_HELP
+
+
+def test_the_score_scale_caption_warns_that_a_reshoot_moves_the_points() -> None:
+    """§8.6.7: 目盛りを 25 倍にすると、ばらつきも同じ 25 倍で拡大する。
+
+    実測（§14.4 セッション間全幅 0.273pt = 6.8 点）を利用者へ開示し、その幅より
+    小さい点差を人物間の差として読ませない。
+    """
+    from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION
+
+    assert "撮り直" in SCORE_SCALE_CAPTION
+    assert "6.8" in SCORE_SCALE_CAPTION
+    for forbidden in ("良い", "悪い", "美しい", "優秀", "優れ", "満点", "合格"):
+        assert forbidden not in SCORE_SCALE_CAPTION
+
+
+def test_the_score_scale_caption_is_rendered_in_the_detail_panel() -> None:
+    """§8.6.7: 注記は定数として存在するだけでなく、実際に画面へ出る。"""
+    from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION
+
+    at = AppTest.from_string(
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.018,\n"
+        ")\n"
+        "render_score_details(outcome, show_smoothed=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert SCORE_SCALE_CAPTION in [element.value for element in at.caption]
