@@ -14,21 +14,24 @@ Camera が映像上の HUD で行っていることを、Image でも同じ見�
 
 1. **折れ線グラフを持たない。** 静止画は時系列を持たないので、描く系列が存在
    しない。リングバッファも世代識別子も要らない。
-2. **移動機能を持たない。** 配置プリセットもドラッグも持たない。1 枚に対する
-   1 回きりの表示であり、映像のように下にある `STOP` を塞ぐ問題も起きない。
-3. **JS bridge を使わない。** 5Hz の payload も page realm への runtime 注入も
-   無く、`st.container(key=...)` が作る位置指定コンテキストの中へ静的な markup
-   を重ねるだけである。bridge が要ったのは 5Hz 更新と擬似全画面という、静止画に
-   無い 2 つの要件のためだった。
+2. **配置プリセットを持たない。** ドラッグ（§14.3e、2026-08-12 追加）だけを持つ。
+   1 枚に対する 1 回きりの表示なので、直接動かせれば足りる。位置は page realm の
+   変数にだけ持ち、`localStorage` へ保存しない。
+3. **JS bridge はドラッグのためだけに使う。** 5Hz の payload もグラフの runtime も
+   持たず、親 realm へ入れるのはイベント委譲 1 つだけである。bridge が HUD で
+   大きくなったのは 5Hz 更新と擬似全画面という、静止画に無い 2 つの要件のため
+   だった。
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Final
 
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as components
 from numpy.typing import NDArray
 
 from face_symmetry_lab.domain.metrics import PART_NAMES
@@ -43,6 +46,29 @@ from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL, PART_LABELS
 #: 構造が変わっても黙って壊れない。
 STILL_OVERLAY_CONTAINER_KEY: Final[str] = "image_preview_frame"
 
+#: プレビューの表示上限（§5.1）。`st.image` の既定は幅いっぱいなので、縦長の
+#: 写真（スマートフォンの 3:4 など）ではページが画像だけで埋まり、詳細結果が
+#: 折り返しの遥か下へ行く。高さ側にも上限を置くことで、縦横どちらの写真でも
+#: 画像と詳細結果の先頭が同じ画面に収まる。
+MAX_PREVIEW_WIDTH_PX: Final[int] = 760
+MAX_PREVIEW_HEIGHT_PX: Final[int] = 520
+
+
+def preview_display_width(*, height: int, width: int) -> int:
+    """縦横比を保ったまま上限へ収めたときの、表示幅（px）。
+
+    **拡大はしない**（`scale` の上限は 1.0）。小さな写真を引き伸ばすと、
+    ランドマークの点が実際より粗く見え、検出の精度に関する誤解を招く。
+
+    この値を `st.image` の幅としても、コンテナの幅としても使う。両者が同じ数から
+    来ることが、吹き出しの `left` / `top` が画像の内側を指す条件である。
+    """
+    if height <= 0 or width <= 0:
+        raise ValueError("プレビューの寸法は正の値である必要があります。")
+    scale = min(MAX_PREVIEW_WIDTH_PX / width, MAX_PREVIEW_HEIGHT_PX / height, 1.0)
+    return max(1, round(width * scale))
+
+
 #: 吹き出しの見た目。HUD（`ui.hud.HUD_STYLESHEET`）と同じ語彙にそろえてある
 #: ——半透明の黒地、白文字、角丸、ゲート色の枠、tabular-nums。`position:
 #: absolute` の基準は上のキー付きコンテナである。
@@ -50,7 +76,15 @@ STILL_OVERLAY_CONTAINER_KEY: Final[str] = "image_preview_frame"
 #: `pointer-events: none` は HUD と同じ理由で残す。静止画には塞ぐ操作が無いが、
 #: 画像そのものの右クリック・選択を吹き出しが奪わないほうが素直である。
 _STILL_OVERLAY_CSS: Final[str] = f"""
-.st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ position: relative; }}
+/* コンテナは画像とちょうど同じ幅にする（幅は `preview_display_width` が Python
+   側で決め、下の動的な 1 行で注入する）。**CSS の `width: fit-content` では
+   縮まない** —— Streamlit の縦ブロックは flex で伸ばされるため、実測でコンテナ
+   だけ 735px のまま残り、中央寄せされた画像の外側に吹き出しが付いた。
+   コンテナが画像より広いと、`left: 18px` が画像の外を指す。 */
+.st-key-{STILL_OVERLAY_CONTAINER_KEY} {{
+    position: relative; max-width: 100%; margin-inline: auto;
+}}
+.st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{ display: block; }}
 /* Streamlit は要素 1 つずつを `.stElementContainer` で包み、それへ
    `position: relative` を付ける。**この中間ラッパーを静的へ戻さないと、
    吹き出しの包含ブロックがキー付きコンテナではなくラッパーになる。** ラッパーは
@@ -70,9 +104,11 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
     pointer-events: none;
     font-variant-numeric: tabular-nums;
     font-family: inherit;
-    max-width: min(340px, 76%); max-height: 88%; overflow-y: auto;
+    /* 縦長の写真（上限 520px 高 = 幅 390px 前後）で 76% を占めて顔を隠したため、
+       割合側を絞った。ドラッグで退けられるとはいえ、既定で顔を覆わない。 */
+    max-width: min(320px, 64%); max-height: 88%; overflow-y: auto;
 }}
-.fsl-still-value {{ font-size: 2.6rem; font-weight: 700; line-height: 1; }}
+.fsl-still-value {{ font-size: 2.2rem; font-weight: 700; line-height: 1; }}
 .fsl-still-label {{ font-size: .8rem; opacity: .75; margin-bottom: 10px; }}
 .fsl-still-score {{
     display: flex; align-items: baseline; gap: 8px;
@@ -85,6 +121,81 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
 }}
 .fsl-still-parts b {{ font-weight: 400; opacity: .75; margin-right: 4px; }}
 .fsl-still-demo {{ font-size: 1.05rem; margin-top: 8px; }}
+/* ドラッグを受けるのはグリップだけ。吹き出し本体は `pointer-events: none` の
+   ままにして、下にある画像の選択・右クリックを奪わない（HUD と同じ規約）。 */
+.fsl-still-grip {{
+    pointer-events: auto; cursor: move; touch-action: none;
+    margin-top: 10px; font-size: .72rem; opacity: .55;
+    border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px;
+}}
+"""
+
+#: 親 realm へ入れるドラッグの実行時コード。**イベント委譲にする。**
+#: Streamlit は再実行のたびに吹き出しの DOM を作り直すので、要素へ直接 listener
+#: を付けると最初の再実行でドラッグが黙って死ぬ。`document` 上で拾えば、DOM が
+#: 何度作り直されても効き続ける。
+#:
+#: 位置は `window.__fslStillPos` にだけ持ち、storage へ書かない（§14.3e）。
+#: 写真ごとに最適な退避先が変わるため前回位置を復元する利点が乏しく、保存しな
+#: ければ §3.4 の永続化の議論そのものが発生しない。
+_STILL_DRAG_JS: Final[str] = """
+(function () {
+  if (window.__fslStillDrag) return;
+  window.__fslStillDrag = true;
+
+  var dragging = null, offsetX = 0, offsetY = 0;
+
+  var place = function (hud, x, y) {
+    hud.style.left = x + 'px';
+    hud.style.top = y + 'px';
+    hud.style.right = 'auto';
+    hud.style.bottom = 'auto';
+    window.__fslStillPos = {x: x, y: y};
+  };
+
+  document.addEventListener('pointerdown', function (event) {
+    var grip = event.target.closest && event.target.closest('.fsl-still-grip');
+    if (!grip) return;
+    var hud = grip.closest('.fsl-still-hud');
+    if (!hud) return;
+    var box = hud.getBoundingClientRect();
+    dragging = hud;
+    offsetX = event.clientX - box.left;
+    offsetY = event.clientY - box.top;
+    try { grip.setPointerCapture(event.pointerId); } catch (err) {}
+    event.preventDefault();
+  });
+
+  document.addEventListener('pointermove', function (event) {
+    if (!dragging) return;
+    // 包含ブロック（キー付きコンテナ = 画像）の内側へ clamp する。外へ出せると
+    // 画像の下の詳細結果に重なって読めなくなる。HUD が viewport に対して行う
+    // 制限を、静止画では親要素に対して行う。
+    var host = dragging.offsetParent || dragging.parentElement;
+    if (!host) return;
+    var base = host.getBoundingClientRect();
+    var maxX = Math.max(0, host.offsetWidth - dragging.offsetWidth);
+    var maxY = Math.max(0, host.offsetHeight - dragging.offsetHeight);
+    var x = Math.min(maxX, Math.max(0, event.clientX - offsetX - base.left));
+    var y = Math.min(maxY, Math.max(0, event.clientY - offsetY - base.top));
+    place(dragging, x, y);
+  });
+
+  var stop = function () { dragging = null; };
+  document.addEventListener('pointerup', stop);
+  document.addEventListener('pointercancel', stop);
+
+  // 再実行で作り直された吹き出しへ、直前の位置を貼り直す。observer にするのは
+  // 「いつ作り直されるか」を Streamlit 側から知る手段が無いためである。
+  var restore = function () {
+    var saved = window.__fslStillPos;
+    if (!saved) return;
+    var hud = document.querySelector('.fsl-still-hud');
+    if (hud && hud.style.left === '') place(hud, saved.x, saved.y);
+  };
+  new MutationObserver(restore).observe(document.body, {childList: true, subtree: true});
+  restore();
+})();
 """
 
 
@@ -126,6 +237,7 @@ def still_overlay_html(
     )
     demo = payload["demo"]
     demo_row = f'<div class="fsl-still-demo">{demo}</div>' if demo else ""
+    grip = '<div class="fsl-still-grip">⠿ ドラッグで移動</div>'
     return (
         f"<style>{_STILL_OVERLAY_CSS}</style>"
         f'<div class="fsl-still-hud" style="border: 2px solid {gate};">'
@@ -135,8 +247,38 @@ def still_overlay_html(
         f"<b>{PART_EQUAL_WEIGHT_LABEL}</b>{payload['score']}</div>"
         f'<div class="fsl-still-parts">{part_items}</div>'
         f"{demo_row}"
+        f"{grip}"
         "</div>"
     )
+
+
+def still_drag_bridge_script() -> str:
+    """`_STILL_DRAG_JS` を親 realm へ設置するローダー。
+
+    `ui.hud.hud_bridge_script` と同じ形である。`components.v1.html` の iframe は
+    ページと same-origin なので `window.parent` へ届く。iframe 内で定義したものは
+    次の再実行で Streamlit がそれを差し替えた瞬間に動かなくなるため、iframe 側の
+    仕事は実行時コードを親の `<head>` へ渡すことだけに留める。
+
+    **HUD の bridge とは別の要素 id を使う。** 同じ id にすると、Camera から
+    Image へ切り替えたときに一方が他方を消してしまう。
+    """
+    runtime = json.dumps(_STILL_DRAG_JS)
+    return f"""
+<script>
+(function () {{
+  var win = window.parent;
+  var doc = win && win.document;
+  if (!doc || !doc.body) return;
+  var previous = doc.getElementById('fsl-still-drag-runtime');
+  if (previous) previous.remove();
+  var runtime = doc.createElement('script');
+  runtime.id = 'fsl-still-drag-runtime';
+  runtime.textContent = {runtime};
+  doc.head.appendChild(runtime);
+}})();
+</script>
+"""
 
 
 def render_image_with_overlay(
@@ -165,8 +307,13 @@ def render_image_with_overlay(
     if array.ndim != 3 or array.shape[2] != 3:
         raise ValueError("吹き出しを重ねる画像は RGB の 3 次元配列である必要があります。")
 
+    display_width = preview_display_width(height=array.shape[0], width=array.shape[1])
     with st.container(key=STILL_OVERLAY_CONTAINER_KEY):
-        st.image(array, caption=caption, width="stretch")
+        st.image(array, caption=caption, width=display_width)
+        st.markdown(
+            f"<style>.st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {display_width}px; }}</style>",
+            unsafe_allow_html=True,
+        )
         st.markdown(
             still_overlay_html(
                 overall=overall,
@@ -178,3 +325,6 @@ def render_image_with_overlay(
             ),
             unsafe_allow_html=True,
         )
+        # ドラッグの実行時コードは、吹き出しと同じコンテナの中へ 1 つだけ置く
+        # （`height=0` なので場所は取らない）。積み増すと listener が二重に付く。
+        components.html(still_drag_bridge_script(), height=0)

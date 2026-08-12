@@ -468,24 +468,36 @@ def _render_image_section() -> None:
         )
         render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
 
-    # §5.1, AC-LAYOUT-01: 詳細結果は常に写真と見出しの下へ画面幅いっぱいで
-    # 描画する。Camera 側の配置と対称にするためである。
-    st.markdown("#### 詳細結果")
-    with st.container(border=True):
-        if analysis is not None:
+    # §5.1, AC-LAYOUT-01: 画像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
+    # 上の画像がスクロールで手の届かない位置へ行かないようにする。**Camera と
+    # 同じタブ構成にする**（§5.1「Image 側だけ異なる並びにしない」）。1 本の長い
+    # スクロールだと、詳細結果・対称化・参考年齢を続けて積み上げた分だけ画像が
+    # 押し上げられ、数値と写真を見比べられなくなる。
+    detail_tab, symmetry_tab, demographic_tab, export_tab = st.tabs(
+        ["詳細結果", "左右対称との比較", "参考年齢・参考性別", "エクスポート"]
+    )
+    with detail_tab:
+        if analysis is None:
+            st.info("この画像からは左右差を算出できませんでした。")
+        else:
             st.caption(
                 f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
                 f"ランドマーク点数 {analysis.landmarks.landmark_count}"
             )
             # 静止画は状態を持たないため、生の値をそのまま表示する（§8.7）。
             render_score_details(analysis.outcome, show_smoothed=False)
-            st.divider()
+    with symmetry_tab:
+        if analysis is None:
+            st.info("ランドマークが取れていないため、比較を作成できません。")
+        else:
             _render_image_symmetrization(rgb, analysis)
-            st.divider()
+    with demographic_tab:
         _render_image_demographic_detail(age_input)
-
-    if recorder is not None:
-        _render_image_export(recorder)
+    with export_tab:
+        if recorder is None:
+            st.info("エクスポートできる分析結果がまだありません。")
+        else:
+            _render_image_export(recorder)
 
 
 def _render_input_mode_selector() -> str:

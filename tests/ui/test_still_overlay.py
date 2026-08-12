@@ -97,11 +97,15 @@ def test_the_still_overlay_has_no_chart() -> None:
         assert chart_token not in markup
 
 
-def test_the_still_overlay_has_no_drag_handle_or_runtime() -> None:
-    """§14.3e: 配置プリセットもドラッグも JS bridge も持たない。"""
+def test_the_still_overlay_markup_carries_no_script_or_timer() -> None:
+    """§14.3e: 吹き出しの markup 自体はコードを含まない。
+
+    ドラッグの実行時コードは bridge（`still_drag_bridge_script`）だけが持ち、
+    5Hz の payload に相当するタイマーも配置プリセットも持たない。
+    """
     markup = _overlay()
 
-    for token in ("<script", "localStorage", "setInterval", "grip", "mousedown"):
+    for token in ("<script", "localStorage", "setInterval", "非表示", "左上"):
         assert token not in markup
 
 
@@ -265,7 +269,9 @@ def test_every_reading_is_a_dash_when_the_three_dimensional_result_is_missing() 
     """不変条件 11: §8.5.1 の重ね合わせが成立しないときは全部 `—`。0 や前値でない。"""
     markup = _overlay(overall=None, equal_weight=None, parts=dict.fromkeys(PART_NAMES))
 
-    assert markup.count("—") == 1 + 1 + len(PART_NAMES)
+    # stylesheet のコメントにも `—` は出るので、吹き出しの本体だけを数える。
+    body = markup.split("</style>")[-1]
+    assert body.count("—") == 1 + 1 + len(PART_NAMES)
 
 
 def test_the_overlay_stylesheet_survives_the_render() -> None:
@@ -288,6 +294,107 @@ def test_the_overlay_stylesheet_survives_the_render() -> None:
     assert not at.exception
     markup = _rendered_html(at)
     assert "<style>" in markup
-    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ position: relative; }}" in markup
+    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{" in markup
+    assert "position: relative" in markup
     assert ".stElementContainer:has(.fsl-still-hud)" in markup
     assert "position: absolute" in markup
+
+
+def test_the_container_width_is_pinned_to_the_preview_width() -> None:
+    """§5.1: コンテナは画像とちょうど同じ幅にする。
+
+    CSS の `width: fit-content` では Streamlit の縦ブロックが伸ばしてしまい、
+    実測でコンテナだけ 735px のまま残った（画像は 547px）。コンテナが画像より
+    広いと `left: 18px` が画像の外を指すので、幅は Python 側で決めて注入する。
+    罠: 動的な幅の注入を外すと、この assertion が落ちる。
+    """
+    from face_symmetry_lab.ui.still_overlay import preview_display_width
+
+    at = AppTest.from_string(_render_source())
+    at.run()
+
+    assert not at.exception
+    expected = preview_display_width(height=8, width=8)
+    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {expected}px; }}" in _rendered_html(at)
+
+
+@pytest.mark.parametrize(
+    ("height", "width", "expected"),
+    [
+        (480, 640, 640),  # 上限内。拡大も縮小もしない
+        (4032, 3024, 390),  # 縦長: 高さ 520 で頭打ち → 3024 × (520/4032)
+        (3000, 4000, 693),  # 横長の巨大: 幅 760 で頭打ち → 4000 × (520/3000) が先
+        (100, 100, 100),  # 小さい写真を引き伸ばさない
+    ],
+)
+def test_the_preview_is_capped_without_being_enlarged(
+    height: int, width: int, expected: int
+) -> None:
+    """§5.1: 縦横比を保ったまま上限へ収め、**拡大はしない**。
+
+    小さな写真を引き伸ばすと、ランドマークの点が実際より粗く見え、検出の精度に
+    関する誤解を招く。
+    """
+    from face_symmetry_lab.ui.still_overlay import preview_display_width
+
+    assert preview_display_width(height=height, width=width) == expected
+
+
+# --- ドラッグ（§14.3e、2026-08-12） -------------------------------------------
+
+
+def test_the_overlay_carries_a_grip_that_alone_receives_pointer_events() -> None:
+    """§14.3e: ドラッグを受けるのはグリップだけ。本体は `pointer-events: none` の
+    まま、画像の選択・右クリックを奪わない（HUD と同じ規約）。"""
+    markup = _overlay()
+
+    assert "fsl-still-grip" in markup
+    assert "pointer-events: none" in markup
+    assert "pointer-events: auto" in markup
+
+
+def test_the_drag_runtime_delegates_instead_of_binding_to_the_element() -> None:
+    """§14.3e: Streamlit は再実行のたびに吹き出しの DOM を作り直す。
+
+    要素へ直接 listener を付けると、最初の再実行でドラッグが黙って死ぬ。
+    罠: `grip.addEventListener(...)` を吹き出しの要素へ直接書いた実装は落ちる。
+    """
+    from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
+
+    script = still_drag_bridge_script()
+
+    assert "addEventListener('pointerdown'" in script
+    assert "closest('.fsl-still-grip')" in script
+
+
+def test_the_drag_runtime_clamps_inside_the_image() -> None:
+    """§14.3e: 移動範囲は包含ブロック（画像とキャプション）の内側。外へ出すと、
+    画像の下の詳細結果に重なって読めなくなる。"""
+    from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
+
+    script = still_drag_bridge_script()
+
+    assert "offsetWidth" in script
+    assert "offsetHeight" in script
+    assert "Math.min" in script
+    assert "Math.max" in script
+
+
+def test_the_drag_runtime_keeps_no_storage() -> None:
+    """§14.3e/§3.4: 位置は page realm の変数だけに持ち、永続化しない。"""
+    from face_symmetry_lab.ui.still_overlay import still_drag_bridge_script
+
+    script = still_drag_bridge_script()
+
+    for storage in ("localStorage", "sessionStorage", "document.cookie", "indexedDB"):
+        assert storage not in script
+
+
+def test_the_drag_runtime_is_installed_once_per_render() -> None:
+    """bridge は 1 回の描画につき 1 つだけ。積み増すと listener が二重に付く。"""
+    at = AppTest.from_string(_render_source())
+    at.run()
+
+    assert not at.exception
+    iframes = [element for element in at.get("iframe")]
+    assert len(iframes) == 1
