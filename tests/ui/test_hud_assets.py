@@ -390,3 +390,19 @@ def test_the_tick_reads_the_baseline_from_the_payload() -> None:
 def test_the_note_never_pushes_the_drag_grip_out_of_the_hud() -> None:
     """HUD も `pointer-events: none` + `max-height` である（吹き出しと同じ理由）。"""
     assert HUD_RUNTIME_JS.index("fsl-hud-grip") < HUD_RUNTIME_JS.index('id="fsl-hud-baseline-note"')
+
+
+def test_the_hud_footprint_includes_its_padding_and_border() -> None:
+    """`width: clamp(210px, 26vw, 360px)` を**見た目の実寸**にする。
+
+    吹き出し（`ui.still_overlay`）と同じ理由である。既定の `content-box` では
+    padding（左右 13〜22px）と border 2px×2 が宣言幅の外側へ足され、実測
+    （headless Chrome、ビューポート 800px）で 210px 指定に対して 240px あった。
+    箱の幅は映像を覆う面積そのものなので、宣言値と実寸をそろえる。
+    """
+    rule = HUD_STYLESHEET[
+        HUD_STYLESHEET.index("#fsl-hud {") : HUD_STYLESHEET.index("#fsl-hud[hidden]")
+    ]
+
+    assert "box-sizing: border-box;" in rule
+    assert "width: clamp(210px, 26vw, 360px);" in rule

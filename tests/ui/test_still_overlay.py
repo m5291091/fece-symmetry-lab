@@ -665,3 +665,23 @@ def test_the_note_never_pushes_the_drag_grip_out_of_the_box() -> None:
     markup = html[html.index('<div class="fsl-still-hud"') :]  # stylesheet を除く
 
     assert markup.index("fsl-still-grip") < markup.index("fsl-still-baseline-note")
+
+
+def test_the_bubble_footprint_includes_its_padding_and_border() -> None:
+    """`max-width: min(320px, 64%)` を**見た目の実寸**にする。
+
+    既定の `content-box` では、上限は内容の幅にしか掛からず、左右 padding と
+    2px の border がその外側へ足される。実測（headless Chrome、プレビュー幅
+    390px・ビューポート 800px）で **277.6px = 71.2%** になっており、CSS の
+    コメントが述べる「76% を占めて顔を隠したため割合側を絞った」という意図
+    （64%）と食い違っていた。`border-box` にすると宣言どおり 249.6px に収まる。
+
+    罠: `box-sizing` を親コンテナ側だけに書く実装は、吹き出し自身へ継承されない
+    （`box-sizing` は継承しないプロパティである）。
+    """
+    html = _overlay(baseline=_baseline())
+    rule = html[html.index(f".st-key-{STILL_OVERLAY_CONTAINER_KEY} .fsl-still-hud {{") :]
+    rule = rule[: rule.index("}")]
+
+    assert "box-sizing: border-box;" in rule
+    assert "max-width: min(320px, 64%);" in rule

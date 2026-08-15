@@ -45,6 +45,12 @@ HUD_STYLESHEET: Final[str] = """
 #fsl-hud {
     position: fixed; z-index: 1000050;
     background: rgba(0,0,0,.72); color: #fff;
+    /* **箱の寸法に padding と border を含める。** 既定の `content-box` では下の
+       `width`/`max-width` が内容の幅にしか掛からず、左右 padding（13〜22px）と
+       2px の border がその外側へ足される。実測（headless Chrome、ビューポート
+       800px）で 210px 指定に対して 240px あった。箱の幅は映像を覆う面積その
+       ものなので、宣言値と実寸をそろえる（吹き出し `ui.still_overlay` と同じ）。 */
+    box-sizing: border-box;
     width: clamp(210px, 26vw, 360px);
     padding: clamp(10px, 1.2vw, 16px) clamp(13px, 1.6vw, 22px);
     border-radius: 16px;

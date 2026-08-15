@@ -135,6 +135,12 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
     font-variant-numeric: tabular-nums;
     font-family: inherit;
     overflow-wrap: anywhere;
+    /* **上限に padding と border を含める。** 既定の `content-box` では下の
+       `max-width` が内容の幅にしか掛からず、左右 padding と 2px の border が
+       その外側へ足される。実測（headless Chrome、プレビュー幅 390px・ビュー
+       ポート 800px）で 277.6px = 71.2% を占めており、下のコメントが述べる意図
+       （64%）と食い違っていた。 */
+    box-sizing: border-box;
     /* 縦長の写真（上限 520px 高 = 幅 390px 前後）で 76% を占めて顔を隠したため、
        割合側を絞った。ドラッグで退けられるとはいえ、既定で顔を覆わない。 */
     max-width: min(320px, 64%); max-height: 88%; overflow-y: auto;
