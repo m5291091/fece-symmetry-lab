@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
 from face_symmetry_lab.domain.models import DemographicEstimate
+from face_symmetry_lab.domain.reference_stats import ReferenceDataset
 from face_symmetry_lab.domain.warp_mesh import WarpMesh
 
 
@@ -82,3 +83,9 @@ class SegmentationProvider(Protocol):
     ) -> NDArray[np.float32]: ...
 
     def close(self) -> None: ...
+
+
+class ReferenceCellRepository(Protocol):
+    """§9.5 の凍結参照アセット（`configs/reference/`）を読む境界（FR-037）。"""
+
+    def load(self) -> ReferenceDataset: ...

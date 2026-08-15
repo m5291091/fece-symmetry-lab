@@ -312,7 +312,7 @@ Procrustes 重ね合わせの前後で、左右差を軸ごとに分解（take01
 symmetry_percent = clamp(100 × (1 - d), 0, 100)
 ```
 
-再現: `uv run python scripts/measure_metric_noise.py --video take01.mov --max-frames 600 --gain-frames 5 --section L`（take02 も同じ）。表示式は `ui/scores.py` の `format_symmetry` をそのまま使っており、セクション L の self-test がその一致を毎回確認する。
+再現: `uv run python scripts/measure_metric_noise.py --video data/takes/take01.mov --max-frames 600 --gain-frames 5 --section L`（take02 も同じ）。表示式は `ui/scores.py` の `format_symmetry` をそのまま使っており、セクション L の self-test がその一致を毎回確認する。
 
 ### 12.0 単位 — pt は IPD の仮定に依存しない
 
@@ -494,12 +494,14 @@ return tuple(depth * window.width for depth in depths)
 
 ```
 uv run python scripts/measure_zoom_depth_scale.py --self-test
-uv run python scripts/measure_zoom_depth_scale.py --video take01.mov --section W \
+uv run python scripts/measure_zoom_depth_scale.py --video data/takes/take01.mov --section W \
     --max-frames 600 --sweep-frames 5
-uv run python scripts/measure_zoom_depth_scale.py --video take01.mov --video take02.mov \
-    --video take03.mov --section R --max-frames 600            # 撮影 30Hz
-uv run python scripts/measure_zoom_depth_scale.py --video take01.mov --video take02.mov \
-    --video take03.mov --section R --max-frames 600 --stride 6 # 解析 5Hz 相当
+uv run python scripts/measure_zoom_depth_scale.py --video data/takes/take01.mov \
+    --video data/takes/take02.mov --video data/takes/take03.mov \
+    --section R --max-frames 600            # 撮影 30Hz
+uv run python scripts/measure_zoom_depth_scale.py --video data/takes/take01.mov \
+    --video data/takes/take02.mov --video data/takes/take03.mov \
+    --section R --max-frames 600 --stride 6 # 解析 5Hz 相当
 ```
 
 測定日: 2026-08-09 / 被写体 1 名 / 3 テイク / 1280x720
@@ -726,8 +728,9 @@ MediaPipe の VIDEO モードは、**同じ大きさのフレームを流し続�
 
 ```
 uv run python scripts/measure_session_variation.py --self-test
-uv run python scripts/measure_session_variation.py --video take01.mov --video take02.mov \
-    --video take03.mov --max-frames 600 --gain-frames 5
+uv run python scripts/measure_session_variation.py --video data/takes/take01.mov \
+    --video data/takes/take02.mov --video data/takes/take03.mov \
+    --max-frames 600 --gain-frames 5
 ```
 
 測定日: 2026-08-09 / 被写体 1 名 / 3 テイク / 1280x720 / IMAGE モード / 直叩き（追跡ズーム経路は通していない）
@@ -982,8 +985,8 @@ uv run python scripts/measure_session_variation.py --video take01.mov --video ta
 
 ```
 uv run python scripts/measure_pose_response.py --self-test
-uv run python scripts/measure_pose_response.py --video take01.mov --video take02.mov \
-    --video take03.mov --max-frames 600
+uv run python scripts/measure_pose_response.py --video data/takes/take01.mov \
+    --video data/takes/take02.mov --video data/takes/take03.mov --max-frames 600
 ```
 
 測定日: 2026-08-09 / 被写体 1 名 / 3 テイク / 1280x720 / IMAGE モード / 直叩き（追跡ズーム経路は通していない）
@@ -1194,12 +1197,12 @@ uv run python scripts/measure_pose_response.py --video take01.mov --video take02
 
 ```
 uv run python scripts/measure_pose_response.py --self-test
-uv run python scripts/measure_pose_response.py --video take07.mov --section S --max-frames 600
+uv run python scripts/measure_pose_response.py --video data/takes/take07.mov --section S --max-frames 600
 ```
 
 測定日: 2026-08-10 / 被写体 1 名 / take07（1 本、600 フレーム）/ 1280x720 / IMAGE モード / 直叩き（追跡ズーム経路は通していない）
 
-検出とフレーム集合は §14/§15 と同じ `measure_session_variation.py` の `capture_take` を呼ぶ。指標・正規化・表示式は `measure_metric_noise.py` から import している。**この 2 つのスクリプトと、§15 のセクション T/Y/X には一切触れていない**（`--video take01.mov --video take02.mov --video take03.mov --video take07.mov` で T/Y/X を回しても、take01〜03 の数字は本節の追加前と 1 桁も変わらないことを確認済み）。本節が持つ独自の計算は、pitch のビン分割・3 モデルの当てはめ（1・2 番目は既存の `fit_line` の再利用、3 番目だけ新しい 2 変数最小二乗 `fit_multiple`）・IOD の 5 分位帯分割である。
+検出とフレーム集合は §14/§15 と同じ `measure_session_variation.py` の `capture_take` を呼ぶ。指標・正規化・表示式は `measure_metric_noise.py` から import している。**この 2 つのスクリプトと、§15 のセクション T/Y/X には一切触れていない**（`--video data/takes/take01.mov --video data/takes/take02.mov --video data/takes/take03.mov --video data/takes/take07.mov` で T/Y/X を回しても、take01〜03 の数字は本節の追加前と 1 桁も変わらないことを確認済み）。本節が持つ独自の計算は、pitch のビン分割・3 モデルの当てはめ（1・2 番目は既存の `fit_line` の再利用、3 番目だけ新しい 2 変数最小二乗 `fit_multiple`）・IOD の 5 分位帯分割である。
 
 **本節も結論を断定しない。** 出すのは中央値・係数・残差 RMS・R²・相関・区間と、数値から直接言えることまでである。
 
@@ -1216,7 +1219,7 @@ uv run python scripts/measure_pose_response.py --video take07.mov --section S --
 
 ### 16.1 take07 の撮影条件
 
-`uv run python scripts/measure_session_variation.py --video take07.mov --section P --max-frames 600` の実行結果（§14 と同じ読み方）。
+`uv run python scripts/measure_session_variation.py --video data/takes/take07.mov --section P --max-frames 600` の実行結果（§14 と同じ読み方）。
 
 | 項目 | 値 |
 |---|---|

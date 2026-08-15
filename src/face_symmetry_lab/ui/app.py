@@ -23,6 +23,7 @@ from face_symmetry_lab.ui.image_section import (
     release_image_landmarker,
     render_image_section,
 )
+from face_symmetry_lab.ui.reference_page import render_reference_page
 
 INPUT_MODE_STATE_KEY = "input_mode"
 #: 最後に *有効だった* 選択。`st.segmented_control` は選択中の項目をもう一度
@@ -177,6 +178,7 @@ def render_app() -> None:
 #: 入り方に関わらず `render_app` が `st.page_link` から `ABOUT_PAGE` を参照
 #: できる。
 ANALYZE_PAGE = st.Page(render_app, title="Analyze", icon="🪞", default=True)
+REFERENCE_PAGE = st.Page(render_reference_page, title="参照統計", icon="📊")
 ABOUT_PAGE = st.Page(render_about_page, title="使い方・算出方法", icon="📘")
 
 
@@ -186,4 +188,4 @@ if __name__ == "__main__":
         page_icon="🪞",
         layout="wide",
     )
-    st.navigation([ANALYZE_PAGE, ABOUT_PAGE]).run()
+    st.navigation([ANALYZE_PAGE, REFERENCE_PAGE, ABOUT_PAGE]).run()

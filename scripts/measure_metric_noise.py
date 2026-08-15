@@ -6,7 +6,7 @@
 無いと以降の対策が効いたかどうかを測れないので、docs はこの 2 つのテストを
 対策より先に置いている。
 
-    uv run python scripts/measure_metric_noise.py --video take01.mp4
+    uv run python scripts/measure_metric_noise.py --video data/takes/take01.mov
     uv run python scripts/measure_metric_noise.py --frames frames/ --fps 5
     uv run python scripts/measure_metric_noise.py --self-test     # 実写不要の健全性確認
     uv run python scripts/measure_metric_noise.py --video a.mp4 --section B --json a.json

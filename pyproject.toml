@@ -36,10 +36,18 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# research/ の notebook は測定手順の再現性の正本であり、アプリの runtime ではない。
+# ruff は v0.6 以降 *.ipynb を既定の探索対象に含めるが、notebook を本体と同じ規約
+# （行長・import 順・B/SIM/N/RUF）へ合わせると、Colab で実行した記録そのものが
+# 書き換わって再現性が崩れる。lint と format の対象から外す。
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N", "RUF"]
-allowed-confusables = ["×", "（", "）", "："]
+# "−" (MINUS SIGN) は §9.5 の分散式（例: Σx²/n − mean²）で数式として使う。
+# tests/domain/test_reference_stats.py と tests/repository/test_build_reference_dataset.py
+# の docstring/comment がすでにこの文字を使っており、変更できないテストの正本である。
+allowed-confusables = ["×", "（", "）", "：", "−"]
 
 [tool.mypy]
 python_version = "3.13"

@@ -13,6 +13,10 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Test traceability | `testbox.md` |
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
+| 参照統計ブラウザ（人種・性別・年齢での絞り込み閲覧、FR-037） | `src/face_symmetry_lab/ui/reference_page.py` |
+| 参照統計の凍結セルテーブル（§9.5、アプリが読む唯一の参照データ） | `configs/reference/utkface_symmetry3d_cells_v1.csv` |
+| 参照統計セルテーブルの生成 (dev-only、アプリからは呼ばない) | `scripts/build_reference_dataset.py` |
+| 参照統計の生成元 notebook（再現性の正本。`src/` からは参照しない） | `research/utkface-symmetry/utkface_symmetry_lab.ipynb` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
 | 映像へ重ねる HUD の組み立てと配線 | `src/face_symmetry_lab/ui/hud.py` |
 | HUD がブラウザへ渡す CSS・実行時 JS | `src/face_symmetry_lab/ui/hud_assets.py` |
@@ -130,6 +134,11 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Analyze ページの骨格（同意・入力選択） | `ui/app.py` | `tests/ui/test_app.py` | FR-001, FR-004, AC-FLOW-01, AC-A11Y-01 |
 | About page | `ui/about_page.py` | `tests/ui/test_about_page.py` | §4.1, FR-014, §10.7 |
+| 参照統計セルの絞り込みと合併（Chan の並列分散） | `domain/reference_stats.py` | `tests/domain/test_reference_stats.py` | FR-037, §9.5, AC-REFERENCE-01, AC-REFERENCE-02 |
+| 参照統計の use case・入力検証・失敗分離 | `application/reference_browser.py` | `tests/application/test_reference_browser.py` | FR-037, AC-REFERENCE-02, AC-REFERENCE-03 |
+| 凍結参照アセットの読み込みと sha256 検証 | `adapters/io/reference_dataset.py` | `tests/adapters/test_reference_dataset.py` | FR-037, §9.5, §10.9, AC-REFERENCE-03 |
+| 参照統計ページの描画と注意書き | `ui/reference_page.py` | `tests/ui/test_reference_page.py` | FR-037, §10.7, AC-REFERENCE-02〜04 |
+| 個票 → セルテーブルの生成と自己検証 (dev-only) | `scripts/build_reference_dataset.py` | `tests/repository/test_build_reference_dataset.py` | FR-037, §9.5, §10.9 |
 
 ## Maintenance
 
@@ -140,7 +149,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `d46387adad07548734fb598a5bbd1ec10a2db2f08e15726f82fcab93cce7855e`_
+_File-list SHA-256: `ac162f6198cdbb72773d31903515c8199e0be0fe0b9b99522e78203ab962f5e6`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -161,12 +170,18 @@ face-symmetry-lab/
   - `metrics/`
     - `symmetry-2d-v1.json`
     - `symmetry-3d-v1.json`
+  - `reference/`
+    - `utkface_symmetry3d_cells_v1.csv`
+    - `utkface_symmetry3d_cells_v1.meta.json`
   - `model-manifest.json`
+- `data/`
+  - `README.md`
 - `docs/`
   - `adr/`
     - `0001-age-estimation-runtime.md`
     - `0002-head-pose-coordinate-signs.md`
     - `0003-age-gender-and-skin-correction.md`
+    - `0004-reference-statistics-browser-data.md`
   - `model-cards/`
     - `mediapipe-face-landmarker-v1.md`
     - `mediapipe-selfie-segmenter.md`
@@ -180,9 +195,14 @@ face-symmetry-lab/
   - `symmetry-metric-analysis.md`
   - `symmetry-metric-level3.md`
   - `symmetry-metric-measurements.md`
+- `research/`
+  - `utkface-symmetry/`
+    - `utkface_age_gate_lab.ipynb`
+    - `utkface_symmetry_lab.ipynb`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
+  - `build_reference_dataset.py`
   - `convert_demographic_model.py`
   - `derive_landmark_map.py`
   - `generate_structure.py`
@@ -205,16 +225,16 @@ face-symmetry-lab/
       - `inference/`
         - … (6 files)
       - `io/`
-        - … (3 files)
+        - … (4 files)
       - … (1 files)
     - `application/`
-      - … (15 files)
+      - … (16 files)
     - `domain/`
-      - … (20 files)
+      - … (21 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (14 files)
+      - … (15 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -225,6 +245,7 @@ face-symmetry-lab/
     - `test_model_store.py`
     - `test_opencv_demographic_estimator.py`
     - `test_piecewise_warp.py`
+    - `test_reference_dataset.py`
     - `test_runtime_errors.py`
     - `test_session_exporter.py`
     - `test_tracking_zoom_landmarker.py`
@@ -239,6 +260,7 @@ face-symmetry-lab/
     - `test_preview_compositor.py`
     - `test_quality.py`
     - `test_realtime.py`
+    - `test_reference_browser.py`
     - `test_session.py`
     - `test_still_image.py`
     - `test_symmetrization.py`
@@ -254,6 +276,7 @@ face-symmetry-lab/
     - `test_models.py`
     - `test_overlay.py`
     - `test_pose.py`
+    - `test_reference_stats.py`
     - `test_score_explanation.py`
     - `test_score_scale.py`
     - `test_skin_quality.py`
@@ -272,6 +295,7 @@ face-symmetry-lab/
     - `test_real_landmarker.py`
     - `test_real_segmenter.py`
   - `repository/`
+    - `test_build_reference_dataset.py`
     - `test_generate_structure.py`
     - `test_testbox_documentation.py`
   - `runtime/`
@@ -289,6 +313,7 @@ face-symmetry-lab/
     - `test_image_section.py`
     - `test_model_setup.py`
     - `test_readings.py`
+    - `test_reference_page.py`
     - `test_scores.py`
     - `test_still_overlay.py`
     - `test_symmetrization_panel.py`

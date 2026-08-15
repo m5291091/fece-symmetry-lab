@@ -1,0 +1,21 @@
+{
+  "cells_sha256": "e3a412e4d67a4adb32847cdca6d5356dda50423b5584ce8592e6177aa309a03d",
+  "dataset_name": "UTKFace",
+  "dataset_url": "https://susanqq.github.io/UTKFace/",
+  "landmark_map_version": "mediapipe-478-mirror/1.0.0",
+  "license_scope": "non-commercial research only",
+  "metric_version": "symmetry-3d/1.0.0",
+  "min_group_for_ci": 8,
+  "records_sha256": "c155b37700fdfb0193b438afd983ea686acd2956ce0e5d8686e0329899d18f2f",
+  "schema_version": "utkface-symmetry-3d-cells/1.0.0",
+  "selection": {
+    "age": "18-75",
+    "max_abs_pitch_deg": "15.0",
+    "max_abs_roll_deg": "25.0",
+    "max_abs_yaw_deg": "15.0"
+  },
+  "source_generated_at": "2026-08-14T03:38:57.977344+00:00",
+  "source_schema_version": "utkface-symmetry-3d-labelled/3.0.0",
+  "total_count": 14754,
+  "warning": "UTKFaceと固定した選別条件に限定した記述統計であり、探索値である。年齢・性別・人種ごとの平均は、対称度との相関・因果・優劣・人物の価値を示すものではない。群間の差はデータセットの撮影条件・注釈・構成比や、ランドマーク検出の群ごとの挙動差を含みうる。正常値・目標値・個人評価・人物間比較には使用できない。"
+}
