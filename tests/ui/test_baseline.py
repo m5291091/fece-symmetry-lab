@@ -43,10 +43,15 @@ def _estimate(age: float = 20.0, gender: GenderLabel = GenderLabel.MALE) -> Demo
 
 
 def test_no_estimate_resolves_to_no_baseline() -> None:
-    """§10.12-3: 参考年齢・参考性別を表示していないときは母集団を出さない。"""
+    """§10.12-3: 参考年齢・参考性別を表示していないときは母集団を出さない。
+
+    **provider へ問い合わせもしない。** 参照データ（537 行の CSV と sha256 検証）の
+    読み込みを、実際に併記が要るときまで遅らせるためである。映像上の HUD はカメラ
+    開始直後——まだ推定が無い状態——から 5 Hz で描き直される。
+    """
     provider = _SpyProvider()
     assert resolve_baseline(None, provider=provider) is None  # type: ignore[arg-type]
-    assert provider.calls == [None]
+    assert provider.calls == []
 
 
 def test_an_explicit_provider_is_used_instead_of_the_shared_one() -> None:

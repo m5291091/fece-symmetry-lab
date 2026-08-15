@@ -46,6 +46,14 @@ def resolve_baseline(
 
     `provider` は test 用の差し替え口である（`ui.reference_page` の `browser` と
     同じ役割）。
+
+    **推定が無いときは provider にも触れない。** 参照データの読み込みは初回の解決まで
+    遅らせたい——年齢・性別モデルを配置していない利用者や、参考年齢を表示していない
+    セッションでは、537 行の CSV と sha256 検証がそもそも要らないためである。映像上の
+    HUD はカメラ開始直後（まだ推定が無い状態）から 5 Hz で描き直されるので、ここが
+    最初の tick で読み込みを起こすかどうかは実際に効く。
     """
+    if estimate is None:
+        return None
     resolved = provider if provider is not None else default_baseline_provider()
     return resolved.resolve(estimate)
