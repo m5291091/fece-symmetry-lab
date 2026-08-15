@@ -120,7 +120,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
 | Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
 | Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
-| CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
+| CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
@@ -149,7 +149,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `e2b34603e5807a2ab691580d0d3ab3c61d985d411423a5f931caf8446f5948b4`_
+_File-list SHA-256: `25662baabb791910675e0143f1150f9d04d9f976b85ebc93662b07d0e8c047d4`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -320,6 +320,7 @@ face-symmetry-lab/
     - `test_age_gate_notice.py`
     - `test_app.py`
     - `test_camera.py`
+    - `test_export_panel.py`
     - `test_guidance.py`
     - `test_hud.py`
     - `test_hud_assets.py`

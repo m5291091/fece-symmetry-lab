@@ -332,6 +332,24 @@ def test_the_container_width_is_pinned_to_the_preview_width() -> None:
     assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {expected}px; }}" in _rendered_html(at)
 
 
+def test_the_preview_never_overflows_a_narrow_viewport() -> None:
+    """§5.1/§5.4: 狭い画面でも画像がコンテナの外へはみ出さない。
+
+    `st.image(..., width=<px>)` は `<img>` へ固定幅を書き込むため、上限
+    （760px）より狭いブラウザ幅では画像だけがコンテナの外へ出る。コンテナは
+    `max-width: 100%` で縮むので、吹き出しの基準（コンテナ）と画像の左端が
+    ずれてしまう。**罠: `max-width` を落とすと、この assertion が落ちる。**
+    """
+    at = AppTest.from_string(_render_source())
+    at.run()
+
+    assert not at.exception
+    markup = _rendered_html(at)
+    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{" in markup
+    assert "max-width: 100%" in markup
+    assert "height: auto" in markup, "縦横比を保ったまま縮めること"
+
+
 @pytest.mark.parametrize(
     ("height", "width", "expected"),
     [

@@ -94,6 +94,14 @@ def _run(builder: str = "available_browser") -> AppTest:
 
 
 def _all_text(at: AppTest) -> str:
+    """**アプリ自身が書いた文だけ**を集める。
+
+    `st.text` は意図的に含めない。そこに出るのは配布元の注意書きの原文
+    （`metadata.warning`）であり、「優劣…を示すものではない」のように否定文
+    の中で価値判断語を含む。引用まで禁止語の走査へ入れると、原文を一字一句
+    出すという AC-REFERENCE-04 の要求と衝突する。引用そのものは
+    `test_reference_page_carries_the_source_warning_verbatim` が別に見る。
+    """
     parts: list[str] = []
     for block in (at.markdown, at.caption, at.info, at.warning, at.subheader, at.header, at.title):
         parts.extend(str(element.value) for element in block)
@@ -121,6 +129,49 @@ def test_reference_page_offers_three_multiselect_axes() -> None:
     assert all(element.value == [] for element in at.multiselect), "既定は未選択"
 
 
+def test_reference_page_labels_the_filters_in_japanese() -> None:
+    """日本語 UI の中に Streamlit 既定の英語 placeholder を残さない（§5.4）。
+
+    罠: `placeholder=` を渡さない実装は、3 つの multiselect すべてに
+    "Choose options" を出す。
+    """
+    at = _run()
+
+    for element in at.multiselect:
+        placeholder = element.proto.placeholder
+        assert placeholder, f"{element.label} に placeholder が無い"
+        assert not placeholder.isascii(), (
+            f"{element.label} の placeholder が英語のまま: {placeholder}"
+        )
+
+
+def test_reference_page_says_that_an_unset_axis_matches_everything() -> None:
+    """AC-REFERENCE-01: 未選択の軸は絞り込みに使われず全件が対象になる。
+
+    その挙動が画面に書かれていないと、既定表示の件数が「全件」なのか
+    「たまたま何かで絞られた数」なのか読み取れない。
+    """
+    at = _run()
+    text = _all_text(at)
+
+    assert "全件" in text
+    assert "未選択" in text or "選択しない" in text
+
+
+def test_reference_page_discloses_the_stretched_point_scale() -> None:
+    """§8.6.7: 「点」は引き伸ばした目盛りである、という開示を Analyze と揃える。
+
+    罠: Analyze 側にだけ `SCORE_SCALE_CAPTION` を置く実装は、同じ「点」を
+    2 つの画面で違う扱いにする。ここでは母集団の中の位置を表さないことを、
+    §10.7 が禁じる語（順位・パーセンタイル・偏差値）を使わずに述べる。
+    """
+    at = _run()
+    text = _all_text(at)
+
+    assert "引き伸ば" in text
+    assert "母集団" in text
+
+
 def test_reference_page_shows_the_population_size_first() -> None:
     """FR-037: 件数を最初に見せる。全軸未選択なら全件が対象になる。"""
     at = _run()
@@ -133,12 +184,26 @@ def test_reference_page_shows_the_population_size_first() -> None:
 
 
 def test_reference_page_carries_the_source_warning_verbatim() -> None:
-    """AC-REFERENCE-04: `summary.json` の warning をそのまま引く。"""
+    """AC-REFERENCE-04: `summary.json` の warning をそのまま引く。
+
+    **`st.text` の中身を直接見る。** 以前はこの test が `_all_text`（アプリ
+    自身の文）だけを見ており、アプリ側の言い換えが原文と同じ語を含んでいた
+    ために通っていた。引用が画面から丸ごと消えても気付けない状態だった。
+    """
+    at = _run()
+
+    quoted = [str(element.value) for element in at.text]
+
+    assert quoted == [_METADATA.warning], "配布元の注意書きを一字一句そのまま出すこと"
+
+
+def test_reference_page_states_the_exploratory_limits_in_its_own_words() -> None:
+    """AC-REFERENCE-04: 引用に頼らず、アプリ自身の言葉でも同じ制限を述べる。"""
     at = _run()
     text = _all_text(at)
 
     assert "探索値" in text
-    assert "正常値・目標値・個人評価・人物間比較には使用できない" in text
+    assert "正常値・目標値・個人評価・人物間比較には使用できません" in text
     assert "群間の差" in text or "群ごとの挙動差" in text
     assert "非商用" in text or "non-commercial" in text
     assert "推定" in text and "注釈" in text, "注釈であって推定でないことを述べる"

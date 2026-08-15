@@ -422,6 +422,13 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         # ライブセッションは記録を積み上げるため、件数を示してこの
         # ダウンロードが実際にどこまでを含むかを伝える。
         show_record_count=True,
+        # FR-017 は記録が 1 件以上あるときにだけエクスポートを提示する。その
+        # ためこのタブは開始直後に何も描かず、中身が真っ白になっていた。提示
+        # 条件は変えずに、空白を「まだ何も無い」という説明へ置き換える。
+        empty_notice=(
+            "まだ書き出せる記録がありません。"
+            "カメラを開始し、品質ゲートを満たすフレームが得られると記録が貯まります。"
+        ),
     )
 
 
@@ -542,7 +549,7 @@ def _exit_fullscreen() -> None:
 
 def _render_session_controls(pipeline: RealtimeLandmarkPipeline) -> None:
     """停止・リセットの操作子。メイン画面から到達できる位置に置く（§5.1）。"""
-    st.caption("カメラ映像は映像上の `STOP` で停止します。")
+    st.caption("カメラ映像は、映像の下にある STOP ボタンで停止します。")
     controls = st.columns(2)
     if controls[0].button("結果・履歴・平滑化をリセット", key="reset_analysis"):
         pipeline.reset_analysis()
@@ -564,12 +571,13 @@ def render_camera_section() -> None:
     切り替えは表示専用で、測定値を変えず WebRTC の通信も中断しない
     （AC-LAYOUT-01）。
     """
+    # §5.1: 映像より上の行数は、そのまま映像が画面外へ押し出される量になる。
+    # ここで述べるのはプライバシー境界（毎回読めることに意味がある）と、数値
+    # がどこに出るかの 1 文だけに絞る。算出方法と制約は About ページにある。
     st.subheader("リアルタイム ランドマーク表示")
     st.caption(
         "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "映像にはランドマークと中心線だけを重ね、主要な数値は映像へ重ねる"
-        "HUD（吹き出し）に表示します。設定と詳しい数値は映像の下のタブに"
-        "まとめています。"
+        "主要な数値は映像へ重ねる HUD に表示し、設定と詳しい数値は映像の下のタブにまとめています。"
     )
 
     model_path = resolve_ready_landmarker()

@@ -24,14 +24,23 @@ def render_export_panel(
     warning: str,
     key_prefix: str,
     show_record_count: bool = False,
+    empty_notice: str | None = None,
 ) -> None:
-    """エクスポート節を描画する。データが無いときは何も描画しない。
+    """エクスポート節を描画する。データが無いときは download button を出さない。
 
     FR-017 は結果が 1 件以上あるときにのみエクスポートを提示する。そのため空の
-    （あるいは存在しない）bundle では見出しを含め何も描かない。利用者が操作
+    （あるいは存在しない）bundle では見出しもボタンも描かない。利用者が操作
     できない節をページに出さないためである。
+
+    ``empty_notice`` はその提示条件を緩めない。**ボタンの代わりに一行の説明を
+    置くだけである。** これが無かった間、Camera の「エクスポート」タブは開始
+    直後に何ひとつ描かれず、中身が真っ白になっていた——利用者から見れば
+    「壊れている」と「まだ何も無い」を区別できない。文言は呼び出し側が持つ
+    （Camera は記録が貯まる条件を、Image は写真を選ぶことを案内する）。
     """
     if bundle is None or not bundle.records:
+        if empty_notice:
+            st.info(empty_notice)
         return
 
     st.divider()

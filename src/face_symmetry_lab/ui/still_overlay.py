@@ -85,7 +85,13 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
 .st-key-{STILL_OVERLAY_CONTAINER_KEY} {{
     position: relative; max-width: 100%; margin-inline: auto;
 }}
-.st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{ display: block; }}
+/* `st.image(..., width=<px>)` は `<img>` へ固定幅を書き込む。上限（760px）より
+   狭いブラウザ幅では、コンテナ（`max-width: 100%`）だけが縮んで画像がその外へ
+   はみ出し、吹き出しの基準と画像の左端がずれる。縦横比を保ったまま一緒に縮む
+   ようにしておく。 */
+.st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{
+    display: block; max-width: 100%; height: auto;
+}}
 /* Streamlit は要素 1 つずつを `.stElementContainer`（`position: relative`）で
    包む。これを静的へ戻さないと、吹き出しの包含ブロックがキー付きコンテナでは
    なく、画像の直後にある高さ 0 のラッパーになる（実ブラウザで確認した症状）。

@@ -337,6 +337,22 @@ def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
         assert forbidden not in source
 
 
+def test_the_export_tab_explains_itself_before_the_first_record() -> None:
+    """開始直後の「エクスポート」タブを真っ白にしない（FR-017 の提示条件は不変）。
+
+    `render_export_panel` は記録が無いと節ごと何も描かないため、タブの中身が
+    空白になっていた。**罠: `empty_notice` を渡さない実装は、利用者から見て
+    「壊れている」と「まだ何も無い」を区別できないままにする。**
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "empty_notice=" in source
+
+
 # --- §5.1 レイアウト: 映像を最上部に保つ --------------------------------------
 
 

@@ -41,6 +41,27 @@ from face_symmetry_lab.ui.readings import PART_LABELS
 _AGE_MODE_BAND: Final[str] = "年齢帯で選ぶ"
 _AGE_MODE_RANGE: Final[str] = "1歳刻みの範囲で選ぶ"
 
+#: Streamlit 既定の placeholder は英語（"Choose options"）である。日本語 UI の中に
+#: そのまま残すと、3 つの絞り込みだけが別のアプリのように見える（§5.4）。
+_MULTISELECT_PLACEHOLDER: Final[str] = "すべて（絞り込まない）"
+
+#: AC-REFERENCE-01: 未選択の軸は絞り込みに使われず全件が対象になる。**その挙動を
+#: 画面へ書く。** 書かないと、既定表示の件数が「全件」なのか「たまたま何かで
+#: 絞られた数」なのかを読み取る手掛かりが画面上に無い。
+_FILTER_SCOPE_CAPTION: Final[str] = (
+    "未選択の軸は絞り込みに使いません（その軸は全件が対象になります）。"
+    "軸をまたぐ条件は同時に満たすものだけが残り、同じ軸の複数選択はそのいずれかに一致するものが残ります。"
+)
+
+#: §8.6.7: 「点」は実測が集まる範囲へ合わせて引き伸ばした目盛りである。Analyze 側
+#: （`ui.scores.SCORE_SCALE_CAPTION`）にだけ開示を置くと、同じ「点」を 2 つの画面で
+#: 違う扱いにしてしまう。**§10.7 が禁じる語（順位・パーセンタイル・偏差値）を
+#: 使わずに、母集団の中の位置を表さないことを述べる。**
+_SCORE_SCALE_CAPTION: Final[str] = (
+    "点は、実測が集まる範囲（ずれ 1.0〜5.0%）へ合わせて引き伸ばした目盛りで読んだ値です。"
+    "引き伸ばした分だけばらつきも拡大します。母集団の中の位置を表す値ではありません。"
+)
+
 #: §9.5 の 7 指標のうち、部位別・全体の平均対称度（%）として並べる 5 つ。
 #: `domain.metrics.PART_NAMES` の順（輪郭・目・鼻・口）に全体を続ける——
 #: `ui.readings` が使うラベルを再利用し、部位名の和訳を 2 か所に持たない。
@@ -59,9 +80,18 @@ def _default_browser() -> ReferenceBrowser:
 def _render_filters() -> ReferenceFilter:
     """人種・性別・年齢の 3 軸。既定は未選択（= 絞り込まない、全件が対象）。"""
     st.subheader("絞り込み")
+    st.caption(_FILTER_SCOPE_CAPTION)
     race_column, gender_column = st.columns(2)
-    selected_races = race_column.multiselect("人種", options=list(RACE_LABELS))
-    selected_genders = gender_column.multiselect("性別", options=list(GENDER_LABELS))
+    selected_races = race_column.multiselect(
+        "人種",
+        options=list(RACE_LABELS),
+        placeholder=_MULTISELECT_PLACEHOLDER,
+    )
+    selected_genders = gender_column.multiselect(
+        "性別",
+        options=list(GENDER_LABELS),
+        placeholder=_MULTISELECT_PLACEHOLDER,
+    )
 
     age_mode = st.radio(
         "年齢の指定方法",
@@ -71,7 +101,13 @@ def _render_filters() -> ReferenceFilter:
     selected_age_bands: frozenset[str] = frozenset()
     age_range: tuple[int, int] | None = None
     if age_mode == _AGE_MODE_BAND:
-        selected_age_bands = frozenset(st.multiselect("年齢帯", options=list(AGE_BANDS)))
+        selected_age_bands = frozenset(
+            st.multiselect(
+                "年齢帯",
+                options=list(AGE_BANDS),
+                placeholder=_MULTISELECT_PLACEHOLDER,
+            )
+        )
     else:
         age_range = st.slider("年齢の範囲（1歳刻み）", MIN_AGE, MAX_AGE, (MIN_AGE, MAX_AGE))
 
@@ -123,6 +159,7 @@ def _render_results(result: ReferenceQueryResult, *, min_group_for_ci: int) -> N
             "標準偏差（点）",
             "—" if score_summary.sd is None else f"{score_summary.sd:.2f}",
         )
+        st.caption(_SCORE_SCALE_CAPTION)
 
         st.caption("部位別・全体の平均対称度（%）")
         for column, (metric_name, label) in zip(
@@ -136,18 +173,24 @@ def _render_results(result: ReferenceQueryResult, *, min_group_for_ci: int) -> N
 
 
 def _render_disclosures(metadata: ReferenceDatasetMetadata) -> None:
-    """AC-REFERENCE-04: 探索的統計であること・注釈であって推定でないこと等。"""
+    """AC-REFERENCE-04: 探索的統計であること・注釈であって推定でないこと等。
+
+    **文体はアプリの他の画面（ですます体）に揃える。** ここはアプリが利用者へ
+    向けて書く文であり、下に続く `metadata.warning`（配布元の注意書き、原文の
+    まま）とは出所が違う。同じ体裁で並べると、どちらがアプリの言葉でどちらが
+    引用なのかが読み取れなくなる。
+    """
     st.subheader("この画面についての注意")
     st.markdown(
         "- この結果は探索値であり、"
-        "正常値・目標値・個人評価・人物間比較には使用できない。\n"
+        "正常値・目標値・個人評価・人物間比較には使用できません。\n"
         "- 群間の差は、撮影条件・注釈・構成比、"
-        "ランドマーク検出の群ごとの挙動差を含みうるため、原因を断定できない。\n"
+        "ランドマーク検出の群ごとの挙動差を含みうるため、原因を断定できません。\n"
         "- 人種・性別・年齢は UTKFace の配布時の注釈であり、"
-        "本アプリやモデルの推定ではない。\n"
-        "- この画面は平均と標準偏差だけを扱う。"
-        "中央値と 95% 信頼区間はセル集計から復元できないため、v1 では表示しない。\n"
-        f"- {metadata.dataset_name} は非商用研究限定のデータセットである"
+        "本アプリやモデルの推定ではありません。\n"
+        "- この画面は平均と標準偏差だけを扱います。"
+        "中央値と 95% 信頼区間はセル集計から復元できないため、v1 では表示しません。\n"
+        f"- {metadata.dataset_name} は非商用研究限定のデータセットです"
         f"（{metadata.license_scope} · {metadata.dataset_url}）。"
     )
     st.caption("データセット配布元の注意書き（原文のまま）")
