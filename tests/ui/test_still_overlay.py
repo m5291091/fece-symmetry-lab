@@ -13,8 +13,11 @@ import numpy as np
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
 from face_symmetry_lab.domain.metrics import PART_NAMES
+from face_symmetry_lab.domain.models import GenderLabel
+from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.hud import build_hud_payload
 from face_symmetry_lab.ui.scores import PART_LABELS, format_score, format_symmetry
 from face_symmetry_lab.ui.still_overlay import (
@@ -566,3 +569,99 @@ def test_the_drag_runtime_is_installed_once_per_render() -> None:
     assert not at.exception
     iframes = [element for element in at.get("iframe")]
     assert len(iframes) == 1
+
+
+# --- FR-039: 参照平均の併記 ----------------------------------------------------
+
+
+def _baseline() -> BaselineSummary:
+    means = {
+        "score_points": 45.0,
+        "symmetry_percent_overall": 96.0,
+        "symmetry_percent_contour": 95.0,
+        "symmetry_percent_eyes": 96.5,
+        "symmetry_percent_nose": 97.0,
+        "symmetry_percent_mouth": 96.2,
+    }
+    return BaselineSummary(
+        age=20,
+        gender=GenderLabel.MALE,
+        count=75,
+        metrics={name: MetricSummary(mean=value, sd=1.0) for name, value in means.items()},
+    )
+
+
+def test_the_still_overlay_reuses_the_hud_baseline_strings() -> None:
+    """罠: 吹き出し側で平均を組み立て直す実装は、HUD と 2 つ目の表示規則へ分岐する。"""
+    payload = build_hud_payload(
+        **_overlay_kwargs(), position="左上", generation="", baseline=_baseline()
+    )
+    html = _overlay(baseline=_baseline())
+
+    assert payload["baseline"]["symmetry"] in html
+    assert payload["baseline"]["score"] in html
+    assert payload["baseline"]["note"] in html
+    for name in PART_NAMES:
+        assert payload["baseline"]["parts"][name] in html
+
+
+def test_each_reading_carries_its_baseline_next_to_it() -> None:
+    """§5.1: 併記は対応する測定値のすぐ下に置き、独立した区画へ切り出さない。"""
+    html = _overlay(baseline=_baseline())
+
+    assert html.count('class="fsl-still-baseline"') == 5  # スコア + 部位別 4 つ
+    assert 'class="fsl-still-baseline fsl-still-baseline-symmetry"' in html
+    assert 'class="fsl-still-baseline-note"' in html
+    # 測定値そのものは変わらない。
+    assert format_symmetry(0.0215) in html
+    assert format_score(0.031) in html
+
+
+def test_the_overlay_without_a_baseline_leaves_the_slots_empty() -> None:
+    """併記が無いときに空行を残さない（CSS の `:empty` が畳む）。"""
+    html = _overlay()
+
+    assert "平均 " not in html
+    assert '<div class="fsl-still-baseline-note"></div>' in html
+
+
+def test_the_still_baseline_scales_with_the_preview() -> None:
+    """縦長写真でプレビューだけが狭くなる場合にも切れないこと（§5.1）。"""
+    html = _overlay(baseline=_baseline())
+    rule = html[html.index(".fsl-still-baseline {") :]
+    rule = rule[: rule.index("}")]
+
+    assert "font-size: clamp(" in rule
+    assert "var(--fsl-preview-width" in rule
+
+
+@pytest.mark.parametrize(
+    "banned",
+    ["偏差値", "順位", "パーセンタイル", "分位", "合格", "平均より上", "平均より下"],
+)
+def test_the_overlay_never_ranks_the_user(banned: str) -> None:
+    """§10.12-1 / AC-BASELINE-04。"""
+    assert banned not in _overlay(baseline=_baseline())
+
+
+def test_the_overlay_states_the_population_and_its_limits() -> None:
+    """AC-BASELINE-04: 母集団・件数・探索値であることを同じ吹き出しの中へ置く。"""
+    html = _overlay(baseline=_baseline())
+
+    assert "20 歳" in html and "男性" in html and "75 件" in html
+    assert "人種で絞り込まず" in html
+    assert "探索値" in html
+    assert "基準値でも目標値でもありません" in html
+    assert "個人評価・人物間比較には使えません" in html
+
+
+def test_the_note_never_pushes_the_drag_grip_out_of_the_box() -> None:
+    """箱は `pointer-events: none` + `max-height` なので、あふれた分は掴めない。
+
+    罠: 長い但し書きを grip の前に置く実装は、狭いプレビューで grip を箱の外へ
+    押し出し、吹き出しを退ける手段そのものを失わせる。
+    """
+    html = _overlay(baseline=_baseline())
+    markup = html[html.index('<div class="fsl-still-hud"') :]  # stylesheet を除く
+
+    assert markup.index("fsl-still-grip") < markup.index("fsl-still-baseline-note")

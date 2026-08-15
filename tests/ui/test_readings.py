@@ -15,9 +15,14 @@ import re
 
 import pytest
 
-from face_symmetry_lab.domain.models import AnalysisState, Status
+from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
+from face_symmetry_lab.domain.reference_baseline import BaselineReading
 from face_symmetry_lab.ui.readings import (
+    BASELINE_CAVEAT,
     GATE_COLORS,
+    baseline_note,
+    format_baseline_score,
+    format_baseline_symmetry,
     format_distance,
     format_score,
     format_symmetry,
@@ -233,3 +238,79 @@ def test_the_blocking_states_are_visually_distinct_from_ok() -> None:
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.HOLD]
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.NO_FACE]
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.ERROR]
+
+
+# --- FR-039 参照平均の併記 ----------------------------------------------------
+
+
+def test_baseline_symmetry_shows_the_mean_and_the_signed_difference() -> None:
+    reading = BaselineReading(mean=96.31, delta=2.11)
+    assert format_baseline_symmetry(reading) == "平均 96.31%（+2.11）"
+
+
+def test_baseline_symmetry_keeps_the_sign_when_the_value_is_below_the_mean() -> None:
+    """罠: `abs()` を挟んだ実装は符号を落とし、どちら側かが読めなくなる。"""
+    assert (
+        format_baseline_symmetry(BaselineReading(mean=96.31, delta=-1.4)) == "平均 96.31%（-1.40）"
+    )
+
+
+def test_baseline_score_uses_points_and_not_percent() -> None:
+    """§8.6.7: 点と % が同じ目盛りに見えてはならない（`format_score` と同じ桁）。"""
+    text = format_baseline_score(BaselineReading(mean=41.5, delta=20.8))
+    assert text == "平均 41.5 点（+20.8）"
+    assert "%" not in text
+
+
+def test_a_missing_display_value_leaves_the_mean_without_a_difference() -> None:
+    """不変条件 11: 差を 0 で埋めない（`+0.00` は「平均と同じ」という測定結果）。"""
+    assert format_baseline_symmetry(BaselineReading(mean=96.31, delta=None)) == "平均 96.31%"
+    assert format_baseline_score(BaselineReading(mean=41.5, delta=None)) == "平均 41.5 点"
+
+
+def test_a_vanishing_difference_never_renders_as_negative_zero() -> None:
+    """丸め誤差から「わずかに下」と読める表示を作らない。"""
+    assert format_baseline_symmetry(BaselineReading(mean=96.31, delta=-0.001)) == (
+        "平均 96.31%（+0.00）"
+    )
+
+
+def test_no_baseline_renders_as_nothing_rather_than_a_missing_marker() -> None:
+    """`—` は測定の欠測に使う記号であり、併記の不在ではない。"""
+    assert format_baseline_symmetry(None) == ""
+    assert format_baseline_score(None) == ""
+
+
+def test_the_baseline_note_names_the_population_and_the_count() -> None:
+    """AC-BASELINE-04: 何と比べているのかを画面から読み取れるようにする。"""
+    note = baseline_note(age=20, gender=GenderLabel.MALE, count=1075)
+    assert "20 歳" in note
+    assert "男性" in note
+    assert "1,075 件" in note
+    assert "人種で絞り込まず" in note
+
+
+@pytest.mark.parametrize(
+    "banned",
+    ["偏差値", "順位", "パーセンタイル", "分位", "合格", "平均より上", "平均より下"],
+)
+def test_the_baseline_note_never_ranks_the_user(banned: str) -> None:
+    """§10.12-1: 差は引き算であって、順序への写像ではない。"""
+    note = baseline_note(age=20, gender=GenderLabel.MALE, count=75)
+    assert banned not in note
+    assert banned not in BASELINE_CAVEAT
+
+
+@pytest.mark.parametrize("banned", ["美しい", "良い", "悪い", "優れ", "理想", "劣"])
+def test_the_baseline_note_carries_no_value_judgement(banned: str) -> None:
+    assert banned not in baseline_note(age=20, gender=GenderLabel.MALE, count=75)
+
+
+def test_the_baseline_note_states_what_the_mean_is_not() -> None:
+    """§5.3 / §10.12-5: 平均が基準値・目標値でないことを同じ場所へ書く。"""
+    note = baseline_note(age=20, gender=GenderLabel.FEMALE, count=75)
+    assert "基準値でも目標値でもありません" in note
+    assert "探索値" in note
+    assert "個人評価・人物間比較には使えません" in note
+    assert "非商用研究限定" in note
+    assert "括弧内は表示値と平均の差です" in note

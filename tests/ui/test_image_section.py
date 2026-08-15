@@ -412,6 +412,86 @@ def test_gate_blocking_hides_the_bubble_estimate() -> None:
     assert "参考年齢・参考性別を表示できません" in markup
 
 
+# --- FR-039: 参照平均の併記 ----------------------------------------------------
+
+
+_BUBBLE_SETUP = (
+    "import numpy as np\n"
+    "import streamlit as st\n"
+    "from datetime import UTC, datetime\n"
+    "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+    "from face_symmetry_lab.application.analyzer import AnalysisOutcome\n"
+    "from face_symmetry_lab.application.still_image import (\n"
+    "    StillImageAnalysis,\n"
+    "    StillImageLandmarks,\n"
+    ")\n"
+    "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
+    "from face_symmetry_lab.domain.landmarks import build_landmark_frame\n"
+    "from face_symmetry_lab.domain.models import AnalysisState, Status\n"
+    "from face_symmetry_lab.ui.image_section import (\n"
+    "    RESULT_STATE_KEY,\n"
+    "    _render_preview_with_overlay,\n"
+    ")\n"
+    "st.session_state[RESULT_STATE_KEY] = build_demographic_estimate(\n"
+    "    estimated_age_years=30.0, gender_probabilities=(0.3, 0.7),\n"
+    "    model_version='test/1.0.0', model_sha256='a' * 64,\n"
+    "    observed_at=datetime(2026, 8, 11, tzinfo=UTC),\n"
+    ")\n"
+    "rgb = np.zeros((20, 20, 3), dtype=np.uint8)\n"
+    "frame = build_landmark_frame(frame_id=1, face_count=1, width=20, height=20)\n"
+    "analysis = StillImageAnalysis(\n"
+    "    landmarks=StillImageLandmarks(frame=frame, preview=rgb),\n"
+    "    outcome=AnalysisOutcome(\n"
+    "        frame_id=1,\n"
+    "        state=AnalysisState(status=Status.OK),\n"
+    "        symmetry=None,\n"
+    "        overall_distance_smooth=None,\n"
+    "        pose=None,\n"
+    "        face_area_ratio=None,\n"
+    "        metric_version='metric/test',\n"
+    "        landmark_map_version='map/test',\n"
+    "    ),\n"
+    ")\n"
+)
+
+
+def test_the_bubble_carries_the_baseline_for_the_shown_estimate() -> None:
+    """FR-039/AC-BASELINE-01: 同梱の参照統計を通した、Image 側の端から端までの配線。
+
+    30 歳・男性は `configs/reference/` の全人種を合わせて 283 件である。
+    """
+    at = AppTest.from_string(_BUBBLE_SETUP + "_render_preview_with_overlay(analysis, None)\n")
+    at.run()
+
+    assert not at.exception
+    markup = " ".join(element.value for element in at.markdown)
+    assert "参考年齢 30 歳" in markup
+    assert "30 歳・男性" in markup
+    assert "283 件" in markup
+    assert "人種で絞り込まず" in markup
+
+
+def test_the_bubble_drops_the_baseline_when_the_gate_hides_the_age() -> None:
+    """§10.12-3: 母集団の年齢から、ゲートが隠した判断を復元させない。
+
+    罠: 吹き出しへ渡す推定とは別に session state から母集団を引く実装は、
+    参考年齢を隠したまま「30 歳・男性の平均」を出してしまう。
+    """
+    at = AppTest.from_string(
+        _BUBBLE_SETUP + "_render_preview_with_overlay(\n"
+        "    analysis,\n"
+        "    AgeGateOutcome(status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None),\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    markup = " ".join(element.value for element in at.markdown)
+    assert "平均 " not in markup
+    assert "30 歳" not in markup
+    assert "参考年齢・参考性別を表示できません" in markup
+
+
 def test_the_page_module_no_longer_owns_the_image_mode() -> None:
     """H4: `ui.app` はページの骨格だけを持ち、Image モードの中身は持たない。
 

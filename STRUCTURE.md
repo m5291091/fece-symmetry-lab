@@ -15,6 +15,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
 | 参照統計ブラウザ（人種・性別・年齢での絞り込み閲覧、FR-037） | `src/face_symmetry_lab/ui/reference_page.py` |
 | 参照統計の凍結セルテーブル（§9.5、アプリが読む唯一の参照データ） | `configs/reference/utkface_symmetry3d_cells_v1.csv` |
+| 吹き出し・HUD へ併記する参照平均の解決（FR-039） | `src/face_symmetry_lab/ui/baseline.py` |
 | 参照統計セルテーブルの生成 (dev-only、アプリからは呼ばない) | `scripts/build_reference_dataset.py` |
 | 参照統計の生成元 notebook（再現性の正本。`src/` からは参照しない） | `research/utkface-symmetry/utkface_symmetry_lab.ipynb` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
@@ -138,6 +139,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 参照統計の use case・入力検証・失敗分離 | `application/reference_browser.py` | `tests/application/test_reference_browser.py` | FR-037, AC-REFERENCE-02, AC-REFERENCE-03 |
 | 凍結参照アセットの読み込みと sha256 検証 | `adapters/io/reference_dataset.py` | `tests/adapters/test_reference_dataset.py` | FR-037, §9.5, §10.9, AC-REFERENCE-03 |
 | 参照統計ページの描画と注意書き | `ui/reference_page.py` | `tests/ui/test_reference_page.py` | FR-037, §10.7, AC-REFERENCE-02〜04 |
+| 参照平均の併記（母集団の選択と差） | `domain/reference_baseline.py` | `tests/domain/test_reference_baseline.py` | FR-039, §10.12, AC-BASELINE-01, AC-BASELINE-02 |
+| 参照平均の use case（失敗分離・memo 化） | `application/reference_baseline.py` | `tests/application/test_reference_baseline.py` | FR-039, §10.12, AC-BASELINE-01, AC-BASELINE-03 |
+| 参照平均の画面側の解決 | `ui/baseline.py` | `tests/ui/test_baseline.py` | FR-039, §10.12, AC-BASELINE-01 |
 | 個票 → セルテーブルの生成と自己検証 (dev-only) | `scripts/build_reference_dataset.py` | `tests/repository/test_build_reference_dataset.py` | FR-037, §9.5, §10.9 |
 
 ## Maintenance
@@ -149,7 +153,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `25662baabb791910675e0143f1150f9d04d9f976b85ebc93662b07d0e8c047d4`_
+_File-list SHA-256: `8cad537066c547fe7aef44dafa934a7b4de2007f1e4ab29a4ff5b2b779c0d60d`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -184,6 +188,7 @@ face-symmetry-lab/
     - `0003-age-gender-and-skin-correction.md`
     - `0004-reference-statistics-browser-data.md`
     - `0005-age-gate-for-reference-age-display.md`
+    - `0006-reference-baseline-alongside-user-readings.md`
   - `model-cards/`
     - `age-gate-v1-evaluation.json`
     - `age-gate-v1.md`
@@ -232,13 +237,13 @@ face-symmetry-lab/
         - … (4 files)
       - … (1 files)
     - `application/`
-      - … (17 files)
+      - … (18 files)
     - `domain/`
-      - … (22 files)
+      - … (23 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (16 files)
+      - … (17 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -268,6 +273,7 @@ face-symmetry-lab/
     - `test_preview_compositor.py`
     - `test_quality.py`
     - `test_realtime.py`
+    - `test_reference_baseline.py`
     - `test_reference_browser.py`
     - `test_session.py`
     - `test_still_image.py`
@@ -285,6 +291,7 @@ face-symmetry-lab/
     - `test_models.py`
     - `test_overlay.py`
     - `test_pose.py`
+    - `test_reference_baseline.py`
     - `test_reference_stats.py`
     - `test_score_explanation.py`
     - `test_score_scale.py`
@@ -319,6 +326,7 @@ face-symmetry-lab/
     - `test_about_page.py`
     - `test_age_gate_notice.py`
     - `test_app.py`
+    - `test_baseline.py`
     - `test_camera.py`
     - `test_export_panel.py`
     - `test_guidance.py`
