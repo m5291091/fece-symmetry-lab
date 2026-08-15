@@ -162,12 +162,22 @@ def _render_results(result: ReferenceQueryResult, *, min_group_for_ci: int) -> N
         st.caption(_SCORE_SCALE_CAPTION)
 
         st.caption("部位別・全体の平均対称度（%）")
-        for column, (metric_name, label) in zip(
-            st.columns(len(_PERCENT_METRIC_LABELS)),
-            _PERCENT_METRIC_LABELS,
-            strict=True,
-        ):
-            column.metric(label, f"{aggregate.metrics[metric_name].mean:.2f}%")
+        # **5 つを `st.metric` へ分けない。** `st.metric` の値は 36px・
+        # `white-space: nowrap`・`text-overflow: ellipsis` なので、5 列に割ると
+        # 1 列 99px になり「95.05%」（110px）の末尾の `%` が省略記号へ置き換わる
+        # （実測、画面幅に関わらず 5 つとも）。見出しの 3 つは 1〜2 列なので
+        # `st.metric` のままでよい。表なら列幅に合わせて縮み、切れない。
+        # `_render_matched_cells` と同じく pandas は使わない（同関数の docstring）。
+        header = "| " + " | ".join(label for _, label in _PERCENT_METRIC_LABELS) + " |"
+        divider = "|" + "---|" * len(_PERCENT_METRIC_LABELS)
+        values = (
+            "| "
+            + " | ".join(
+                f"{aggregate.metrics[name].mean:.2f}%" for name, _ in _PERCENT_METRIC_LABELS
+            )
+            + " |"
+        )
+        st.markdown("\n".join((header, divider, values)))
 
     _render_matched_cells(result)
 

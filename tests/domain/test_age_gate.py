@@ -24,6 +24,7 @@ from face_symmetry_lab.domain.age_gate import (
 )
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.pose import FacePose
+from face_symmetry_lab.domain.symmetry_3d import AxisSplit, Symmetry3DResult
 
 #: notebook の `IDX`。ここが違うと特徴量が別物になる。
 IDX = {
@@ -56,15 +57,22 @@ IDX = {
 
 
 class _StubSymmetry3D:
-    """`Symmetry3DResult` のうち、ゲートが読む 2 つだけを持つ stub。"""
+    """`Symmetry3DResult` のうち、ゲートが読む 3 つだけを持つ stub。
+
+    **実物と同じ名前空間にする。** 以前この stub は `distance("overall")` で
+    総合距離を返していたが、実物の `Symmetry3DResult.distance` は `splits`
+    （部位別）しか引かないので `"overall"` には `None` を返す。その食い違いが
+    「テストは通るのに実アプリでは年齢ゲートが毎回沈黙する」障害になった。
+    総合距離は実物と同じく `overall_distance` から出す。
+    """
 
     def __init__(self, parts: dict[str, float | None], overall: float | None, equal: float | None):
         self._parts = parts
-        self._overall = overall
+        self.overall_distance = overall
         self.equal_weight_distance = equal
 
     def distance(self, name: str) -> float | None:
-        return self._overall if name == "overall" else self._parts.get(name)
+        return self._parts.get(name)
 
 
 def _symmetry(value: float = 0.03) -> _StubSymmetry3D:
@@ -188,6 +196,60 @@ def test_pose_and_symmetry_features_are_passed_through_unchanged() -> None:
     assert values["distance_nose"] == pytest.approx(0.033)
     assert values["distance_mouth"] == pytest.approx(0.044)
     assert values["distance_overall"] == pytest.approx(0.055)
+
+
+def test_build_features_accepts_the_real_symmetry_result_not_only_the_stub() -> None:
+    """**実物の `Symmetry3DResult` で 41 次元が組み上がること。**
+
+    実障害の回帰（2026-08-15）: 上の stub は `distance("overall")` が総合距離を
+    返す前提で書かれていたが、実物の `Symmetry3DResult.distance` は `splits`
+    （部位別）だけを引くので `"overall"` に対して常に `None` を返していた。その
+    ため `build_features` は実アプリでは必ず欠測を返し、ゲートは毎回
+    `UNDETERMINED`（安全側 = 非表示）へ倒れ、**どの画像でもリアルタイムでも
+    参考年齢・参考性別が一切表示されなかった**。stub だけで検証していたため、
+    domain・application・model のどのテストもこれを捕まえられなかった。
+
+    罠: 総合距離を `overall_distance` から読まない実装は、ここで欠測になる。
+    """
+    result = Symmetry3DResult(
+        splits={
+            "contour": AxisSplit(distance=0.041, plane=0.041, depth=0.0),
+            "eyes": AxisSplit(distance=0.022, plane=0.022, depth=0.0),
+            "nose": AxisSplit(distance=0.033, plane=0.033, depth=0.0),
+            "mouth": AxisSplit(distance=0.044, plane=0.044, depth=0.0),
+        },
+        overall=AxisSplit(distance=0.055, plane=0.055, depth=0.0),
+        metric_version="symmetry-3d/test",
+        landmark_map_version="map/test",
+    )
+
+    features = build_features(_landmarks(), pose=FacePose(0.0, 0.0, 0.0), symmetry_3d=result)
+
+    assert features is not None, "実物の結果で特徴量が組めないとゲートが常に沈黙する"
+    values = _named(features.as_vector())
+    assert values["distance_overall"] == pytest.approx(0.055)
+    assert values["distance_contour"] == pytest.approx(0.041)
+    assert values["s3d_distance"] == pytest.approx(result.equal_weight_distance)
+
+
+def test_build_features_is_missing_when_the_real_result_has_no_overall() -> None:
+    """§8.5.1: 重ね合わせ自体が成立しないフレームでは総合距離が無い。
+
+    そのときは欠測のまま返し、0 や部位別の値で埋めない（不変条件 11）。
+    """
+    result = Symmetry3DResult(
+        splits={
+            "contour": AxisSplit(distance=0.041, plane=0.041, depth=0.0),
+            "eyes": AxisSplit(distance=0.022, plane=0.022, depth=0.0),
+            "nose": AxisSplit(distance=0.033, plane=0.033, depth=0.0),
+            "mouth": AxisSplit(distance=0.044, plane=0.044, depth=0.0),
+        },
+        overall=None,
+        metric_version="symmetry-3d/test",
+        landmark_map_version="map/test",
+    )
+
+    assert build_features(_landmarks(), pose=FacePose(0.0, 0.0, 0.0), symmetry_3d=result) is None
 
 
 def test_depth_features_are_zero_for_a_flat_face() -> None:

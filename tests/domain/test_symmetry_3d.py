@@ -25,6 +25,7 @@ from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, PartMap, 
 from face_symmetry_lab.domain.symmetry import compute_symmetry
 from face_symmetry_lab.domain.symmetry_3d import (
     Symmetry3DError,
+    Symmetry3DResult,
     compute_symmetry_3d,
     equal_weight_distance_from_parts,
 )
@@ -597,6 +598,34 @@ def test_a_perfectly_symmetric_face_has_zero_equal_weight_distance() -> None:
 # equal_weight_distance_from_parts（H2: 部位別距離だけからの s_3d 算出、
 # `ui.scores` の計算過程開示が部位別平滑値から同じ式を呼べるようにする切り出し）
 # --------------------------------------------------------------------------
+
+
+def test_the_overall_distance_is_readable_without_reaching_into_the_split() -> None:
+    """FR-038 が読む総合距離を、名前で 1 つだけ取り出せるようにする。
+
+    実障害の回帰（2026-08-15）: 読み手（`domain.age_gate.build_features`）は
+    `distance("overall")` で総合距離が取れると仮定していたが、`distance` は
+    `splits`（部位別）しか引かないので `"overall"` には常に `None` を返していた。
+    **部位名と総合を同じ名前空間に混ぜず、専用の入口を用意する。**
+    """
+    result = compute_symmetry_3d(_asymmetric(), _config())
+
+    assert result.overall is not None
+    assert result.overall_distance == pytest.approx(result.overall.distance, abs=1e-12)
+    # 部位名の名前空間は変えない（"overall" は部位ではない）。
+    assert result.distance("overall") is None
+
+
+def test_the_overall_distance_is_missing_when_the_superposition_failed() -> None:
+    """§8.5.1: 重ね合わせが成立しないフレームでは総合距離を持たない。0 で埋めない。"""
+    result = Symmetry3DResult(
+        splits={},
+        overall=None,
+        metric_version="symmetry-3d/test",
+        landmark_map_version="map/test",
+    )
+
+    assert result.overall_distance is None
 
 
 def test_equal_weight_distance_from_parts_computes_the_root_mean_square() -> None:

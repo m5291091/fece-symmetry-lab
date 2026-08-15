@@ -569,11 +569,7 @@ def render_score_details(
 
     symmetry_3d = outcome.symmetry_3d
     if show_smoothed:
-        overall_3d_raw = (
-            symmetry_3d.overall.distance
-            if symmetry_3d is not None and symmetry_3d.overall is not None
-            else None
-        )
+        overall_3d_raw = None if symmetry_3d is None else symmetry_3d.overall_distance
         st.caption(
             f"平滑化前の生値 {format_symmetry(overall_3d_raw)}"
             f"（ずれ {format_distance(overall_3d_raw)}）"

@@ -62,6 +62,9 @@ class SymmetryDistances(Protocol):
     @property
     def equal_weight_distance(self) -> float | None: ...
 
+    @property
+    def overall_distance(self) -> float | None: ...
+
     def distance(self, name: str) -> float | None: ...
 
 
@@ -417,12 +420,21 @@ def build_features(
     equal_weight = symmetry_3d.equal_weight_distance
     if equal_weight is None or not math.isfinite(equal_weight):
         return None
+    # 部位別は `distance(name)`、総合は `overall_distance` から読む。**同じ
+    # `distance()` で `"overall"` を引かない** —— 実物の `Symmetry3DResult` は
+    # `splits`（部位別）しか引かないため常に `None` になり、その結果ここが必ず
+    # 欠測を返して、ゲートが毎回 `UNDETERMINED`（= 参考年齢を出さない）へ倒れて
+    # いた。stub だけがその名前を受け付けていたので、テストは通り続けていた。
     part_and_overall: list[float] = []
-    for name in (*PART_NAMES, "overall"):
+    for name in PART_NAMES:
         value = symmetry_3d.distance(name)
         if value is None or not math.isfinite(value):
             return None
         part_and_overall.append(value)
+    overall = symmetry_3d.overall_distance
+    if overall is None or not math.isfinite(overall):
+        return None
+    part_and_overall.append(overall)
 
     vector = (*geometry, *pose_values, float(equal_weight), *part_and_overall)
     if len(vector) != len(FEATURE_NAMES):

@@ -94,7 +94,7 @@ def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
     """§8.6.3/§8.7: 「全体の対称度」として表示する 3D の総合距離を 1 か所で決める。
 
     平滑値（`overall_distance_3d_smooth`）を優先し、無ければ生値
-    （`symmetry_3d.overall.distance`）へ落ちる。静止画は §8.7 のとおり平滑値を
+    （`symmetry_3d.overall_distance`）へ落ちる。静止画は §8.7 のとおり平滑値を
     持たない（`application.still_image.analyze_still_image` が明示的に欠測へ
     落とす）ため、この関数は自然に生値へ落ちる——呼び出し側が入力モードを
     分岐する必要はない。3D 一式が丸ごと欠測なら `None`（`—`）を返し、`symmetry`
@@ -103,9 +103,7 @@ def resolve_overall_distance(outcome: AnalysisOutcome) -> float | None:
     if outcome.overall_distance_3d_smooth is not None:
         return outcome.overall_distance_3d_smooth
     symmetry_3d = outcome.symmetry_3d
-    if symmetry_3d is not None and symmetry_3d.overall is not None:
-        return symmetry_3d.overall.distance
-    return None
+    return None if symmetry_3d is None else symmetry_3d.overall_distance
 
 
 def resolve_equal_weight_distance(outcome: AnalysisOutcome) -> float | None:

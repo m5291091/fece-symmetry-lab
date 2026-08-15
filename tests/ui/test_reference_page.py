@@ -172,6 +172,34 @@ def test_reference_page_discloses_the_stretched_point_scale() -> None:
     assert "母集団" in text
 
 
+def test_the_part_breakdown_is_not_squeezed_into_five_metric_columns() -> None:
+    """§5.4: 5 つ並べた `st.metric` は値が切れる。**実測の回帰。**
+
+    `st.metric` の値は 36px・`white-space: nowrap`・`text-overflow: ellipsis`
+    である。5 列に分けると 1 列 99px になり、「95.05%」（110px）が 11px はみ出して
+    末尾の `%` が省略記号へ置き換わっていた——5 つとも、画面幅に関わらず。
+    見出しの 3 つ（件数・平均・標準偏差）は 1〜2 列なので `st.metric` のままでよい。
+
+    罠: 部位別を `st.metric` へ戻すと、この assertion が落ちる。
+    """
+    at = _run()
+
+    labels = [element.label for element in at.metric]
+
+    assert labels == ["一致した件数", "平均スコア（点）", "標準偏差（点）"]
+
+
+def test_the_part_breakdown_still_shows_every_label_and_value() -> None:
+    """並べ方を変えても、5 つの値は 1 つも減らさない。"""
+    at = _run()
+    text = _all_text(at)
+
+    for label in ("輪郭", "目", "鼻", "口", "全体"):
+        assert label in text
+    # 4 セル（12+10+15 件のうち条件に一致する分）の平均が %表示で出ている。
+    assert text.count("%") >= 5
+
+
 def test_reference_page_shows_the_population_size_first() -> None:
     """FR-037: 件数を最初に見せる。全軸未選択なら全件が対象になる。"""
     at = _run()

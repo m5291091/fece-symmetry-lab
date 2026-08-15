@@ -20,9 +20,17 @@ from tests.domain.test_age_gate import IDX, _landmarks
 
 
 class _StubSymmetry3D:
+    """実物の `Symmetry3DResult` と同じ名前空間を持つ fake。
+
+    総合距離は `distance("overall")` ではなく `overall_distance` から出す
+    （実物の `distance` は部位別しか引かない。この食い違いが「テストは通るのに
+    実アプリでは年齢ゲートが毎回沈黙する」障害になった）。
+    """
+
     def __init__(self, value: float = 0.03):
         self._value = value
         self.equal_weight_distance = value
+        self.overall_distance = value
 
     def distance(self, name: str) -> float | None:
         return self._value
