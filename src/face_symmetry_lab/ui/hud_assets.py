@@ -30,15 +30,30 @@ from typing import Final
 #: 辿る。Streamlit 内部の `data-testid` に依存しないため、以前に擬似全画面が
 #: 黙って壊れた原因を避けられる。
 HUD_STYLESHEET: Final[str] = """
+/* §5.1: 箱・余白・文字を 1 つの尺度（ビューポート幅）へ結び、画面が小さいほど
+   HUD 全体が小さくなるようにする。
+
+   **これは「はみ出したらスクロール」では解けない。** HUD は
+   `pointer-events: none` なので、あふれた分を利用者が引き寄せる手段が無く、
+   箱の外へ出た数値はそのまま読めなくなる（`overflow-y: auto` は最後の安全網
+   であって、設計上あてにしてよい逃げ道ではない）。固定 px の版では、狭い画面
+   で箱がビューポートのほぼ全幅を占めたまま中の文字だけが元の大きさで残り、
+   「98.42%」の末尾が切れていた。
+
+   折れ線グラフ（`#fsl-hud-chart`）は `width: 100%` と viewBox で自動的に
+   同じ比率で縮むため、高さもこの幅に連動する。 */
 #fsl-hud {
     position: fixed; z-index: 1000050;
     background: rgba(0,0,0,.72); color: #fff;
-    padding: 16px 22px; border-radius: 16px;
+    width: clamp(210px, 26vw, 360px);
+    padding: clamp(10px, 1.2vw, 16px) clamp(13px, 1.6vw, 22px);
+    border-radius: 16px;
     border: 2px solid #6B6B6B;
     pointer-events: none;
     font-variant-numeric: tabular-nums;
     font-family: inherit;
-    max-width: min(360px, 92vw); max-height: 90vh; overflow-y: auto;
+    overflow-wrap: anywhere;
+    max-width: 92vw; max-height: min(90vh, 720px); overflow-y: auto;
 }
 #fsl-hud[hidden] { display: none; }
 /* 全画面の状態帯: 現在地と、START 前なら次に何をすべきかを示す。
@@ -53,29 +68,44 @@ HUD_STYLESHEET: Final[str] = """
 #fsl-chrome-badge {
     background: rgba(0,0,0,.72); color: #fff;
     border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
-    padding: 6px 16px; font-size: .8rem; letter-spacing: .04em;
+    padding: 6px 16px; font-size: clamp(.68rem, .9vw, .8rem); letter-spacing: .04em;
 }
 #fsl-chrome-hint {
     background: rgba(0,0,0,.72); color: #fff;
-    border-radius: 12px; padding: 10px 18px; font-size: 1rem; max-width: 70vw;
+    border-radius: 12px; padding: 10px 18px;
+    font-size: clamp(.8rem, 1.3vw, 1rem); max-width: 70vw;
 }
 #fsl-chrome-hint[hidden] { display: none; }
-#fsl-hud-value { font-size: 3.2rem; font-weight: 700; line-height: 1; }
-#fsl-hud-label { font-size: .85rem; opacity: .75; margin-bottom: 10px; }
+/* 文字はすべて `clamp(最小, ビューポート連動, 最大)` で書く。最大値は従来の
+   固定値そのままなので、広い画面での見た目は変わらない。最小値は、狭い画面で
+   数値 6 文字（「98.42%」）が箱の内寸へ確実に収まる大きさである。
+
+   中間の項は `min(vw, vh)` にして、**足りないほうの寸法へ合わせる。** 箱の高さ
+   上限は `90vh` なので、横に広く縦に短い窓（分割表示など）で幅だけを見て決めると
+   中身が縦にあふれ、`pointer-events: none` の箱では読む手段が無くなる。 */
+#fsl-hud-value {
+    font-size: clamp(1.5rem, min(3.6vw, 6.4vh), 3.2rem);
+    font-weight: 700; line-height: 1;
+}
+#fsl-hud-label {
+    font-size: clamp(.7rem, min(.9vw, 1.6vh), .85rem); opacity: .75; margin-bottom: .7em;
+}
 /* H1: 「全体のスコア」行。全体の対称度（#fsl-hud-value）より小さく、部位別の
    行より目立たせる。§8.6.3 は表示名だけの区別であり評価の強調ではない。 */
 #fsl-hud-score-row {
-    display: flex; align-items: baseline; gap: 8px;
-    font-size: 1.35rem; font-weight: 600; margin-top: 2px;
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    font-size: clamp(1rem, min(1.6vw, 2.8vh), 1.35rem); font-weight: 600; margin-top: 2px;
 }
-#fsl-hud-score-label { font-size: .8rem; font-weight: 400; opacity: .75; }
+#fsl-hud-score-label {
+    font-size: clamp(.68rem, min(.85vw, 1.5vh), .8rem); font-weight: 400; opacity: .75;
+}
 /* H1: 部位別 4 つ。折り返し可能な行にして、狭い HUD 幅でも収める。 */
 #fsl-hud-parts {
-    display: flex; flex-wrap: wrap; gap: 4px 14px;
-    font-size: .95rem; margin-top: 8px;
+    display: flex; flex-wrap: wrap; gap: 4px clamp(8px, 1vw, 14px);
+    font-size: clamp(.72rem, min(1.05vw, 1.9vh), .95rem); margin-top: 8px;
 }
 .fsl-hud-part b { font-weight: 400; opacity: .75; margin-right: 4px; }
-#fsl-hud-demo { font-size: 1.1rem; margin-top: 8px; }
+#fsl-hud-demo { font-size: clamp(.8rem, min(1.2vw, 2.1vh), 1.1rem); margin-top: 8px; }
 #fsl-hud-demo:empty { display: none; }
 /* H1: 折れ線グラフ。骨格（<svg>・<polyline> 5 本・軸ラベル・凡例）は bridge が
    1 度だけ作り、5Hz の tick では `points` 属性だけを書き換える。 */
@@ -88,8 +118,8 @@ HUD_STYLESHEET: Final[str] = """
 .fsl-chart-nose { stroke: #FFB74D; }
 .fsl-chart-mouth { stroke: #F06292; }
 #fsl-hud-legend {
-    display: flex; flex-wrap: wrap; gap: 4px 10px;
-    font-size: .68rem; opacity: .8; margin-top: 2px;
+    display: flex; flex-wrap: wrap; gap: 4px clamp(6px, .8vw, 10px);
+    font-size: clamp(.58rem, .75vw, .68rem); opacity: .8; margin-top: 2px;
 }
 .fsl-legend { padding-left: 14px; position: relative; }
 .fsl-legend::before {
@@ -105,7 +135,7 @@ HUD_STYLESHEET: Final[str] = """
    ボタンが他の場所ではそのまま押せる状態を保つ。 */
 #fsl-hud-grip {
     pointer-events: auto; cursor: move; touch-action: none;
-    margin-top: 10px; font-size: .75rem; opacity: .55;
+    margin-top: 10px; font-size: clamp(.65rem, .8vw, .75rem); opacity: .55;
     border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px;
 }
 .st-key-camera_preview_frame { position: relative; border-width: 3px !important; }

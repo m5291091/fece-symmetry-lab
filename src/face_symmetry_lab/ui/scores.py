@@ -94,6 +94,25 @@ SCORE_SCALE_CAPTION: Final[str] = (
     "点数は母集団内の順位ではありません。"
 )
 
+#: §5.3 が義務付ける「この数値をどう読むか」の留保。**畳まない。**
+#: `SCORE_SCALE_CAPTION` と同じ理由で、開かないと見えない場所へ置くと数字だけが
+#: 独り歩きする。以前はこれらが詳細結果の末尾に無名の `st.caption` として 3 本
+#: 続き、その後ろに指標の版がもう 1 本続いていた——区切りの無い灰色の壁であり、
+#: 読まれることを前提にできない形だった。見出しを持つ 1 つの箱へまとめ、走査
+#: できる並びにする。**内容は 1 つも減らしていない。**
+READING_LIMITS_HEADING: Final[str] = "この数値の読み方"
+
+READING_LIMITS: Final[tuple[str, ...]] = (
+    DISTANCE_UNIT_CAPTION,
+    "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
+    "部位別の値を平均しても全体の対称度にはなりません（全体の対称度は全対応ペアを"
+    "まとめて 1 回だけ折りたたんで求めるためです）。「全体のスコア」は"
+    "部位別の値から明示的に組み立てた別の値で、全体の対称度とは重みも目盛りも"
+    "異なります（点と %）。",
+    "同一人物・同一環境内の相対的な傾向を見るための値です。"
+    "他人との比較、医学的評価、魅力度の判断には使用できません。",
+)
+
 #: §5.3・§14.7（同 docs）: 部位別の値は同一条件で撮り直すだけでも動く幅がある。
 #: この注記は 4 部位すべてに等しく掛かる形にし、特定の部位（鼻など）だけを
 #: 名指しで「使えない」と述べない。測定は被写体 1 名によるため、部位ごとの
@@ -576,23 +595,28 @@ def render_score_details(
     render_pose(outcome)
     _render_skin_quality(outcome)
 
-    st.caption(DISTANCE_UNIT_CAPTION)
-    st.caption(
-        "人物の状態や価値を示す尺度ではなく、実写で 100% になることも保証しません。"
-        "部位別の値を平均しても全体の対称度にはなりません（全体の対称度は全対応ペアを"
-        "まとめて 1 回だけ折りたたんで求めるためです）。「全体のスコア」は"
-        "部位別の値から明示的に組み立てた別の値で、全体の対称度とは重みも目盛りも"
-        "異なります（点と %）。"
-    )
-    st.caption(
-        "同一人物・同一環境内の相対的な傾向を見るための値です。"
-        "他人との比較、医学的評価、魅力度の判断には使用できません。"
-    )
+    _render_reading_limits()
+
+    # 版と対応表は来歴であって留保ではない（FR-020）。上の箱へ混ぜず、
+    # セクションの締めとして分けて置く。
     metric_3d_label = symmetry_3d.metric_version if symmetry_3d is not None else "—"
     st.caption(
         f"metric {metric_3d_label} · 2D 診断 {outcome.metric_version} · "
         f"landmark map {outcome.landmark_map_version}"
     )
+
+
+def _render_reading_limits() -> None:
+    """§5.3 の留保を、見出しを持つ 1 つの箱へまとめて描く（畳まない）。
+
+    `st.expander` を使わないのは `SCORE_SCALE_CAPTION` と同じ理由である
+    ——開かないと見えない場所へ置くと、数字だけが独り歩きする。ここで変える
+    のは並びと見た目だけで、述べる内容は 1 つも減らしていない。
+    """
+    with st.container(border=True):
+        st.caption(f"**{READING_LIMITS_HEADING}**")
+        for limit in READING_LIMITS:
+            st.caption(f"- {limit}")
 
 
 # --- 参考年齢・参考性別 -------------------------------------------------------

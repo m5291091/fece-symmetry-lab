@@ -100,6 +100,64 @@ def test_the_hud_shell_caps_its_size_for_small_or_fullscreen_viewports() -> None
     assert "overflow-y: auto" in hud_rule
 
 
+def _rule_body(selector: str) -> str:
+    """CSS 規則 ``selector { ... }`` の中身だけを取り出す。"""
+    start = HUD_STYLESHEET.index(selector)
+    return HUD_STYLESHEET[start : HUD_STYLESHEET.index("}", start)]
+
+
+def test_the_hud_box_scales_with_the_viewport_instead_of_a_fixed_width() -> None:
+    """§5.1: 画面が小さいほど HUD も小さくなる。
+
+    **HUD は `pointer-events: none` である。** 内容が箱からあふれても利用者は
+    スクロールできず、あふれた数値は読む手段が無いまま消える。したがって
+    「あふれたらスクロールさせる」ではなく「どの画面幅でも収まる」で解く。
+    罠: `max-width: min(360px, 92vw)` だけに戻すと、狭い画面では箱が
+    ビューポートのほぼ全幅を占めたまま中身の文字だけが固定サイズで残る。
+    """
+    hud_rule = _rule_body("#fsl-hud {")
+
+    assert "clamp(" in hud_rule, "幅を viewport へ追従させること"
+    assert "vw" in hud_rule
+
+
+def test_every_hud_reading_uses_a_fluid_type_size() -> None:
+    """画面に出る数値はすべて画面幅へ追従する（§5.1・§5.4）。
+
+    罠: `font-size: 3.2rem` のような固定値へ戻した実装は、狭い画面で
+    「98.42%」の末尾が箱の外へ出る。
+    """
+    for selector in (
+        "#fsl-hud-value {",
+        "#fsl-hud-label {",
+        "#fsl-hud-score-row {",
+        "#fsl-hud-parts {",
+        "#fsl-hud-demo {",
+    ):
+        body = _rule_body(selector)
+        assert "font-size: clamp(" in body, selector
+
+
+def test_the_hud_type_also_answers_to_a_short_window() -> None:
+    """§5.1: 足りないほうの寸法に合わせる。
+
+    HUD の高さ上限は `90vh` である。横に広く縦に短い窓（ノート PC の分割表示
+    など）では、幅だけを見て決めた文字サイズだと中身が縦にあふれ、
+    `pointer-events: none` の箱では読む手段が無くなる。幅と高さの小さいほうへ
+    合わせる。罠: `vh` の項を落とすと、この assertion が落ちる。
+    """
+    body = _rule_body("#fsl-hud-value {")
+
+    assert "vh" in body
+    assert "min(" in body
+
+
+def test_long_readings_wrap_rather_than_disappear() -> None:
+    """あふれるくらいなら折り返す。`pointer-events: none` の箱では、はみ出した
+    分を利用者が引き寄せる手段が無いためである。"""
+    assert "overflow-wrap" in _rule_body("#fsl-hud {")
+
+
 def test_the_exit_control_shrinks_to_its_button() -> None:
     """Streamlit の縦ブロックは width:100% なので、`right` で固定したコンテナは
     ビューポート全体へ広がり、ボタンを左端の外（実測 x=-24）へ落としていた。"""

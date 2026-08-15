@@ -741,3 +741,56 @@ def test_the_score_scale_caption_is_rendered_outside_the_expander() -> None:
     at = _render_details(body=_STEP_SAMPLE)
 
     assert SCORE_SCALE_CAPTION in [element.value for element in at.caption]
+
+
+# --- §5.3: 末尾の留保を「読める形」で出す -------------------------------------
+
+
+def test_the_closing_limits_are_grouped_under_a_visible_heading() -> None:
+    """§5.3 が義務付ける留保を、無名の灰色段落の列として積まない。
+
+    以前は詳細結果の末尾に `st.caption` が 4 本続き（単位・価値尺度でないこと・
+    相対比較専用・指標の版）、読み手には区切りの無い壁だった。見出しを持つ
+    1 つの箱へまとめて走査できる形にする。**畳まない**——`SCORE_SCALE_CAPTION`
+    と同じ理由で、開かないと見えない場所へ置くと数字だけが独り歩きする。
+    """
+    from face_symmetry_lab.ui.scores import READING_LIMITS, READING_LIMITS_HEADING
+
+    at = _render_details(body=_STEP_SAMPLE)
+
+    captions = " ".join(element.value for element in at.caption)
+    markdown = " ".join(element.value for element in at.markdown)
+
+    assert READING_LIMITS_HEADING in captions + markdown
+    for limit in READING_LIMITS:
+        assert limit in captions, "留保そのものは 1 つも減らさない"
+    # 畳まれていないこと（expander の中では `at.expander` 側にしか現れない）。
+    assert len(at.expander) == 1, "計算過程の expander 以外を増やさない"
+
+
+def test_the_closing_limits_still_state_every_required_caveat() -> None:
+    """§5.3/§10.7: まとめ直しても、述べる内容は 1 つも落とさない。"""
+    from face_symmetry_lab.ui.scores import READING_LIMITS
+
+    combined = " ".join(READING_LIMITS)
+
+    assert "目標値ではありません" in combined
+    assert "平均しても全体の対称度にはなりません" in combined
+    assert "医学的評価" in combined
+    assert "同一人物・同一環境" in combined
+    for forbidden in ("良い", "悪い", "美しい", "優秀", "優れ", "満点", "合格", "理想"):
+        assert forbidden not in combined
+
+
+def test_the_metric_versions_stay_separate_from_the_caveats() -> None:
+    """版と対応表は来歴であって留保ではない。同じ箱へ混ぜない（FR-020）。"""
+    from face_symmetry_lab.ui.scores import READING_LIMITS
+
+    at = _render_details(body=_STEP_SAMPLE)
+
+    version_caption = next(
+        element.value for element in at.caption if "landmark map" in element.value
+    )
+
+    assert "symmetry-3d/test" in version_caption
+    assert all(limit not in version_caption for limit in READING_LIMITS)

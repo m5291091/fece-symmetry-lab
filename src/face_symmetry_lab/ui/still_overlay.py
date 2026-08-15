@@ -54,6 +54,22 @@ STILL_OVERLAY_CONTAINER_KEY: Final[str] = "image_preview_frame"
 MAX_PREVIEW_WIDTH_PX: Final[int] = 760
 MAX_PREVIEW_HEIGHT_PX: Final[int] = 520
 
+#: プレビューの表示幅を CSS へ渡す custom property。**吹き出しの文字を、画面幅
+#: だけでなくプレビュー自身の幅にも合わせるために要る。**
+#:
+#: 縦長写真では、画面が広いままプレビューだけが狭くなる（上の高さ上限で頭打ちに
+#: なるため）。ビューポート幅だけで文字を決めると、その場合に文字は最大のまま
+#: 箱だけが縮み、`max-height: 88%` に当たって下端が切れる。**本体は
+#: `pointer-events: none` なので、切れた分を利用者がスクロールで引き寄せる手段は
+#: 無い**——実測で表示幅 390px のとき scrollHeight 303px 対 clientHeight 260px
+#: だった。
+#:
+#: container query（`container-type: inline-size`）を使わないのは、それが伴う
+#: layout containment がこのコンテナを *fixed* 子孫の包含ブロックにしてしまい、
+#: ドラッグ中の吹き出し（`position: fixed` + `window.innerWidth` への clamp）を
+#: 壊すためである。
+PREVIEW_WIDTH_CSS_VAR: Final[str] = "--fsl-preview-width"
+
 
 def preview_display_width(*, height: int, width: int) -> int:
     """縦横比を保ったまま上限へ収めたときの、表示幅（px）。
@@ -61,8 +77,9 @@ def preview_display_width(*, height: int, width: int) -> int:
     **拡大はしない**（`scale` の上限は 1.0）。小さな写真を引き伸ばすと、
     ランドマークの点が実際より粗く見え、検出の精度に関する誤解を招く。
 
-    この値を `st.image` の幅としても、コンテナの幅としても使う。両者が同じ数から
-    来ることが、吹き出しの `left` / `top` が画像の内側を指す条件である。
+    この値はコンテナの幅（`width` と `max-width: 100%`）と、文字サイズの基準
+    （`PREVIEW_WIDTH_CSS_VAR`）の両方になる。画像自身はコンテナへ追従する
+    （`width="stretch"`）ので、ブラウザがこの上限より狭ければ全体が一緒に縮む。
     """
     if height <= 0 or width <= 0:
         raise ValueError("プレビューの寸法は正の値である必要があります。")
@@ -102,14 +119,21 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
 }}
 /* **既定では JS を一切必要とせず、CSS だけで画像の上に見える。**
    ここを JS 依存（隠しておいて JS が出す）にした版で、bridge が動かない環境では
-   吹き出しが丸ごと消えた。表示は CSS の責任、移動は JS の上乗せ、と分ける。 */
+   吹き出しが丸ごと消えた。表示は CSS の責任、移動は JS の上乗せ、と分ける。
+
+   位置と余白は割合・`clamp` で書き、画像が縮めば一緒に縮むようにする。HUD と
+   同じ理由で、**あふれた分をスクロールで引き寄せることはできない**——本体は
+   `pointer-events: none` だからである（`overflow-y: auto` は最後の安全網）。 */
 .st-key-{STILL_OVERLAY_CONTAINER_KEY} .fsl-still-hud {{
-    position: absolute; top: 18px; left: 18px; z-index: 1000050;
+    position: absolute; top: clamp(8px, 2.4%, 18px); left: clamp(8px, 2.4%, 18px);
+    z-index: 1000050;
     background: rgba(0,0,0,.72); color: #fff;
-    padding: 14px 20px; border-radius: 16px;
+    padding: clamp(9px, 1.1vw, 14px) clamp(12px, 1.5vw, 20px);
+    border-radius: 16px;
     pointer-events: none;
     font-variant-numeric: tabular-nums;
     font-family: inherit;
+    overflow-wrap: anywhere;
     /* 縦長の写真（上限 520px 高 = 幅 390px 前後）で 76% を占めて顔を隠したため、
        割合側を絞った。ドラッグで退けられるとはいえ、既定で顔を覆わない。 */
     max-width: min(320px, 64%); max-height: 88%; overflow-y: auto;
@@ -120,24 +144,43 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
     position: fixed;
     max-width: min(320px, 88vw); max-height: 88vh;
 }}
-.fsl-still-value {{ font-size: 2.2rem; font-weight: 700; line-height: 1; }}
-.fsl-still-label {{ font-size: .8rem; opacity: .75; margin-bottom: 10px; }}
-.fsl-still-score {{
-    display: flex; align-items: baseline; gap: 8px;
-    font-size: 1.3rem; font-weight: 600; margin-top: 2px;
+/* HUD（`ui.hud_assets`）と同じ書き方にそろえる。最大値は従来の固定値そのまま
+   なので広い画面での見た目は変わらない。中間の項は **ビューポート幅と
+   プレビュー幅の小さいほう** で、狭くなった側に必ず追従する（画面が狭いとき、
+   縦長写真でプレビューだけが狭いとき、のどちらでも切れない）。最小値は
+   「98.42%」がいちばん狭い箱へ確実に収まる大きさである。 */
+.fsl-still-value {{
+    font-size: clamp(1.1rem, min(2.6vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .046), 2.2rem);
+    font-weight: 700; line-height: 1;
 }}
-.fsl-still-score b {{ font-size: .78rem; font-weight: 400; opacity: .75; }}
+.fsl-still-label {{
+    font-size: clamp(.66rem, min(.85vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .015), .8rem);
+    opacity: .75; margin-bottom: .8em;
+}}
+.fsl-still-score {{
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    font-size: clamp(.95rem, min(1.5vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .027), 1.3rem);
+    font-weight: 600; margin-top: 2px;
+}}
+.fsl-still-score b {{
+    font-size: clamp(.64rem, min(.8vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .0145), .78rem);
+    font-weight: 400; opacity: .75;
+}}
 .fsl-still-parts {{
-    display: flex; flex-wrap: wrap; gap: 4px 14px;
-    font-size: .92rem; margin-top: 8px;
+    display: flex; flex-wrap: wrap; gap: 4px clamp(8px, 1vw, 14px);
+    font-size: clamp(.7rem, min(1vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .0185), .92rem);
+    margin-top: 8px;
 }}
 .fsl-still-parts b {{ font-weight: 400; opacity: .75; margin-right: 4px; }}
-.fsl-still-demo {{ font-size: 1.05rem; margin-top: 8px; }}
+.fsl-still-demo {{
+    font-size: clamp(.78rem, min(1.15vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .021), 1.05rem);
+    margin-top: 8px;
+}}
 /* ドラッグを受けるのはグリップだけ。吹き出し本体は `pointer-events: none` の
    ままにして、下にある画像の選択・右クリックを奪わない（HUD と同じ規約）。 */
 .fsl-still-grip {{
     pointer-events: auto; cursor: move; touch-action: none;
-    margin-top: 10px; font-size: .72rem; opacity: .55;
+    margin-top: 10px; font-size: clamp(.62rem, .78vw, .72rem); opacity: .55;
     border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px;
 }}
 """
@@ -334,6 +377,16 @@ def render_image_with_overlay(
     吹き出しは同じキー付きコンテナの中へ置き、CSS の `position: absolute` で
     画像の上へ重ねる。**画像を再エンコードしない。**
 
+    **上限を持つのはコンテナだけで、画像はそれに従う（`width="stretch"`）。**
+    `preview_display_width` はブラウザ幅を知らないので、その px をそのまま
+    `st.image` へ渡すと、狭い画面では画像だけがコンテナの外へ出る（実測: 幅
+    639px の画面で `stMain` の scrollWidth が 776px になり、ページ全体が横へ
+    スクロールした）。`st.image` へ px を渡すと Streamlit は `<img>` を包む
+    自前の div にも同じ px を書き込むが、その div は emotion のハッシュ class
+    しか持たず §5.2 がセレクタに使うことを禁じているため、CSS からは縮められ
+    ない。コンテナ側を `width: <上限>px; max-width: 100%` にして画像を追従
+    させるのが、この制約の中で唯一安定する形である。
+
     **`st.html` ではなく `st.markdown(unsafe_allow_html=True)` を使う。**
     `st.html` は `<style>` 要素を丸ごと落とし、markup と inline の `style` 属性
     だけを通す（Streamlit 1.59.1 で実測）。stylesheet が消えると吹き出しは
@@ -345,9 +398,13 @@ def render_image_with_overlay(
 
     display_width = preview_display_width(height=array.shape[0], width=array.shape[1])
     with st.container(key=STILL_OVERLAY_CONTAINER_KEY):
-        st.image(array, caption=caption, width=display_width)
+        st.image(array, caption=caption, width="stretch")
+        # コンテナの幅と、吹き出しの文字サイズの基準を同じ 1 つの数から出す。
+        # custom property は継承するので、この規則が stylesheet より前に出ても
+        # 後に出ても吹き出しへ届く。
         st.markdown(
-            f"<style>.st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {display_width}px; }}</style>",
+            f"<style>.st-key-{STILL_OVERLAY_CONTAINER_KEY} "
+            f"{{ width: {display_width}px; {PREVIEW_WIDTH_CSS_VAR}: {display_width}px; }}</style>",
             unsafe_allow_html=True,
         )
         st.markdown(

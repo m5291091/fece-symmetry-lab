@@ -329,16 +329,17 @@ def test_the_container_width_is_pinned_to_the_preview_width() -> None:
 
     assert not at.exception
     expected = preview_display_width(height=8, width=8)
-    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {expected}px; }}" in _rendered_html(at)
+    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {expected}px;" in _rendered_html(at)
 
 
 def test_the_preview_never_overflows_a_narrow_viewport() -> None:
     """§5.1/§5.4: 狭い画面でも画像がコンテナの外へはみ出さない。
 
-    `st.image(..., width=<px>)` は `<img>` へ固定幅を書き込むため、上限
-    （760px）より狭いブラウザ幅では画像だけがコンテナの外へ出る。コンテナは
-    `max-width: 100%` で縮むので、吹き出しの基準（コンテナ）と画像の左端が
-    ずれてしまう。**罠: `max-width` を落とすと、この assertion が落ちる。**
+    上限（760×520）は Python 側が決めるが、**それはブラウザ幅を知らない**。
+    そのため上限をそのまま `<img>` の固定幅として書き込むと、ブラウザがそれ
+    より狭いときに画像だけがコンテナの外へ出る（実測: 幅 639px の画面で
+    `stMain` の scrollWidth が 776px になり、ページ全体が横スクロールした）。
+    **罠: `max-width` を落とすと、この assertion が落ちる。**
     """
     at = AppTest.from_string(_render_source())
     at.run()
@@ -348,6 +349,72 @@ def test_the_preview_never_overflows_a_narrow_viewport() -> None:
     assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{" in markup
     assert "max-width: 100%" in markup
     assert "height: auto" in markup, "縦横比を保ったまま縮めること"
+
+
+def test_the_preview_follows_its_container_instead_of_a_fixed_pixel_width() -> None:
+    """上限はコンテナ（`width: <px>; max-width: 100%`）が持ち、画像はそれに従う。
+
+    `st.image` へ px を渡すと、Streamlit は `<img>` を包む自前の div にもその px
+    を書き込む。その div は emotion のハッシュ class しか持たず、§5.2 が
+    セレクタに使うことを禁じているため、CSS からは縮められない。**px を渡す
+    のをやめ、コンテナ幅へ追従させるのが唯一の安定した手段である。**
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import still_overlay
+
+    source = inspect.getsource(still_overlay.render_image_with_overlay)
+
+    assert 'width="stretch"' in source
+    assert "width=display_width" not in source
+    # 上限そのものは残る（コンテナ幅として注入し、拡大はしない）。
+    assert "display_width" in source
+
+
+def test_the_bubble_scales_with_the_preview_not_only_the_viewport() -> None:
+    """縦長写真では、画面が広いままプレビューだけが狭くなる（高さ上限で頭打ち）。
+
+    ビューポート幅だけで文字を決めると、その場合に文字が最大のまま箱だけが
+    縮み、`max-height: 88%` に当たって下端（グリップ・参考値の行）が切れる。
+    **本体は `pointer-events: none` なので、切れた分は読む手段が無い**——実測で
+    表示幅 390px のとき scrollHeight 303px に対し clientHeight 260px だった。
+    そこでプレビュー幅を CSS 変数として渡し、文字をそのどちらか小さい側へ
+    合わせる。罠: 変数の注入を外すと、この assertion が落ちる。
+    """
+    from face_symmetry_lab.ui.still_overlay import (
+        _STILL_OVERLAY_CSS,
+        PREVIEW_WIDTH_CSS_VAR,
+        preview_display_width,
+    )
+
+    at = AppTest.from_string(_render_source())
+    at.run()
+
+    assert not at.exception
+    expected = preview_display_width(height=8, width=8)
+    assert f"{PREVIEW_WIDTH_CSS_VAR}: {expected}px" in _rendered_html(at)
+    assert f"var({PREVIEW_WIDTH_CSS_VAR}" in _STILL_OVERLAY_CSS
+
+
+def test_the_bubble_type_scales_with_the_viewport() -> None:
+    """§5.1/§5.4: 吹き出しの数値も画面幅へ追従する（HUD と同じ理由）。
+
+    吹き出しは本体が `pointer-events: none` なので、あふれた分を利用者が
+    スクロールで引き寄せられない。罠: `font-size: 2.2rem` のような固定値は、
+    縦長写真（表示幅 390px 前後）で数値の末尾を箱の外へ出す。
+    """
+    from face_symmetry_lab.ui.still_overlay import _STILL_OVERLAY_CSS
+
+    for selector in (
+        ".fsl-still-value {",
+        ".fsl-still-label {",
+        ".fsl-still-score {",
+        ".fsl-still-parts {",
+        ".fsl-still-demo {",
+    ):
+        start = _STILL_OVERLAY_CSS.index(selector)
+        body = _STILL_OVERLAY_CSS[start : _STILL_OVERLAY_CSS.index("}", start)]
+        assert "font-size: clamp(" in body, selector
 
 
 @pytest.mark.parametrize(
