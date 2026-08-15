@@ -89,3 +89,9 @@ class ReferenceCellRepository(Protocol):
     """§9.5 の凍結参照アセット（`configs/reference/`）を読む境界（FR-037）。"""
 
     def load(self) -> ReferenceDataset: ...
+
+
+class AgeGateClassifier(Protocol):
+    """FR-038 のゲートモデルが実装する境界。"""
+
+    def predict(self, vector: tuple[float, ...]) -> float: ...

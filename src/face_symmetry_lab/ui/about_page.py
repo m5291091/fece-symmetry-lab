@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from face_symmetry_lab.adapters.inference.onnx_age_gate import load_age_gate_spec
 from face_symmetry_lab.adapters.io.model_store import ModelStoreError
 from face_symmetry_lab.ui.model_setup import (
     demographic_asset,
@@ -38,6 +39,15 @@ def _render_model_versions() -> None:
         )
     except ModelStoreError:
         st.caption("背景置換モデルのmanifestを読み込めません。")
+    try:
+        age_gate = load_age_gate_spec()
+        st.markdown(
+            f"- **参考年齢の表示ゲート**: {age_gate.gate_version} · "
+            f"spec_revision {age_gate.spec_revision} · "
+            f"ONNX sha256 `{age_gate.onnx_sha256[:16]}…`"
+        )
+    except ValueError:
+        st.caption("年齢ゲートのspecを読み込めません。")
     st.caption(
         "版とsha256は結果のエクスポートにも記録されます。"
         "詳細は docs/model-cards/ を参照してください。"
@@ -160,6 +170,10 @@ def render_about_page() -> None:
     st.header("使用しないでください")
     st.markdown(
         "- 医療、本人確認、採用、保険、教育、監視、人物比較・人物評価への利用\n"
+        "- **年齢認証、未成年判定、入場制限への利用。** "
+        "参考年齢を表示してよいかを決める内部ゲートがありますが、"
+        "これは年齢を判定する仕組みではありません。"
+        "乳幼児の顔の幾何を見分けるだけで、学童期以上の年齢や 76 歳以上は判定できません。\n"
         "- 本人以外、または明示的な権限・同意のない人物の画像の使用\n"
         "- 専用の同意・保護設計なしの未成年者への利用\n"
         "- 対称度の高低による感情的な祝福・警告、人物間比較、平均顔との比較、ランキング"

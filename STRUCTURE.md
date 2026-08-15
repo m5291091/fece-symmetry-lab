@@ -149,7 +149,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `ac162f6198cdbb72773d31903515c8199e0be0fe0b9b99522e78203ab962f5e6`_
+_File-list SHA-256: `e2b34603e5807a2ab691580d0d3ab3c61d985d411423a5f931caf8446f5948b4`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -173,6 +173,7 @@ face-symmetry-lab/
   - `reference/`
     - `utkface_symmetry3d_cells_v1.csv`
     - `utkface_symmetry3d_cells_v1.meta.json`
+  - `age-gate-v1.json`
   - `model-manifest.json`
 - `data/`
   - `README.md`
@@ -182,7 +183,10 @@ face-symmetry-lab/
     - `0002-head-pose-coordinate-signs.md`
     - `0003-age-gender-and-skin-correction.md`
     - `0004-reference-statistics-browser-data.md`
+    - `0005-age-gate-for-reference-age-display.md`
   - `model-cards/`
+    - `age-gate-v1-evaluation.json`
+    - `age-gate-v1.md`
     - `mediapipe-face-landmarker-v1.md`
     - `mediapipe-selfie-segmenter.md`
     - `openvino-age-gender-retail-0013.md`
@@ -223,18 +227,18 @@ face-symmetry-lab/
       - `imaging/`
         - … (2 files)
       - `inference/`
-        - … (6 files)
+        - … (7 files)
       - `io/`
         - … (4 files)
       - … (1 files)
     - `application/`
-      - … (16 files)
+      - … (17 files)
     - `domain/`
-      - … (21 files)
+      - … (22 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (15 files)
+      - … (16 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -243,6 +247,7 @@ face-symmetry-lab/
     - `test_mediapipe_segmenter.py`
     - `test_metric_config.py`
     - `test_model_store.py`
+    - `test_onnx_age_gate.py`
     - `test_opencv_demographic_estimator.py`
     - `test_piecewise_warp.py`
     - `test_reference_dataset.py`
@@ -250,6 +255,9 @@ face-symmetry-lab/
     - `test_session_exporter.py`
     - `test_tracking_zoom_landmarker.py`
   - `application/`
+    - `__init__.py`
+    - `test_age_gate.py`
+    - `test_age_gate_wiring.py`
     - `test_analysis_cadence.py`
     - `test_analyzer.py`
     - `test_auto_tune_controller.py`
@@ -266,6 +274,7 @@ face-symmetry-lab/
     - `test_symmetrization.py`
   - `domain/`
     - `__init__.py`
+    - `test_age_gate.py`
     - `test_auto_tuning.py`
     - `test_demographics.py`
     - `test_export.py`
@@ -286,8 +295,11 @@ face-symmetry-lab/
     - `test_symmetry_3d.py`
     - `test_tracking_zoom.py`
     - `test_warp_mesh.py`
+  - `fixtures/`
+    - `age_gate_contract_fixture.json`
   - `model/`
     - `conftest.py`
+    - `test_age_gate_contract.py`
     - `test_demographic_conversion.py`
     - `test_onnx_runtime_agreement.py`
     - `test_openvino_parity.py`
@@ -305,6 +317,7 @@ face-symmetry-lab/
     - `__init__.py`
     - `conftest.py`
     - `test_about_page.py`
+    - `test_age_gate_notice.py`
     - `test_app.py`
     - `test_camera.py`
     - `test_guidance.py`

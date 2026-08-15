@@ -8,6 +8,7 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     FrameOrderError,
     LandmarkDetectionError,
 )
+from face_symmetry_lab.application.age_gate import AgeGateService, AgeGateStatus
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.auto_tune_controller import (
     CADENCE_RETUNE_INTERVAL_SECONDS,
@@ -155,6 +156,10 @@ class StubAnalyzer:
         self.reset_calls = 0
         self.update_calls: list[tuple[object, float, object]] = []
         self.config = object()
+        #: FR-038: `RealtimeLandmarkPipeline._analyse` は `age_gate` が設定され
+        #: ているとき `analyzer.config_3d` を読む。ここでは実際に触れられる場面
+        #: が無い限り値そのものは意味を持たないダミーでよい。
+        self.config_3d = object()
 
     def analyze(
         self,
@@ -543,6 +548,71 @@ def test_snapshot_segment_id_is_none_without_a_recorder() -> None:
     pipeline.process(_rgb())
 
     assert pipeline.snapshot().segment_id is None
+
+
+# --- FR-038: 年齢ゲート ---------------------------------------------------
+
+
+def test_age_gate_outcome_is_none_without_an_age_gate() -> None:
+    """既存 pipeline との後方互換: `age_gate` 未接続なら snapshot も触らない。"""
+    pipeline = _pipeline(FakeLandmarker(face_count=1), analyzer=StubAnalyzer())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().age_gate_outcome is None
+
+
+def test_age_gate_outcome_is_populated_when_configured() -> None:
+    """FR-038: `age_gate` を渡すと、既存の worker/relay を変えずに判定を追加する。
+
+    `FakeLandmarker` は姿勢を返さないため `NOT_EVALUATED` になるが、それでも
+    `None`（未接続）とは区別できる——配線が実際に呼ばれている証拠である。
+    """
+
+    class _UnreachableClassifier:
+        def predict(self, vector: tuple[float, ...]) -> float:
+            raise AssertionError("姿勢ゲートが閉じているのに呼ばれてはならない")
+
+    service = AgeGateService(
+        _UnreachableClassifier(), threshold=0.20, spec_version="age-gate/1.0.0"
+    )
+    pipeline = _pipeline(FakeLandmarker(face_count=1), analyzer=StubAnalyzer(), age_gate=service)
+
+    pipeline.process(_rgb())
+
+    outcome = pipeline.snapshot().age_gate_outcome
+    assert outcome is not None
+    assert outcome.status is AgeGateStatus.NOT_EVALUATED
+    assert outcome.may_show_reference_age is False
+
+
+def test_a_failing_age_gate_does_not_break_the_pipeline() -> None:
+    """不変条件 12: ゲートの失敗が左右差の解析・表示を止めない。"""
+
+    class _ExplodingClassifier:
+        def predict(self, vector: tuple[float, ...]) -> float:
+            raise RuntimeError("boom")
+
+    service = AgeGateService(_ExplodingClassifier(), threshold=0.20, spec_version="age-gate/1.0.0")
+
+    class _ExplodingAnalyzer(StubAnalyzer):
+        @property
+        def config_3d(self) -> object:  # type: ignore[override]
+            raise RuntimeError("config_3d を読めない")
+
+        @config_3d.setter
+        def config_3d(self, value: object) -> None:
+            pass
+
+    pipeline = _pipeline(
+        FakeLandmarker(face_count=1), analyzer=_ExplodingAnalyzer(), age_gate=service
+    )
+
+    painted = pipeline.process(_rgb())
+
+    assert painted is not None
+    assert pipeline.snapshot().age_gate_outcome is None
+    assert pipeline.snapshot().status is TrackingStatus.SINGLE_FACE
 
 
 def test_close_releases_the_landmarker_and_stops_processing() -> None:

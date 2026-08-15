@@ -13,6 +13,11 @@ wheels/
 # Local model assets and generated investigation artifacts
 models/*
 !models/.gitkeep
+# age-gate/1.0.0（FR-038）だけは例外として同梱する。他のモデルと違い取得元 URL を
+# 持たない自作資産で、`bootstrap_models.py` が取りに行ける場所が無いためである。
+# 917KB、顔の画像・座標を含まない（41 個の集約特徴に対する決定木の集合）。
+# 版と sha256 は `configs/model-manifest.json` が `source: "bundled"` で追跡する（§22）。
+!models/age_gate_model.onnx
 tmp/
 
 # ローカル専用のデータ置き場（不変条件 1: 顔の画像・映像・座標・個票を

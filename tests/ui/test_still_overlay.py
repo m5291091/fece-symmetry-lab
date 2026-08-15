@@ -144,6 +144,20 @@ def test_the_demographic_row_sits_in_its_own_element_apart_from_the_symmetry() -
     assert format_score(0.031) not in demographic_block
 
 
+def test_a_notice_replaces_the_demographic_row_when_demographics_are_hidden() -> None:
+    """FR-038: 参考年齢を表示できないとき、`notice` を吹き出しの独立行へ出す。"""
+    markup = _overlay(estimate=None, show_demographics=False, notice="この画像では表示できません")
+
+    assert "この画像では表示できません" in markup
+
+
+def test_a_notice_is_ignored_while_demographics_are_shown() -> None:
+    markup = _overlay(estimate=_estimate(), show_demographics=True, notice="出てはいけない通知")
+
+    assert "出てはいけない通知" not in markup
+    assert "参考年齢" in markup
+
+
 # --- 枠色と文言 ---------------------------------------------------------------
 
 

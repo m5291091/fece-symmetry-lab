@@ -38,3 +38,14 @@ def test_about_page_states_prohibited_uses() -> None:
     assert "使用しないでください" in headers
     assert "医療" in markdown_text
     assert "本人確認" in markdown_text
+
+
+def test_about_page_lists_the_age_gate_version() -> None:
+    """FR-038/§22.5: 「モデルとバージョン」に age-gate の版・spec_revision・sha256。"""
+    at = _run()
+
+    markdown_text = " ".join(element.value for element in at.markdown)
+
+    assert "参考年齢の表示ゲート" in markdown_text
+    assert "age-gate/1.0.0" in markdown_text
+    assert "spec_revision 3" in markdown_text

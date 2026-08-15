@@ -25,6 +25,10 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService
+from face_symmetry_lab.application.age_gate import (
+    evaluate_age_gate_for_frame as _evaluate_age_gate_for_frame,
+)
 from face_symmetry_lab.application.analysis_cadence import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
     DEFAULT_DISPLAY_TTL_MS,
@@ -106,6 +110,13 @@ class PipelineSnapshot:
     #: も `SessionRecorder` 側で更新されるため、ここでも同じタイミングで動く。
     #: recorder 未接続なら `None`。
     segment_id: str | None = None
+    #: FR-038: `age_gate` が接続され、かつそのフレームが採点されたときだけ
+    #: 入る。`AgeGateOutcome.may_show_reference_age` が偽のとき、HUD は参考
+    #: 年齢・参考性別の数値を出さず `ui.age_gate_notice` を表示する。`None` は
+    #: ゲート未接続（既存 pipeline との後方互換）であり、表示可否は
+    #: `show_demographics` だけで決まる（左右差の分析結果には一切影響しない、
+    #: 不変条件 12）。
+    age_gate_outcome: AgeGateOutcome | None = None
 
     @property
     def needs_recovery(self) -> bool:
@@ -124,6 +135,7 @@ class RealtimeLandmarkPipeline:
         scheduler: FrameScheduler | None = None,
         segmenter: SegmentationProvider | None = None,
         demographic_worker: DemographicSampler | None = None,
+        age_gate: AgeGateService | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
         display_ttl_ms: int = DEFAULT_DISPLAY_TTL_MS,
@@ -161,6 +173,11 @@ class RealtimeLandmarkPipeline:
         )
         self._capture = CaptureBuffer()
         self._demographics = DemographicRelay(demographic_worker)
+        #: FR-038: 既存の worker/relay 構造は変えず（推論は独立して走り続ける）、
+        #: `age_gate` が接続されていればスコアリングと同じ同期経路で判定だけを
+        #: 追加する。`None` なら snapshot の `age_gate_outcome` も `None` のまま
+        #: で、HUD/吹き出しは従来どおり `show_demographics` だけで表示を決める。
+        self._age_gate = age_gate
         #: §14.3c/d: 再調整の窓と間引きをすべて所有する。触るのは `_analyse`
         #: だけで、そこは `FrameScheduler` が直列化しているため、自前の lock を
         #: 必要としない。
@@ -278,6 +295,20 @@ class RealtimeLandmarkPipeline:
                 analysis = None
             scoring_ms = (self._clock() - scoring_started) * 1000.0
 
+        # FR-038: 既存の年齢・性別 worker/relay とは独立に、判定だけを追加する。
+        # 失敗しても採点・年齢性別推論のどちらも道連れにしない（不変条件 12）。
+        age_gate_outcome: AgeGateOutcome | None = None
+        if self._age_gate is not None and analysis is not None and self._analyzer is not None:
+            try:
+                age_gate_outcome = _evaluate_age_gate_for_frame(
+                    self._age_gate,
+                    frame=frame,
+                    outcome=analysis,
+                    config_3d=self._analyzer.config_3d,
+                )
+            except Exception:
+                age_gate_outcome = None
+
         demographic_sample = self._demographics.collect(timestamp_ms)
 
         finished = self._clock()
@@ -316,6 +347,7 @@ class RealtimeLandmarkPipeline:
                     demographic_sample[0] if demographic_sample is not None else None
                 ),
                 segment_id=self._recorder.segment_id if self._recorder is not None else None,
+                age_gate_outcome=age_gate_outcome,
             )
         return painted, analysis
 

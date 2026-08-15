@@ -229,6 +229,7 @@ def still_overlay_html(
     estimate: DemographicEstimate | None,
     show_demographics: bool,
     gate: str,
+    notice: str = "",
 ) -> str:
     """吹き出し 1 つ分の markup を組み立てる純関数。
 
@@ -239,7 +240,9 @@ def still_overlay_html(
     参考年齢・参考性別は `fsl-still-demo` という**独立した要素**へ入れる。
     左右差と同じ行へ混ぜないのは不変条件 5（§1.3.1）が求めるところであり、
     推定が無いときや利用者が切ったときは行ごと出さない（空行は「動いていて
-    失敗している」と読まれる、FR-024）。
+    失敗している」と読まれる、FR-024）。``notice``（FR-038）は
+    `show_demographics` が偽のときにだけ、その独立した行の中身を年齢ゲートの
+    固定文言（`ui.age_gate_notice`）へ差し替える。
     """
     payload = build_hud_payload(
         overall=overall,
@@ -250,6 +253,7 @@ def still_overlay_html(
         gate=gate,
         position="左上",
         generation="",
+        notice=notice,
     )
     readings = payload["parts"]
     assert isinstance(readings, Mapping)
@@ -316,6 +320,7 @@ def render_image_with_overlay(
     estimate: DemographicEstimate | None,
     show_demographics: bool,
     gate: str,
+    notice: str = "",
 ) -> None:
     """プレビュー画像と、その上に重ねる吹き出しを描く。
 
@@ -347,6 +352,7 @@ def render_image_with_overlay(
                 estimate=estimate,
                 show_demographics=show_demographics,
                 gate=gate,
+                notice=notice,
             ),
             unsafe_allow_html=True,
         )

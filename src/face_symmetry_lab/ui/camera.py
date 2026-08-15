@@ -61,6 +61,7 @@ from face_symmetry_lab.ui.hud import (
     render_hud_payload,
 )
 from face_symmetry_lab.ui.model_setup import (
+    build_age_gate_service,
     configured_demographic_path,
     configured_segmenter_path,
     demographic_asset,
@@ -226,6 +227,10 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         recorder=recorder,
         segmenter=_build_segmenter(),
         demographic_worker=_build_demographic_worker(),
+        # FR-038: 既存の worker/relay 構造（推論の independent cadence）は変えず、
+        # 判定だけを追加する。モデル・spec が欠けても `build_age_gate_service` は
+        # 例外を投げず `classifier=None` の service へ倒れる（AC-AGEGATE-03）。
+        age_gate=build_age_gate_service(),
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
         midline_indices=config.midline_indices,
         # §15.2: Advanced 設定に手動 UI は無い。明るさ・ズーム・cadence は無条件

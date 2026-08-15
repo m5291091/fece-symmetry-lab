@@ -11,7 +11,9 @@ import json
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from face_symmetry_lab.application.age_gate import AgeGateStatus
 from face_symmetry_lab.domain.models import GenderLabel
+from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
 from face_symmetry_lab.ui.hud import (
     HUD_CHART_CAPACITY,
     HUD_CHART_WINDOW_SECONDS,
@@ -190,6 +192,87 @@ def test_the_demographic_row_is_dropped_when_the_user_turned_it_off() -> None:
 
 def test_the_hud_carries_the_gate_colour() -> None:
     assert _payload(gate="#D9A21B")["gate"] == "#D9A21B"
+
+
+# --- FR-038: 年齢ゲートの通知 --------------------------------------------------
+
+
+def test_a_notice_replaces_the_demographic_row_when_demographics_are_hidden() -> None:
+    """FR-038: `show_demographics=False` のとき、`notice` が `demo` の代わりに入る。"""
+    payload = _payload(estimate=None, show_demographics=False, notice="この画像では…")
+
+    assert payload["demo"] == "この画像では…"
+
+
+def test_a_notice_is_ignored_while_demographics_are_shown() -> None:
+    """罠: `notice` を優先すると、通った判定の HUD にも余計な文言が混ざる。"""
+    payload = _payload(
+        estimate=_estimate(age=34.4), show_demographics=True, notice="出てはいけない"
+    )
+
+    assert "出てはいけない" not in payload["demo"]
+    assert "参考年齢 34 歳" in payload["demo"]
+
+
+def test_render_hud_payload_hides_demographics_and_shows_the_notice_when_the_gate_blocks() -> None:
+    """FR-038: 年齢ゲートが参考年齢を止めているとき、HUD は数値ではなく通知を出す。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "snapshot = PipelineSnapshot(\n"
+        "    analysis=outcome,\n"
+        "    age_gate_outcome=AgeGateOutcome(\n"
+        "        status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
+        "    ),\n"
+        ")\n"
+        "render_hud_payload(snapshot, show_demographics=True)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["demo"] == age_gate_notice(AgeGateStatus.OUT_OF_RANGE)
+    assert payload["demo"] != ""
+
+
+def test_render_hud_payload_ignores_a_gate_outcome_when_the_user_turned_demographics_off() -> None:
+    """トグルを切っているだけのときは、ゲート通知を出さず沈黙のままにする。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "snapshot = PipelineSnapshot(\n"
+        "    analysis=outcome,\n"
+        "    age_gate_outcome=AgeGateOutcome(\n"
+        "        status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
+        "    ),\n"
+        ")\n"
+        "render_hud_payload(snapshot, show_demographics=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["demo"] == ""
 
 
 def test_the_payload_carries_a_generation_identifier_that_changes_with_the_segment() -> None:

@@ -12,6 +12,10 @@ from pathlib import Path
 
 import streamlit as st
 
+from face_symmetry_lab.adapters.inference.onnx_age_gate import (
+    OnnxAgeGateClassifier,
+    load_age_gate_spec,
+)
 from face_symmetry_lab.adapters.io.model_store import (
     DEFAULT_MODELS_DIR,
     DerivedModelAsset,
@@ -24,6 +28,13 @@ from face_symmetry_lab.adapters.io.model_store import (
     load_derived_assets,
     load_manifest,
 )
+from face_symmetry_lab.application.age_gate import AgeGateService
+
+#: spec を読めない場合に `AgeGateService` へ渡す既定値。`classifier=None` の
+#: ときは `evaluate()` がこれらへ触れる前に `UNDETERMINED` へ倒すため、
+#: 実際の判定へは影響しない（AC-AGEGATE-03）。
+_FALLBACK_AGE_GATE_THRESHOLD = 0.20
+_FALLBACK_AGE_GATE_SPEC_VERSION = "age-gate/1.0.0"
 
 LANDMARKER_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_LANDMARKER_PATH"
 DEMOGRAPHIC_ONNX_PATH_ENV_VAR = "FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH"
@@ -180,3 +191,27 @@ def resolve_ready_demographic() -> tuple[Path, str] | None:
         f"source XML/BIN {xml_asset.sha256[:8]}…/{bin_asset.sha256[:8]}… · 検証済み"
     )
     return onnx_path, onnx_asset.version
+
+
+def build_age_gate_service() -> AgeGateService:
+    """FR-038: spec・ONNXのいずれが欠けても例外を投げず、`classifier=None`のサービスへ倒す。
+
+    `age-gate/1.0.0` は取得元URLを持たないbundled資産（§22.5）で、
+    `resolve_ready_*` のような取得操作の案内は該当しない。欠落時は
+    `AgeGateService` が常に `UNDETERMINED`（安全側の既定）を返すため、
+    ここでは利用者向けの警告を出さず静かにフォールバックする
+    （AC-AGEGATE-03、ゲートの成否は左右差分析を止めない）。
+    """
+    try:
+        spec = load_age_gate_spec()
+    except ValueError:
+        return AgeGateService(
+            None,
+            threshold=_FALLBACK_AGE_GATE_THRESHOLD,
+            spec_version=_FALLBACK_AGE_GATE_SPEC_VERSION,
+        )
+    try:
+        classifier = OnnxAgeGateClassifier(spec=spec)
+    except ValueError:
+        classifier = None
+    return AgeGateService(classifier, threshold=spec.threshold, spec_version=spec.gate_version)

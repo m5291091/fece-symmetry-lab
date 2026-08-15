@@ -1,12 +1,16 @@
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 import face_symmetry_lab.ui.model_setup as model_setup
 from face_symmetry_lab.adapters.io.model_store import DerivedModelAsset, InstallStatus
+from face_symmetry_lab.application.age_gate import AgeGateService
 from face_symmetry_lab.ui.model_setup import (
     DEMOGRAPHIC_ONNX_PATH_ENV_VAR,
     LANDMARKER_PATH_ENV_VAR,
     SEGMENTER_PATH_ENV_VAR,
+    build_age_gate_service,
     configured_demographic_path,
     configured_landmarker_path,
     configured_segmenter_path,
@@ -132,3 +136,28 @@ def test_demographic_model_reports_ready_for_a_verified_onnx(
     onnx_path.write_bytes(onnx_bytes)
 
     assert demographic_model_status(onnx_path) is InstallStatus.READY
+
+
+@pytest.mark.model
+def test_build_age_gate_service_loads_the_real_bundled_model() -> None:
+    """FR-038: bundled資産（§22.5）はリポジトリ同梱なので、既定で classifier を持つ。"""
+    service = build_age_gate_service()
+
+    assert isinstance(service, AgeGateService)
+    assert service._classifier is not None
+
+
+def test_build_age_gate_service_falls_back_to_no_classifier_when_the_spec_is_missing(
+    monkeypatch,
+) -> None:
+    """AC-AGEGATE-03: spec が読めなくても例外を投げず、判定不能側の service を返す。"""
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("spec が見つかりません")
+
+    monkeypatch.setattr(model_setup, "load_age_gate_spec", _raise)
+
+    service = build_age_gate_service()
+
+    assert isinstance(service, AgeGateService)
+    assert service._classifier is None

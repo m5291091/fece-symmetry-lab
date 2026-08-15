@@ -29,6 +29,7 @@ import streamlit.components.v1 as components
 from face_symmetry_lab.application.realtime import PipelineSnapshot
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
+from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
 from face_symmetry_lab.ui.hud_assets import (
     HUD_RUNTIME_JS,
     HUD_STYLESHEET,
@@ -109,6 +110,7 @@ def build_hud_payload(
     gate: str,
     position: str,
     generation: str,
+    notice: str = "",
 ) -> dict[str, object]:
     """§14.3e の HUD が表示する値（H1 で内容を拡張し、H3 で映像隣の
     「ライブ解析」パネルを削除して表示をこの HUD へ一本化した）。
@@ -127,6 +129,11 @@ def build_hud_payload(
     ``demo`` は推定が無いとき、または利用者が年齢・性別パネルを切ったときに
     `—` ではなく空文字にする。空行は「機能が動いていて失敗している」と
     受け取られてしまうためである（FR-024）。
+
+    ``notice``（FR-038）は、``show_demographics`` が偽のときにだけ ``demo`` の
+    代わりに使う固定文言（`ui.age_gate_notice`）。年齢ゲートが参考年齢の表示を
+    止めた場合と、利用者が単に年齢・性別パネルを切った場合を区別するためで、
+    後者では ``notice`` を渡さない（空文字のまま何も出さない）。
     """
     visible = position != HUD_HIDDEN and position in HUD_PLACEMENTS
     demo = ""
@@ -136,6 +143,8 @@ def build_hud_payload(
         # であることを検証済みなので、ここで導出し直さずラベルへ変換する。
         gender = GENDER_LABELS.get(estimate.gender, "—")
         demo = f"参考年齢 {age} · 参考性別 {gender}"
+    elif notice:
+        demo = notice
     part_readings = {name: format_symmetry(parts.get(name)) for name in PART_NAMES}
     chart: dict[str, float | None] = {"overall": symmetry_percent(overall)}
     for name in PART_NAMES:
@@ -165,6 +174,7 @@ def hud_html(
     gate: str,
     position: str,
     generation: str,
+    notice: str = "",
 ) -> str:
     """payload を bridge が読む隠し要素へ直列化する。
 
@@ -183,6 +193,7 @@ def hud_html(
         gate=gate,
         position=position,
         generation=generation,
+        notice=notice,
     )
     encoded = json.dumps(payload, ensure_ascii=False)
     return f'<div id="{HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
@@ -203,6 +214,11 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
     の読み戻し）をそのまま流用する。セッションの Reset・入力ソースの切替・
     指標に影響する設定変更のいずれでも更新されるため、折れ線グラフのリング
     バッファをこれらを跨いで正しく空にできる（§3.4・§8.8）。
+
+    FR-038: `snapshot.age_gate_outcome` が参考年齢の表示を許さない場合
+    （`may_show_reference_age` が偽）は、数値の代わりに `ui.age_gate_notice` の
+    固定文言を出す。ゲートを未接続の pipeline（`age_gate_outcome` が `None`）は
+    従来どおり `show_demographics` だけで決める。
     """
     analysis = snapshot.analysis
     overall = resolve_overall_distance(analysis) if analysis is not None else None
@@ -213,13 +229,23 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
         else {}
     )
 
+    gate_outcome = snapshot.age_gate_outcome
+    gate_blocks = False
+    notice = ""
+    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
+        gate_blocks = True
+        if show_demographics:
+            notice = age_gate_notice(gate_outcome.status)
+    effective_show_demographics = show_demographics and not gate_blocks
+
     st.markdown(
         hud_html(
             overall=overall,
             equal_weight=equal_weight,
             parts=parts,
             estimate=snapshot.demographic_estimate,
-            show_demographics=show_demographics,
+            show_demographics=effective_show_demographics,
+            notice=notice,
             gate=gate_color(analysis.state if analysis is not None else None),
             position=st.session_state.get(HUD_POSITION_STATE_KEY, HUD_POSITION_OPTIONS[0]),
             generation=snapshot.segment_id or "",
