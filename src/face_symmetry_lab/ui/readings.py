@@ -23,6 +23,7 @@ from typing import Final
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
+from face_symmetry_lab.domain.reference_baseline import BaselineReading
 from face_symmetry_lab.domain.score_scale import score_points
 
 PART_LABELS: Final[dict[str, str]] = {
@@ -73,6 +74,16 @@ def format_symmetry(value: float | None) -> str:
     return "—" if percent is None else f"{percent:.2f}%"
 
 
+def score_points_value(value: float | None) -> float | None:
+    """§8.6.7 の点への換算を、文字列ではなく数値のまま返す。
+
+    `symmetry_percent` が `format_symmetry` に対して果たすのと同じ役割で、参照平均
+    との差（FR-039）のように点を数として要る場所がここを経由する。換算そのものは
+    `domain.score_scale.score_points` 1 つだけであり、ここでは何も計算しない。
+    """
+    return score_points(value)
+
+
 def format_score(value: float | None) -> str:
     """§8.6.7: `s_3d` を「全体のスコア」の点として表示する。
 
@@ -85,6 +96,74 @@ def format_score(value: float | None) -> str:
     """
     points = score_points(value)
     return "—" if points is None else f"{points:.1f} 点"
+
+
+# --- 参照平均の併記（FR-039） -------------------------------------------------
+
+#: §10.12-5 / §5.3: 併記と同じ場所へ置く但し書き。**別ページへの参照で済ませない。**
+#: 平均だけが数字として残り、それが何なのかが画面から消えることを防ぐ。
+#:
+#: 語の選び方は §5.3 と §10.12-1 に縛られる。「平均より上」「平均より下」「順位」
+#: 「偏差値」「パーセンタイル」「分位」は使わない——差は引き算であって順序への写像
+#: ではない、というのがこの併記を許した根拠そのものだからである（ADR-0006 (a)）。
+BASELINE_CAVEAT: Final[str] = (
+    "括弧内は表示値と平均の差です。平均は UTKFace（非商用研究限定）を固定条件で"
+    "集計した探索値で、基準値でも目標値でもありません。群ごとの差は撮影条件・注釈・"
+    "構成比やランドマーク検出の挙動差を含みうるため、個人評価・人物間比較には使えません。"
+)
+
+
+def _signed(value: float, *, digits: int) -> str:
+    """差を符号付きで整形する。`-0.00` を作らない。
+
+    丸めた結果が 0 のとき `f"{-0.001:+.2f}"` は `-0.00` を返す。「わずかに下」と
+    読める表示を丸め誤差から作らないよう、0 は `+0.00` に寄せる。
+    """
+    rounded = round(value, digits)
+    if rounded == 0:
+        rounded = 0.0
+    return f"{rounded:+.{digits}f}"
+
+
+def format_baseline_symmetry(reading: BaselineReading | None) -> str:
+    """対称度（%）に対する「平均 96.31%（+2.11）」。
+
+    **併記が無いときは空文字であり、`—` ではない。** `—` は「あるはずの値が
+    欠測している」の意味で使う記号だが（不変条件 11）、併記が無いのは母集団を
+    決められない・参照データが読めない・参考年齢を表示していない、のいずれかで
+    あって測定の欠測ではない。`demo` 行を空文字で畳むのと同じ扱いにする。
+    """
+    if reading is None:
+        return ""
+    text = f"平均 {reading.mean:.2f}%"
+    if reading.delta is None:
+        return text
+    return f"{text}（{_signed(reading.delta, digits=2)}）"
+
+
+def format_baseline_score(reading: BaselineReading | None) -> str:
+    """§8.6.7 の「全体のスコア」に対する「平均 41.5 点（+20.8）」。
+
+    `format_score` と同じ桁・同じ単位にそろえる。対称度と同じ整形を使うと、点の
+    平均に `%` が付いて 2 つの目盛りが混ざる。
+    """
+    if reading is None:
+        return ""
+    text = f"平均 {reading.mean:.1f} 点"
+    if reading.delta is None:
+        return text
+    return f"{text}（{_signed(reading.delta, digits=1)}）"
+
+
+def baseline_note(*, age: int, gender: GenderLabel, count: int) -> str:
+    """母集団が何であるかと、§10.12-5 の但し書き。
+
+    件数と「人種で絞り込んでいない」ことを必ず書く。前者はしきい値の存在を、
+    後者はアプリが人種を推定しないこと（不変条件 7）を画面から読み取れるように
+    するためである。
+    """
+    label = GENDER_LABELS.get(gender, "—")
+    return f"平均: 参照統計の {age} 歳・{label}（人種で絞り込まず {count:,} 件）。{BASELINE_CAVEAT}"
 
 
 # --- 値の解決 ----------------------------------------------------------------

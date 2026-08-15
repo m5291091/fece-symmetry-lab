@@ -27,9 +27,17 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from face_symmetry_lab.application.realtime import PipelineSnapshot
+from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
+from face_symmetry_lab.domain.reference_baseline import (
+    OVERALL_METRIC,
+    PART_METRICS,
+    SCORE_METRIC,
+    baseline_reading,
+)
 from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.hud_assets import (
     HUD_RUNTIME_JS,
     HUD_STYLESHEET,
@@ -37,12 +45,16 @@ from face_symmetry_lab.ui.hud_assets import (
 )
 from face_symmetry_lab.ui.readings import (
     GENDER_LABELS,
+    baseline_note,
+    format_baseline_score,
+    format_baseline_symmetry,
     format_score,
     format_symmetry,
     gate_color,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
+    score_points_value,
     symmetry_percent,
 )
 
@@ -100,6 +112,52 @@ HUD_CHART_WIDTH_PX: Final[int] = 220
 HUD_CHART_HEIGHT_PX: Final[int] = 64
 
 
+def build_baseline_payload(
+    *,
+    baseline: BaselineSummary | None,
+    overall: float | None,
+    equal_weight: float | None,
+    parts: Mapping[str, float | None],
+) -> dict[str, object]:
+    """FR-039: 各測定値へ添える「平均（差）」の表示文字列。
+
+    純粋関数で、`build_hud_payload` と同じく Camera・Image が共有する。**比べる相手の
+    値は、表示に使っているのと同じ変換を通してから引く**（対称度は `symmetry_percent`、
+    点は `score_points_value`）。ここで別の変換を挟むと、画面に出ている数と括弧の中の
+    差が食い違う。
+
+    `baseline` が `None` のときは全項目が空文字になる。空文字の要素は CSS の `:empty`
+    で畳まれるので、併記が無いときに空行が残らない。
+    """
+    if baseline is None:
+        return {
+            "symmetry": "",
+            "score": "",
+            "parts": {name: "" for name in PART_NAMES},
+            "note": "",
+        }
+    metrics = baseline.metrics
+    return {
+        "symmetry": format_baseline_symmetry(
+            baseline_reading(metrics, OVERALL_METRIC, value=symmetry_percent(overall))
+        ),
+        "score": format_baseline_score(
+            baseline_reading(metrics, SCORE_METRIC, value=score_points_value(equal_weight))
+        ),
+        "parts": {
+            name: format_baseline_symmetry(
+                baseline_reading(
+                    metrics,
+                    PART_METRICS[name],
+                    value=symmetry_percent(parts.get(name)),
+                )
+            )
+            for name in PART_NAMES
+        },
+        "note": baseline_note(age=baseline.age, gender=baseline.gender, count=baseline.count),
+    }
+
+
 def build_hud_payload(
     *,
     overall: float | None,
@@ -111,6 +169,7 @@ def build_hud_payload(
     position: str,
     generation: str,
     notice: str = "",
+    baseline: BaselineSummary | None = None,
 ) -> dict[str, object]:
     """§14.3e の HUD が表示する値（H1 で内容を拡張し、H3 で映像隣の
     「ライブ解析」パネルを削除して表示をこの HUD へ一本化した）。
@@ -134,6 +193,11 @@ def build_hud_payload(
     代わりに使う固定文言（`ui.age_gate_notice`）。年齢ゲートが参考年齢の表示を
     止めた場合と、利用者が単に年齢・性別パネルを切った場合を区別するためで、
     後者では ``notice`` を渡さない（空文字のまま何も出さない）。
+
+    ``baseline``（FR-039）は同じ参考年齢・参考性別の母集団の要約。**参考年齢・
+    参考性別を表示していないときは渡してはならない**（§10.12-3）——母集団の年齢から
+    年齢ゲートの内部判断を復元できてしまうためである。渡さなければ ``baseline``
+    の各項目は空文字になり、CSS の `:empty` が行ごと畳む。
     """
     visible = position != HUD_HIDDEN and position in HUD_PLACEMENTS
     demo = ""
@@ -161,6 +225,12 @@ def build_hud_payload(
         "gate": gate,
         "gen": generation,
         "chart": chart,
+        "baseline": build_baseline_payload(
+            baseline=baseline,
+            overall=overall,
+            equal_weight=equal_weight,
+            parts=parts,
+        ),
     }
 
 
@@ -175,6 +245,7 @@ def hud_html(
     position: str,
     generation: str,
     notice: str = "",
+    baseline: BaselineSummary | None = None,
 ) -> str:
     """payload を bridge が読む隠し要素へ直列化する。
 
@@ -194,6 +265,7 @@ def hud_html(
         position=position,
         generation=generation,
         notice=notice,
+        baseline=baseline,
     )
     encoded = json.dumps(payload, ensure_ascii=False)
     return f'<div id="{HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
@@ -219,6 +291,11 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
     （`may_show_reference_age` が偽）は、数値の代わりに `ui.age_gate_notice` の
     固定文言を出す。ゲートを未接続の pipeline（`age_gate_outcome` が `None`）は
     従来どおり `show_demographics` だけで決める。
+
+    FR-039: 参考年齢・参考性別を実際に表示しているときに限り、同じ参考年齢・参考性別の
+    参照平均（§9.5）を解決して併記する。参照データが読めない・件数がしきい値未満・
+    年齢が 18〜75 の外のいずれでも `None` が返るだけで、左右差の表示は変わらない
+    （不変条件 12、AC-BASELINE-03）。
     """
     analysis = snapshot.analysis
     overall = resolve_overall_distance(analysis) if analysis is not None else None
@@ -238,6 +315,13 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
             notice = age_gate_notice(gate_outcome.status)
     effective_show_demographics = show_demographics and not gate_blocks
 
+    # FR-039/§10.12-3: 参考年齢・参考性別を実際に出しているときだけ母集団を解決する。
+    # ここで `snapshot.demographic_estimate` をそのまま渡すと、年齢ゲートが隠した
+    # 判断が「20 歳・男性の平均」という母集団の表示から復元できてしまう。
+    baseline = resolve_baseline(
+        snapshot.demographic_estimate if effective_show_demographics else None
+    )
+
     st.markdown(
         hud_html(
             overall=overall,
@@ -246,6 +330,7 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
             estimate=snapshot.demographic_estimate,
             show_demographics=effective_show_demographics,
             notice=notice,
+            baseline=baseline,
             gate=gate_color(analysis.state if analysis is not None else None),
             position=st.session_state.get(HUD_POSITION_STATE_KEY, HUD_POSITION_OPTIONS[0]),
             generation=snapshot.segment_id or "",

@@ -65,6 +65,7 @@ from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.model_setup import (
     build_age_gate_service,
@@ -428,6 +429,10 @@ def _render_preview_with_overlay(
     FR-038: `gate_outcome.may_show_reference_age` が偽のときは推定値を吹き出し
     へ渡さず、代わりに `ui.age_gate_notice` の固定文言を出す。左右差（対称度・
     全体のスコア・部位別）の描画は変えない（不変条件 12）。
+
+    FR-039: 参照平均は `estimate`——実際に吹き出しへ出す推定——からだけ解決する。
+    ゲートが参考年齢を隠した後の `None` をそのまま渡すので、隠した判断が母集団の
+    年齢から復元されることがない（§10.12-3）。
     """
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
@@ -444,6 +449,7 @@ def _render_preview_with_overlay(
         show_demographics=estimate is not None,
         notice=notice,
         gate=gate_color(analysis.outcome.state),
+        baseline=resolve_baseline(estimate),
     )
     render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
 
