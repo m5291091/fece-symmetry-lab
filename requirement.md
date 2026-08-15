@@ -1314,94 +1314,67 @@ Advanced設定に手動編集UIは存在しない。品質ゲート閾値は固�
 
 ## 16. リポジトリ構成
 
+**本節が定めるのはディレクトリの構造と配置ルールであり、ファイルの網羅一覧ではない。** 一覧は `STRUCTURE.md`（`scripts/generate_structure.py` の生成物）が持ち、ファイル一覧 SHA-256 によって実態との一致が `scripts/verify.py` の毎回の実行で機械検証される。本節へ全ファイルを書き写すと、検証されない二重台帳ができて必ず古くなる。**ファイルを探すときは `STRUCTURE.md`、置き場を決めるときは本節を見ること。**
+
 ```text
 face-symmetry-lab/
-├── CLAUDE.md
-├── STRUCTURE.md
-├── testbox.md
-├── .python-version
-├── .streamlit/
-│   └── config.toml
-├── pyproject.toml
-├── uv.lock
-├── README.md
-├── LICENSE
-├── NOTICE
-├── configs/
-│   ├── model-manifest.json
-│   ├── metrics/
-│   │   ├── symmetry-2d-v1.json
-│   │   └── symmetry-3d-v1.json
-│   └── reference/                              # 追跡する。アプリが読む凍結参照アセット（§9.5）
-│       ├── utkface_symmetry3d_cells_v1.csv
-│       └── utkface_symmetry3d_cells_v1.meta.json
-├── data/                                       # ローカル専用。.gitignore の `data/*` が丸ごと除外し
-│   ├── README.md                               # この README だけを例外として追跡する（§10.9-1）
-│   ├── takes/                                  # 診断用の実写テイクと測定出力 JSON（非追跡）
-│   └── utkface/                                # UTKFace notebook の出力。個票 CSV を含む（非追跡）
-├── research/                                   # 追跡する。配布アセットの生成元で再現性の正本
-│   └── utkface-symmetry/                       # `src/` からは参照しない（§10.9-5）
-│       └── utkface_symmetry_lab.ipynb
+├── CLAUDE.md                       AI・開発ポリシー（実行規約）
+├── requirement.md                  本書。プロダクト仕様の唯一の正本
+├── STRUCTURE.md                    生成物。ファイル網羅索引（機械検証あり）
+├── testbox.md                      test と要件 ID の対応表
+├── README.md / NOTICE / CODEX.md
+├── pyproject.toml / uv.lock / .python-version
+├── .streamlit/config.toml          §18 のローカル設定（loopback 限定）
+├── .github/workflows/              CI。`scripts/verify.py` と同じ 6 ステップ
+├── .claude/                        Claude Code の設定。`scripts/block-commit.sh` が
+│                                   自律的な `git commit` を機械的に止める
+├── .antigravity/ , .github/copilot-instructions.md
+│                                   いずれも `CLAUDE.md` への symlink。AI ツールごとに
+│                                   規約を複製せず 1 本の正本を指す
+├── configs/                        版管理され hash 検証される凍結バンドル
+│   ├── model-manifest.json         §10.6。URL・size・sha256・license・input_contract
+│   ├── metrics/                    §8 の指標 bundle（`symmetry-2d-v1` / `symmetry-3d-v1`）
+│   └── reference/                  §9.5 の参照統計セルテーブルと `.meta.json`
+├── models/                         非追跡。明示操作で取得した検証済みモデル asset（§10.6）
+├── data/                           非追跡（`data/*`、例外は `README.md` のみ、§10.9-1）
+│   ├── takes/                      診断用の実写テイクと測定出力 JSON
+│   └── utkface/                    UTKFace notebook の出力。個票 CSV を含む
+├── research/                       追跡する。配布アセットの生成元で再現性の正本
+│   └── utkface-symmetry/           `src/` からは参照しない（§10.9-5）
 ├── docs/
-│   ├── requirements.md
-│   ├── technical-design.md
-│   ├── development-guide.md
-│   ├── model-lifecycle.md
-│   ├── threat-model.md
-│   └── adr/
-├── scripts/
-│   ├── bootstrap_models.py
-│   ├── build_reference_dataset.py              # dev 用。個票 → セルテーブル。アプリからは呼ばない（§10.9-3）
-│   ├── generate_structure.py
-│   ├── verify.py
-│   └── verify_offline.py
-├── src/face_symmetry_lab/
-│   ├── __init__.py
-│   ├── domain/
-│   │   ├── demographics.py
-│   │   ├── skin_quality.py
-│   │   ├── models.py
-│   │   ├── landmarks.py
-│   │   ├── geometry.py
-│   │   ├── symmetry.py
-│   │   ├── symmetrization.py
-│   │   └── warp_mesh.py
-│   ├── application/
-│   │   ├── ports.py
-│   │   ├── analyzer.py
-│   │   ├── state_machine.py
-│   │   ├── symmetrization.py
-│   │   └── session.py
-│   ├── adapters/
-│   │   ├── imaging/piecewise_warp.py
-│   │   ├── inference/mediapipe_landmarker.py
-│   │   ├── inference/opencv_demographic_estimator.py
-│   │   ├── io/model_store.py
-│   │   └── export/session_exporter.py
-│   ├── runtime/
-│   │   ├── frame_scheduler.py
-│   │   └── session_store.py
-│   └── ui/
-│       ├── app.py
-│       ├── composition.py
-│       ├── camera.py
-│       ├── components.py
-│       └── copy.py
-└── tests/
-    ├── unit/
-    ├── property/
-    ├── contract/
-    ├── integration/
-    ├── e2e/
-    ├── performance/
-    └── fixtures/
-        ├── synthetic/
-        └── licensed/
+│   ├── adr/                        設計判断の記録
+│   ├── model-cards/                モデルと指標の制約・slice 評価
+│   └── *.md                        測定記録・撮影手順・引き継ぎ
+├── scripts/                        dev 用 CLI。アプリの実行経路からは呼ばない
+├── src/face_symmetry_lab/          §14 の 5 層。新しいファイルはこのどれかへ置く
+│   ├── domain/                     純粋計算と immutable DTO
+│   ├── application/                use case・状態・入力検証・port
+│   ├── adapters/                   export / imaging / inference / io の 4 サブパッケージ
+│   ├── runtime/                    frame scheduling と表示キャッシュ
+│   └── ui/                         Streamlit の composition と表示
+├── tests/                          `src/` の層構成をそのまま鏡写しにする
+│   ├── domain/ application/ adapters/ runtime/ ui/
+│   ├── model/                      実 asset を要する smoke（`-m model`、未配置なら skip）
+│   └── repository/                 リポジトリ規約と dev script の test
+└── tmp/                            非追跡。作業用の一時出力
 ```
 
-本書は移行用の一体版である。リポジトリでは PRD、技術設計、開発手順、モデル運用、脅威モデルを上記のとおり分割し、同じ要件を複数ファイルへコピーせず ID で参照する。
+### 16.1 配置ルール
 
-**上のツリーは `configs/reference/`・`data/`・`research/`・`scripts/build_reference_dataset.py` については実態と一致するが、`src/` 以下・`docs/` 以下・`tests/` 以下の構成は実装が先へ進んだ結果として乖離している。** 探索索引としては `STRUCTURE.md`（`scripts/generate_structure.py` の生成物で、ファイル一覧 SHA-256 が実態との一致を毎回検証する）を正とすること。本節の全面的な同期は別の作業単位で行う。
+| 置き場 | 入れてよいもの | 入れてはならないもの |
+|---|---|---|
+| `configs/` | 版と hash が付いた凍結アセット。アプリが実行時に読む | 実行時に生成・更新されるもの、顔由来の個票 |
+| `models/` | 検証済みモデル asset。`.gitignore` で非追跡 | 追跡対象にすること（不変条件 6） |
+| `data/` | 顔の映像・座標・個票など、端末内に閉じるべきもの | 追跡対象にすること（`README.md` を除く。不変条件 1） |
+| `research/` | 配布アセットの生成元 notebook | `src/` からの参照（境界は版と hash が付いた凍結アセットだけ） |
+| `scripts/` | 人間が明示的に起動する dev CLI | アプリの実行経路からの呼び出し |
+| `src/` | §14 の 5 層のいずれかに属するもの | 層が決まらないもの（`domain` へ置けるところまで分解する） |
+
+層をまたぐ依存は `ui → application → domain` の一方向に限り、`adapters` は `application` の port を実装する（§14）。`domain` から Streamlit・MediaPipe・ONNX Runtime・OpenCV を import しない。
+
+### 16.2 本書の位置づけ
+
+本書は PRD・技術設計・開発手順・モデル運用・脅威モデルを 1 ファイルへまとめた一体版である。**将来これらを分割する場合も、同じ要件本文を複数ファイルへ複製せず ID で参照すること。** 現時点では分割しておらず、`docs/` にあるのは ADR・model card・測定記録であって要件の分冊ではない。
 
 ## 17. プロジェクト設定例
 
@@ -1595,7 +1568,7 @@ uv sync --frozen
 ### 21.4 Fixture 方針
 
 - repo 内の既定 fixture は合成 landmark と、再配布可能な synthetic image を優先する。
-- 実在人物由来の画像・landmark は顔由来データとして扱い、同意、用途、保存期間、再配布ライセンスを `tests/fixtures/licensed/README.md` に記録する。
+- 実在人物由来の画像・landmark は顔由来データとして扱い、同意、用途、保存期間、再配布ライセンスを `tests/fixtures/licensed/README.md` に記録する。**現時点で該当する fixture は 1 つも無く、`tests/fixtures/` は存在しない**（§16 のツリーにも現れない）。この規則は、実在 fixture を初めて導入するときに同時にディレクトリと README を作ることを求めるものである。
 - 実在 fixture を public repo へ置くことを既定にしない。
 
 ### 21.5 CI
