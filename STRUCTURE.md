@@ -21,6 +21,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
 | 映像へ重ねる HUD の組み立てと配線 | `src/face_symmetry_lab/ui/hud.py` |
 | HUD がブラウザへ渡す CSS・実行時 JS | `src/face_symmetry_lab/ui/hud_assets.py` |
+| 表示平滑化時間（移動平均の間隔）を選ぶ UI（FR-040） | `src/face_symmetry_lab/ui/smoothing_panel.py` |
 | Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
 | 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
 | Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
@@ -93,7 +94,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
-| Display smoothing | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, §8.7 |
+| Display smoothing（時定数の値域・段・導出値を含む） | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, FR-040, §8.7, §8.8 |
+| 表示平滑化時間の選択 UI | `ui/smoothing_panel.py` | `tests/ui/test_smoothing_panel.py` | FR-040, §8.7, §15.1, AC-SMOOTH-01, AC-SMOOTH-02 |
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
@@ -153,7 +155,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `8cad537066c547fe7aef44dafa934a7b4de2007f1e4ab29a4ff5b2b779c0d60d`_
+_File-list SHA-256: `2760f73e2d7a869e08bcbfbbef9a84364881bfeb502ab8089c2507a4af8a75d2`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -189,6 +191,7 @@ face-symmetry-lab/
     - `0004-reference-statistics-browser-data.md`
     - `0005-age-gate-for-reference-age-display.md`
     - `0006-reference-baseline-alongside-user-readings.md`
+    - `0007-user-adjustable-display-smoothing.md`
   - `model-cards/`
     - `age-gate-v1-evaluation.json`
     - `age-gate-v1.md`
@@ -243,7 +246,7 @@ face-symmetry-lab/
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (17 files)
+      - … (18 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -337,6 +340,7 @@ face-symmetry-lab/
     - `test_readings.py`
     - `test_reference_page.py`
     - `test_scores.py`
+    - `test_smoothing_panel.py`
     - `test_still_overlay.py`
     - `test_symmetrization_panel.py`
   - `__init__.py`

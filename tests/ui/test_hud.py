@@ -13,7 +13,7 @@ from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.application.age_gate import AgeGateStatus
 from face_symmetry_lab.application.reference_baseline import BaselineSummary
-from face_symmetry_lab.domain.models import GenderLabel
+from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
 from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
 from face_symmetry_lab.ui.hud import (
@@ -31,10 +31,13 @@ from face_symmetry_lab.ui.hud import (
     hud_html,
 )
 from face_symmetry_lab.ui.readings import (
+    GATE_LABELS,
     GENDER_LABELS,
     PART_LABELS,
     format_score,
+    format_smoothing_window,
     format_symmetry,
+    gate_label,
 )
 
 
@@ -673,3 +676,86 @@ def test_render_hud_payload_drops_the_baseline_when_the_gate_hides_the_age() -> 
     assert "20" not in payload["baseline"]["note"]
     # 左右差の表示は変わらない（不変条件 12）。
     assert payload["symmetry"] == format_symmetry(0.021)
+
+
+# --- FR-040 / §5.4: 状態と平滑化時間のテキスト表示 ----------------------------
+
+
+def test_the_payload_carries_the_gate_state_as_text() -> None:
+    """§5.4: 枠色と同じ情報をテキストでも運ぶ。整形は `ui.readings` と共有する。"""
+    payload = _payload(state=gate_label(AnalysisState(status=Status.OK)))
+
+    assert payload["state"] == "計測中"
+    assert payload["state"] != payload["gate"], "色と文字は別の経路である"
+
+
+def test_the_payload_carries_the_active_smoothing_window() -> None:
+    """FR-040: いま何秒の平均を見ているかを、数値の隣で読めるようにする。"""
+    payload = _payload(smoothing=format_smoothing_window(0.4))
+
+    assert payload["smoothing"] == "平滑化 0.4 秒"
+
+
+def test_the_state_and_smoothing_default_to_blank_rather_than_a_dash() -> None:
+    """併記の不在は測定の欠測ではない（`—` を入れない、`:empty` で畳む）。"""
+    payload = _payload()
+
+    assert payload["state"] == ""
+    assert payload["smoothing"] == ""
+
+
+def test_the_state_and_smoothing_never_change_the_measured_readings() -> None:
+    """罠: 状態や設定の表示が測定値の整形へ混ざる実装はここで落ちる。"""
+    plain = _payload()
+    annotated = _payload(
+        state=gate_label(AnalysisState(status=Status.HOLD)),
+        smoothing=format_smoothing_window(2.0),
+    )
+
+    for key in ("symmetry", "score", "parts", "chart"):
+        assert annotated[key] == plain[key]
+
+
+def test_render_hud_payload_publishes_the_state_and_smoothing_window() -> None:
+    """FR-040: snapshot の解析状態と、pipeline が報告する時定数を配線する。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "render_hud_payload(\n"
+        "    PipelineSnapshot(analysis=outcome),\n"
+        "    show_demographics=False,\n"
+        "    smoothing_tau_seconds=2.0,\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["smoothing"] == "平滑化 2.0 秒"
+    assert payload["state"] in set(GATE_LABELS.values())
+
+
+def test_render_hud_payload_leaves_the_smoothing_blank_when_it_is_unknown() -> None:
+    """analyzer 未接続の pipeline（`smoothing_tau_seconds` が `None`）でも落ちない。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "render_hud_payload(PipelineSnapshot(), show_demographics=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["smoothing"] == ""
+    assert payload["state"] == "待機中"

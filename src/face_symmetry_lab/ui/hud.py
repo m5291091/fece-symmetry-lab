@@ -49,8 +49,10 @@ from face_symmetry_lab.ui.readings import (
     format_baseline_score,
     format_baseline_symmetry,
     format_score,
+    format_smoothing_window,
     format_symmetry,
     gate_color,
+    gate_label,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
@@ -170,6 +172,8 @@ def build_hud_payload(
     generation: str,
     notice: str = "",
     baseline: BaselineSummary | None = None,
+    state: str = "",
+    smoothing: str = "",
 ) -> dict[str, object]:
     """§14.3e の HUD が表示する値（H1 で内容を拡張し、H3 で映像隣の
     「ライブ解析」パネルを削除して表示をこの HUD へ一本化した）。
@@ -193,6 +197,13 @@ def build_hud_payload(
     代わりに使う固定文言（`ui.age_gate_notice`）。年齢ゲートが参考年齢の表示を
     止めた場合と、利用者が単に年齢・性別パネルを切った場合を区別するためで、
     後者では ``notice`` を渡さない（空文字のまま何も出さない）。
+
+    ``state``（§5.2/§5.4）は品質ゲート状態のテキスト、``smoothing``（FR-040）は
+    いま有効な平滑化時間のテキストで、どちらも `ui.readings` の整形を通したもの
+    を受け取るだけである。**空文字が既定で、`—` ではない**——併記の不在は測定の
+    欠測ではないため（`demo` 行と同じ扱い）、CSS の `:empty` が行ごと畳む。
+    どちらも測定値の整形（``symmetry``/``score``/``parts``/``chart``）へは一切
+    混ざらない。
 
     ``baseline``（FR-039）は同じ参考年齢・参考性別の母集団の要約。**参考年齢・
     参考性別を表示していないときは渡してはならない**（§10.12-3）——母集団の年齢から
@@ -223,6 +234,8 @@ def build_hud_payload(
         "parts": part_readings,
         "demo": demo,
         "gate": gate,
+        "state": state,
+        "smoothing": smoothing,
         "gen": generation,
         "chart": chart,
         "baseline": build_baseline_payload(
@@ -246,6 +259,8 @@ def hud_html(
     generation: str,
     notice: str = "",
     baseline: BaselineSummary | None = None,
+    state: str = "",
+    smoothing: str = "",
 ) -> str:
     """payload を bridge が読む隠し要素へ直列化する。
 
@@ -266,12 +281,19 @@ def hud_html(
         generation=generation,
         notice=notice,
         baseline=baseline,
+        state=state,
+        smoothing=smoothing,
     )
     encoded = json.dumps(payload, ensure_ascii=False)
     return f'<div id="{HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
 
 
-def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -> None:
+def render_hud_payload(
+    snapshot: PipelineSnapshot,
+    *,
+    show_demographics: bool,
+    smoothing_tau_seconds: float | None = None,
+) -> None:
     """1 つの snapshot 分の HUD 値を publish する（5 Hz の見出し fragment から呼ぶ）。
 
     隠し要素であり id で参照されるため、DOM 上のどこへ出ても構わない。これが
@@ -296,6 +318,12 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
     参照平均（§9.5）を解決して併記する。参照データが読めない・件数がしきい値未満・
     年齢が 18〜75 の外のいずれでも `None` が返るだけで、左右差の表示は変わらない
     （不変条件 12、AC-BASELINE-03）。
+
+    FR-040/§5.4: `smoothing_tau_seconds`（pipeline が報告する現在の時定数）と
+    品質ゲート状態を、枠色とは別のテキストとして併せて publish する。**snapshot
+    ではなく引数で受けるのは、設定を変えた瞬間に表示へ反映させるためである。**
+    `PipelineSnapshot` は解析フレームごとにしか作り直されないので、そこへ載せる
+    と選び直してから次の解析まで（最大 `analysis_interval_ms`）古い値が残る。
     """
     analysis = snapshot.analysis
     overall = resolve_overall_distance(analysis) if analysis is not None else None
@@ -332,6 +360,8 @@ def render_hud_payload(snapshot: PipelineSnapshot, *, show_demographics: bool) -
             notice=notice,
             baseline=baseline,
             gate=gate_color(analysis.state if analysis is not None else None),
+            state=gate_label(analysis.state if analysis is not None else None),
+            smoothing=format_smoothing_window(smoothing_tau_seconds),
             position=st.session_state.get(HUD_POSITION_STATE_KEY, HUD_POSITION_OPTIONS[0]),
             generation=snapshot.segment_id or "",
         ),

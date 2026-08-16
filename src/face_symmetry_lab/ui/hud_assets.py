@@ -44,7 +44,13 @@ HUD_STYLESHEET: Final[str] = """
    同じ比率で縮むため、高さもこの幅に連動する。 */
 #fsl-hud {
     position: fixed; z-index: 1000050;
-    background: rgba(0,0,0,.72); color: #fff;
+    /* 上から下へわずかに暗くする。数値が集まる上端のコントラストを保ちつつ、
+       下端の但し書きが映像から浮きすぎないようにするためだけの装飾である。
+       §5.2 が禁じる背景ぼかしは使っていない——あれは映像フレームごとに再合成
+       されるが、これは静的なグラデーションなので合成コストは単色と変わらない。 */
+    background: linear-gradient(180deg, rgba(0,0,0,.78), rgba(0,0,0,.68));
+    box-shadow: 0 10px 30px rgba(0,0,0,.38);
+    color: #fff;
     /* **箱の寸法に padding と border を含める。** 既定の `content-box` では下の
        `width`/`max-width` が内容の幅にしか掛からず、左右 padding（13〜22px）と
        2px の border がその外側へ足される。実測（headless Chrome、ビューポート
@@ -89,6 +95,23 @@ HUD_STYLESHEET: Final[str] = """
    中間の項は `min(vw, vh)` にして、**足りないほうの寸法へ合わせる。** 箱の高さ
    上限は `90vh` なので、横に広く縦に短い窓（分割表示など）で幅だけを見て決めると
    中身が縦にあふれ、`pointer-events: none` の箱では読む手段が無くなる。 */
+/* FR-040 / §5.2 / §5.4: 品質ゲートの状態と、いま有効な平滑化時間。数値より上に
+   置くのは、どちらも「下に並ぶ数字をどう読むか」を決める前提だからである
+   （測っている最中なのか、何秒の平均なのか）。
+
+   **色を持たせない。** 枠色は箱の border が既に担っており、チップまで塗ると
+   同じ情報を色で二重に語ることになる。色を落とした環境ではテキストだけが
+   残るべきで、その 1 本の経路を確実にしておく（§5.4）。 */
+#fsl-hud-chips {
+    display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: .45em;
+}
+#fsl-hud-chips:empty { display: none; }
+.fsl-hud-chip {
+    border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
+    padding: 2px 9px; opacity: .82; white-space: nowrap;
+    font-size: clamp(.58rem, min(.78vw, 1.35vh), .7rem); letter-spacing: .02em;
+}
+.fsl-hud-chip:empty { display: none; }
 #fsl-hud-value {
     font-size: clamp(1.5rem, min(3.6vw, 6.4vh), 3.2rem);
     font-weight: 700; line-height: 1;
@@ -142,6 +165,11 @@ HUD_STYLESHEET: Final[str] = """
 #fsl-hud-chart { display: block; width: 100%; height: auto; margin-top: 10px; }
 .fsl-chart-axis { font-size: 6px; fill: rgba(255,255,255,.6); }
 .fsl-chart-line { fill: none; stroke-width: 1.6; stroke-linejoin: round; }
+/* H5: 総合値の線の下だけを薄く塗る。5 本のうちどれが総合値かを、線の太さ以外の
+   手掛かりでも示すためである。**部位別には塗らない**——4 部位を塗り重ねると
+   面が積み上がって見え、部位の合成が総合値であるかのように読める（§8.6:
+   全体距離は部位別の加重合成ではない）。 */
+.fsl-chart-area { fill: rgba(255,255,255,.13); stroke: none; }
 .fsl-chart-overall { stroke: #ffffff; stroke-width: 2.2; }
 .fsl-chart-contour { stroke: #4FC3F7; }
 .fsl-chart-eyes { stroke: #AED581; }
@@ -294,6 +322,12 @@ HUD_RUNTIME_JS: Final[str] = """
     // tick（sync）はこの骨格を作り直さず、textContent と points 属性だけを
     // 書き換える。
     hud.innerHTML =
+      // FR-040/§5.4: 状態と平滑化時間のチップ。数値より前に置く（下に並ぶ数字を
+      // どう読むかの前提であるため）。中身は tick が textContent だけ書き換える。
+      '<div id="fsl-hud-chips">' +
+        '<span class="fsl-hud-chip" id="fsl-hud-state"></span>' +
+        '<span class="fsl-hud-chip" id="fsl-hud-smoothing"></span>' +
+      '</div>' +
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
       '<div class="fsl-hud-baseline" id="fsl-hud-baseline-symmetry"></div>' +
@@ -326,6 +360,9 @@ HUD_RUNTIME_JS: Final[str] = """
         '<text x="2" y="9" class="fsl-chart-axis">' + CFG.chartYMax + '%</text>' +
         '<text x="2" y="' + (CFG.chartHeight - 2) + '" class="fsl-chart-axis">' +
           CFG.chartYMin + '%</text>' +
+        // H5: 面は線より **前** に置く。SVG は文書順で重なるため、後ろに置くと
+        // 面が 5 本の線をすべて覆い隠す。
+        '<polygon id="fsl-chart-overall-area" class="fsl-chart-area" points=""></polygon>' +
         '<polyline id="fsl-chart-overall" class="fsl-chart-line fsl-chart-overall" points="">' +
           '</polyline>' +
         '<polyline id="fsl-chart-contour" class="fsl-chart-line fsl-chart-contour" points="">' +
@@ -469,6 +506,17 @@ HUD_RUNTIME_JS: Final[str] = """
     }
     return coords.join(' ');
   };
+  // H5: 総合値の線の下を塗るための閉じた多角形。**線と同じ `pointsFor` の結果を
+  // 使い、両端を下端へ落として閉じるだけ**にする。面だけ別の変換で描くと、線と面が
+  // ずれて「どちらが値なのか」が読めなくなる。
+  var areaPointsFor = function (buffer) {
+    var line = pointsFor(buffer);
+    if (!line) return '';
+    var step = CFG.chartWidth / (CFG.chartCapacity - 1);
+    var left = CFG.chartWidth - (buffer.length - 1) * step;
+    return left.toFixed(1) + ',' + CFG.chartHeight + ' ' + line + ' ' +
+      CFG.chartWidth.toFixed(1) + ',' + CFG.chartHeight;
+  };
 
   var sync = function () {
     tameVideoFrame();
@@ -518,6 +566,11 @@ HUD_RUNTIME_JS: Final[str] = """
     // FR-039: 参照平均の併記。payload が持たない・母集団が決まらないときは空文字で
     // あり、CSS の `:empty` が行ごと畳む。ここで `—` を入れない（併記の不在は測定の
     // 欠測ではない）。
+    // FR-040/§5.4: 状態と平滑化時間。どちらも空文字なら `:empty` が畳む。
+    // `—` を入れない（設定や状態の不在は測定の欠測ではない）。
+    setText('fsl-hud-state', data.state || '');
+    setText('fsl-hud-smoothing', data.smoothing || '');
+
     var baseline = data.baseline || {};
     var baselineParts = baseline.parts || {};
     setText('fsl-hud-baseline-symmetry', baseline.symmetry || '');
@@ -549,6 +602,10 @@ HUD_RUNTIME_JS: Final[str] = """
       }
       var poly = document.getElementById('fsl-chart-' + key);
       if (poly) poly.setAttribute('points', pointsFor(buffer));
+      if (key === 'overall') {
+        var area = document.getElementById('fsl-chart-overall-area');
+        if (area) area.setAttribute('points', areaPointsFor(buffer));
+      }
     }
   };
   sync();

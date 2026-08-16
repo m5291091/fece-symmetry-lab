@@ -253,3 +253,39 @@ def gate_color(state: AnalysisState | None) -> str:
     if state is None:
         return _UNKNOWN_GATE_COLOR
     return GATE_COLORS.get(state.status, _UNKNOWN_GATE_COLOR)
+
+
+#: §5.2/§5.4: 枠色と同じ情報をテキストでも持つ。**述べるのは「何が起きているか」
+#: だけで、良し悪しではない**（「良好」「不良」を使わない）。詳細結果タブの
+#: `render_guidance` が出す行動可能な指示文（§6.3）とは役割が違う——こちらは
+#: HUD の 1 行に収まる状態名であり、指示文の置き換えではない。
+GATE_LABELS: Final[dict[Status, str]] = {
+    Status.OK: "計測中",
+    Status.HOLD: "調整中",
+    Status.NO_FACE: "顔が見つかりません",
+    Status.MULTI_FACE: "顔が複数あります",
+    Status.ERROR: "処理に失敗しました",
+}
+
+#: 解析がまだ 1 つも無いとき。`gate_color` の中立色と対になる文言で、`Status` の
+#: どの値とも別物である（「まだ何も測っていない」は失敗ではない）。
+_UNKNOWN_GATE_LABEL: Final[str] = "待機中"
+
+
+def gate_label(state: AnalysisState | None) -> str:
+    """ゲート状態 1 つに対する §5.4 のテキスト表示。"""
+    if state is None:
+        return _UNKNOWN_GATE_LABEL
+    return GATE_LABELS.get(state.status, _UNKNOWN_GATE_LABEL)
+
+
+def format_smoothing_window(tau_seconds: float | None) -> str:
+    """FR-040: いま有効な平滑化の時定数を、HUD と設定 UI が共有する形で表示する。
+
+    **欠測（`None`）は空文字であり `—` ではない。** `—` は「あるはずの測定値が
+    欠測している」の記号であり（不変条件 11）、設定が読めないこと（analyzer 未
+    接続）は測定の欠測ではない。空文字は CSS の `:empty` で行ごと畳まれる。
+    """
+    if tau_seconds is None:
+        return ""
+    return f"平滑化 {tau_seconds:.1f} 秒"

@@ -575,3 +575,66 @@ def test_the_video_attributes_reach_the_component() -> None:
     from face_symmetry_lab.ui import camera
 
     assert "video_html_attrs=VIDEO_HTML_ATTRS" in inspect.getsource(camera.render_camera_section)
+
+
+# --- FR-040: 表示平滑化時間の配線 ---------------------------------------------
+
+
+def test_the_display_controls_offer_the_smoothing_selector_and_apply_it() -> None:
+    """FR-040: 選んだ時定数が、その場で pipeline へ届く。
+
+    罠: `render_smoothing_control` を描くだけで `set_smoothing_tau_seconds` を
+    呼ばない実装は、UI だけが動いて平滑化が既定のまま残る。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_display_controls)
+
+    assert "render_smoothing_control(" in source
+    assert "pipeline.set_smoothing_tau_seconds(" in source
+    assert "pipeline.analysis_interval_ms" in source, "実効サンプル数は実周期から出す"
+
+
+def test_the_hud_fragment_publishes_the_active_smoothing_window() -> None:
+    """FR-040/§5.4: 全画面中でも「何秒の平均か」を映像の上で読めるようにする。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_hud_fragment)
+
+    assert "smoothing_tau_seconds=pipeline.smoothing_tau_seconds" in source
+
+
+def test_the_settings_tab_groups_its_controls_into_titled_sections() -> None:
+    """§5.1: 設定が平らな 1 列に並ぶと、どれが何のための操作か読み取れない。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+    from face_symmetry_lab.ui.smoothing_panel import SMOOTHING_HEADING
+
+    source = inspect.getsource(camera._render_display_controls)
+
+    assert source.count("st.container(border=True)") >= 3
+    for heading in ("映像の見え方", "自動調整の現在値"):
+        assert heading in source
+    # 平滑化区画の見出しは panel 自身が持つ。**ここで重ねて出さない**（罠: 両方が
+    # 出すと同じ囲みの中に見出しが 2 行並ぶ。実ブラウザで見つけた回帰）。
+    assert 'st.markdown("##### 数値の落ち着き' not in source
+    assert SMOOTHING_HEADING.startswith("##### 数値の落ち着き")
+    # HUD の位置は別の関数が持つが、同じ作法で囲う。
+    assert "映像上のHUD" in inspect.getsource(camera._render_hud_position_control)
+
+
+def test_the_tabs_keep_their_names_while_gaining_icons() -> None:
+    """アイコンは見分けの手掛かりであって、文言の置き換えではない（§5.4）。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+
+    for label in ("詳細結果", "左右対称との比較", "表示設定", "エクスポート"):
+        assert label in source

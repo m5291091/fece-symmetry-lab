@@ -406,3 +406,76 @@ def test_the_hud_footprint_includes_its_padding_and_border() -> None:
 
     assert "box-sizing: border-box;" in rule
     assert "width: clamp(210px, 26vw, 360px);" in rule
+
+
+# --- FR-040 / §5.4: 状態と平滑化時間のチップ ----------------------------------
+
+
+def test_the_state_and_smoothing_chips_are_part_of_the_skeleton() -> None:
+    """骨格は bridge が 1 度だけ作る。5Hz の tick で作り直さない（§5.2）。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+
+    assert 'id="fsl-hud-chips"' in skeleton
+    assert 'id="fsl-hud-state"' in skeleton
+    assert 'id="fsl-hud-smoothing"' in skeleton
+
+
+def test_the_tick_only_writes_the_chip_text() -> None:
+    """罠: tick で innerHTML を組み直す実装は、毎秒 5 回の style 再計算を招く。"""
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert "setText('fsl-hud-state', data.state" in tick
+    assert "setText('fsl-hud-smoothing', data.smoothing" in tick
+    assert "fsl-hud-chips'" not in tick, "チップの器そのものは tick で触らない"
+
+
+def test_an_empty_chip_collapses_instead_of_leaving_a_blank_pill() -> None:
+    """設定や状態が無いときに、空の丸だけが映像の上へ残らないようにする。"""
+    assert ".fsl-hud-chip:empty { display: none; }" in HUD_STYLESHEET
+    assert "#fsl-hud-chips:empty" in HUD_STYLESHEET
+
+
+def test_the_chips_scale_with_the_hud_like_every_other_reading() -> None:
+    """狭い画面で箱だけが縮み、文字が元の大きさで残ることがないようにする。"""
+    block = HUD_STYLESHEET.split(".fsl-hud-chip {")[1].split("}")[0]
+
+    assert "font-size: clamp(" in block
+
+
+def test_the_chips_never_repaint_themselves_with_the_gate_colour() -> None:
+    """§5.4: 状態を色で二重に語らない。枠色は箱の border が既に担っている。
+
+    罠: チップの背景を `data.gate` で塗る実装は、色を落とすと情報が消える
+    （テキストだけを手掛かりにしている利用者に何も残らない）。
+    """
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert "fsl-hud-state').style" not in tick
+    assert "stateEl.style" not in tick
+
+
+# --- H5: 折れ線グラフの面 -----------------------------------------------------
+
+
+def test_the_overall_series_carries_a_filled_area_built_once() -> None:
+    """全体の線だけを面で塗り、5 本のうちどれが総合値かを一目で分かるようにする。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+
+    assert 'id="fsl-chart-overall-area"' in skeleton
+    assert "<polygon" in skeleton
+    assert ".fsl-chart-area" in HUD_STYLESHEET
+
+
+def test_the_area_is_redrawn_from_the_same_buffer_as_the_line() -> None:
+    """罠: 面だけ別の系列・別の変換で描く実装は、線と面がずれる。"""
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert "fsl-chart-overall-area" in tick
+    assert "areaPointsFor(" in tick
+
+
+def test_the_area_stays_behind_the_lines() -> None:
+    """SVG は文書順で重なる。面が線より後に来ると、線を覆い隠す。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+
+    assert skeleton.index('id="fsl-chart-overall-area"') < skeleton.index('id="fsl-chart-overall"')

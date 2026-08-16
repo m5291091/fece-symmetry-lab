@@ -25,8 +25,10 @@ from face_symmetry_lab.ui.readings import (
     format_baseline_symmetry,
     format_distance,
     format_score,
+    format_smoothing_window,
     format_symmetry,
     gate_color,
+    gate_label,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
@@ -314,3 +316,41 @@ def test_the_baseline_note_states_what_the_mean_is_not() -> None:
     assert "個人評価・人物間比較には使えません" in note
     assert "非商用研究限定" in note
     assert "括弧内は表示値と平均の差です" in note
+
+
+# --- FR-040 / §5.4: 状態と平滑化時間のテキスト表示 ----------------------------
+
+
+def test_every_gate_status_has_a_text_label() -> None:
+    """§5.4: 枠色を状態の唯一の手掛かりにしない。
+
+    罠: 状態を 1 つ足したときに既定へ落ちる実装だと、その状態のときだけ HUD が
+    色しか語らなくなる。`GATE_COLORS` と同じく全メンバーを要求する。
+    """
+    labels = {status: gate_label(AnalysisState(status=status)) for status in Status}
+
+    assert set(labels) == set(Status)
+    assert all(label for label in labels.values())
+    # 「計測条件を満たしている」状態は、他のどの状態とも別の文言である。
+    assert len({*labels.values()}) == len(Status)
+
+
+def test_the_gate_label_without_an_analysis_reads_as_waiting() -> None:
+    assert gate_label(None) == "待機中"
+
+
+@pytest.mark.parametrize("banned", ["良好", "不良", "美しい", "良い", "悪い", "優れ", "理想", "劣"])
+def test_the_gate_labels_carry_no_value_judgement(banned: str) -> None:
+    """§5.2: 状態は「何が起きているか」であって、顔の良し悪しではない。"""
+    for status in Status:
+        assert banned not in gate_label(AnalysisState(status=status))
+
+
+def test_the_smoothing_window_is_shown_with_its_unit() -> None:
+    assert format_smoothing_window(0.4) == "平滑化 0.4 秒"
+    assert format_smoothing_window(2.0) == "平滑化 2.0 秒"
+
+
+def test_an_unknown_smoothing_window_is_blank_rather_than_missing() -> None:
+    """`—` は「あるはずの測定値が欠測」の記号（不変条件 11）。設定の不在は別物。"""
+    assert format_smoothing_window(None) == ""

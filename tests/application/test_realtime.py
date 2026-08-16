@@ -27,6 +27,7 @@ from face_symmetry_lab.domain.landmarks import (
     build_landmark_frame,
 )
 from face_symmetry_lab.domain.models import AnalysisState, DemographicEstimate, Status
+from face_symmetry_lab.domain.smoothing import SmoothingError
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 #: `extract_face_crop` が退化しない bbox を導けるよう広げた点。
@@ -155,6 +156,7 @@ class StubAnalyzer:
     def __init__(self) -> None:
         self.reset_calls = 0
         self.update_calls: list[tuple[object, float, object]] = []
+        self.tau_calls: list[float] = []
         self.config = object()
         #: FR-038: `RealtimeLandmarkPipeline._analyse` は `age_gate` が設定され
         #: ているとき `analyzer.config_3d` を読む。ここでは実際に触れられる場面
@@ -184,6 +186,20 @@ class StubAnalyzer:
 
     def update(self, *, thresholds: object, tau_seconds: float) -> None:
         self.update_calls.append((thresholds, tau_seconds))
+        self._tau_seconds = tau_seconds
+
+    #: FR-040: 実物の `FrameAnalyzer` と同じく「現在の時定数を読み戻せる」契約を
+    #: 持たせる。pipeline 側の冪等判定がこれを読むため、書き込みだけの spy に
+    #: すると「同じ値が届いたときに何もしない」という検証が成立しない。
+    _tau_seconds: float = 0.4
+
+    @property
+    def tau_seconds(self) -> float:
+        return self._tau_seconds
+
+    def set_tau_seconds(self, tau_seconds: float) -> None:
+        self.tau_calls.append(tau_seconds)
+        self._tau_seconds = tau_seconds
 
 
 class RecorderSpy:
@@ -777,6 +793,75 @@ def test_set_background_mode_updates_the_running_pipeline() -> None:
 
     assert np.all(before == 10)  # 既定は OFF: 無変更
     assert np.all(after == 0)  # BLACK: 置き換わる
+
+
+def test_setting_the_smoothing_time_reaches_the_analyzer_and_starts_a_new_segment() -> None:
+    """FR-040/§8.8: 利用者が選んだ時定数が EMA へ届き、区間が切り替わる。"""
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+
+    changed = pipeline.set_smoothing_tau_seconds(1.5)
+
+    assert changed is True
+    assert analyzer.tau_calls == [1.5]
+    assert recorder.reset_kwargs[-1] == {"tau_seconds": 1.5}
+    assert pipeline.smoothing_tau_seconds == pytest.approx(1.5)
+
+
+def test_setting_the_same_smoothing_time_again_changes_nothing() -> None:
+    """FR-040: 5 Hz の再実行で毎回同じ値が届く。
+
+    罠: 冪等にしない実装は EMA を毎回作り直すため、**平滑化が事実上無効になった
+    まま「平滑化している」と表示し続ける**。壊れ方が静かなので、ここで固定する。
+    区間 (`segment_id`) も動かないことを併せて見る——動くと HUD の折れ線グラフが
+    毎 tick 空になる。
+    """
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+    pipeline.set_smoothing_tau_seconds(1.5)
+    resets_after_first = recorder.reset_calls
+
+    changed = pipeline.set_smoothing_tau_seconds(1.5)
+
+    assert changed is False
+    assert analyzer.tau_calls == [1.5]
+    assert recorder.reset_calls == resets_after_first
+
+
+def test_setting_the_smoothing_time_leaves_zoom_cadence_and_demographics_alone() -> None:
+    """FR-040: 触れてよいのは EMA と区間だけ。自動調整の結果を巻き戻さない。"""
+    landmarker = FakeLandmarker()
+    analyzer = StubAnalyzer()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=RecorderSpy())
+    interval_before = pipeline.analysis_interval_ms
+
+    pipeline.set_smoothing_tau_seconds(3.0)
+
+    assert landmarker.policy_updates == []
+    assert pipeline.analysis_interval_ms == interval_before
+
+
+@pytest.mark.parametrize("bad", [0.0, 5.5, float("nan")])
+def test_an_out_of_range_smoothing_time_is_refused_before_anything_changes(bad: float) -> None:
+    """罠: clamp する実装は、範囲外の指定を黙って別の設定へ読み替える。"""
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+
+    with pytest.raises(SmoothingError):
+        pipeline.set_smoothing_tau_seconds(bad)
+
+    assert analyzer.tau_calls == []
+    assert recorder.reset_calls == 0
+
+
+def test_a_pipeline_without_an_analyzer_reports_no_smoothing_time() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    assert pipeline.smoothing_tau_seconds is None
+    assert pipeline.set_smoothing_tau_seconds(1.0) is False
 
 
 def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> None:

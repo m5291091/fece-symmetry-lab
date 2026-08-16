@@ -60,6 +60,7 @@ from face_symmetry_lab.domain.overlay import (
     DEFAULT_POINT_COLOR,
     DEFAULT_POINT_RADIUS,
 )
+from face_symmetry_lab.domain.smoothing import validate_tau_seconds
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 from face_symmetry_lab.runtime.frame_scheduler import FrameScheduler
 
@@ -510,6 +511,38 @@ class RealtimeLandmarkPipeline:
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
 
+    def set_smoothing_tau_seconds(self, tau_seconds: float) -> bool:
+        """FR-040: 表示平滑化の時定数だけを差し替える（§8.7、§8.8、ADR-0007）。
+
+        変更したときだけ `True` を返す。**同じ値が届いたときは何もしない。**
+        呼び出し元は 5 Hz で再実行される設定 UI であり、毎実行で「現在の選択値」が
+        届く。ここを冪等にしないと EMA が毎回作り直され、平滑化が事実上無効に
+        なったまま「平滑化している」と表示され続ける（壊れ方が静かなので、
+        AC-SMOOTH-01 がこの性質を固定している）。区間 `segment_id` も同じ理由で
+        動かさない——動くと HUD の折れ線グラフが毎 tick 空になる。
+
+        値域の検証は `domain.smoothing.validate_tau_seconds` が持ち、**範囲外は
+        clamp せず例外にする。** 何も変更する前に検証するため、拒否されたときは
+        直前の設定がそのまま残る。UI が提示するのは `TAU_CHOICES_SECONDS` の段
+        だけなので、ここへ範囲外が届くのは呼び出し側の誤りである。
+
+        `apply_advanced_settings` と違い、追跡ズーム方針・cadence・年齢性別
+        worker には触れない。これらは FR-029/FR-030 の自動調整が持つ値であり、
+        利用者が平滑化を選び直すたびに巻き戻してはならない。
+        """
+        value = validate_tau_seconds(tau_seconds)
+        if self._analyzer is None:
+            # 採点していない pipeline には平滑化そのものが無い。recorder の
+            # fingerprint だけを動かしても意味を持たないため、何もしない。
+            return False
+        if self._analyzer.tau_seconds == value:
+            return False
+        self._analyzer.set_tau_seconds(value)
+        if self._recorder is not None:
+            # §8.8: 新しい区間と config fingerprint（`ema_tau_seconds` を含む）。
+            self._recorder.reset(tau_seconds=value)
+        return True
+
     def apply_advanced_settings(
         self,
         *,
@@ -583,6 +616,16 @@ class RealtimeLandmarkPipeline:
     def analysis_interval_ms(self) -> int:
         """現在有効な解析周期（§15.2、§14.3d の自動調整の読み戻し）。"""
         return self._cadence.interval_ms
+
+    @property
+    def smoothing_tau_seconds(self) -> float | None:
+        """現在有効な表示平滑化の時定数（FR-040）。analyzer 未接続なら `None`。
+
+        設定 UI と映像上の HUD の両方がここを読む。値の正本は `FrameAnalyzer` の
+        EMA 自身であり、pipeline は自前の控えを持たない——2 か所に持つと、
+        適用に失敗したときだけ画面と実際の平滑化が食い違う。
+        """
+        return self._analyzer.tau_seconds if self._analyzer is not None else None
 
     @property
     def display_ttl_ms(self) -> int:

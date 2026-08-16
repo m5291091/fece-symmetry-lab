@@ -75,6 +75,7 @@ from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
 )
+from face_symmetry_lab.ui.smoothing_panel import render_smoothing_control
 from face_symmetry_lab.ui.symmetrization_panel import (
     SYMMETRIZATION_HEADING,
     render_symmetrization_view,
@@ -272,6 +273,10 @@ def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     render_hud_payload(
         snapshot,
         show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
+        # FR-040: snapshot ではなく pipeline から直接読む。snapshot は解析フレーム
+        # ごとにしか作り直されないため、そこ経由だと選び直してから次の解析まで
+        # 古い秒数が HUD に残る。
+        smoothing_tau_seconds=pipeline.smoothing_tau_seconds,
     )
 
 
@@ -453,51 +458,46 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
-    """§15.1 の表示専用の設定を、そのまま pipeline へ書き込む。
+    """§15.1 の利用者向け設定を、そのまま pipeline へ書き込む。
 
-    どれもスコアを変えない（FR-027, FR-028）。正中線と背景は解析の後に描かれ、
-    年齢・性別のトグルは元から左右差とは独立したパネルの表示可否を切り替える
-    だけである（FR-024）。ここで読み、1 箇所で書き込むことで、その主張を
-    検証可能な形に保つ。
+    どれもスコアを変えない。正中線と背景は解析の後に描かれ、年齢・性別のトグルは
+    元から左右差とは独立したパネルの表示可否を切り替えるだけで（FR-024）、
+    平滑化時間（FR-040）が変えるのは表示の時間応答だけである（§8.7）。ここで
+    読み、1 箇所で書き込むことで、その主張を検証可能な形に保つ。
+
+    §5.1: 設定を平らな 1 列に並べず、「何のための操作か」で囲った区画へ分ける。
+    この画面の設定は性格が 3 つに分かれる——映像の見え方、数値の落ち着き、
+    HUD の置き場所——ので、そこで切る。
     """
-    midline_column, demographic_column = st.columns(2)
-    with midline_column:
-        show_midline = st.toggle(
-            "顔の中心線を表示",
-            value=True,
-            key="camera_midline_enabled",
-            help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
-        )
-    with demographic_column:
-        # この pipeline が実際に保持している worker を条件にする。worker が無いのに
-        # 機能が動いていると示すことがないようにするためである。
-        show_demographics = st.toggle(
-            "年齢・性別の参考値を表示",
-            value=True,
-            key=DEMOGRAPHIC_ENABLED_STATE_KEY,
-            disabled=not pipeline.has_demographic_worker,
-            help=(
-                "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
-                "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
-            ),
-        )
-        if not pipeline.has_demographic_worker:
-            st.caption("年齢・性別モデルが未配置のため使用できません。")
-    pipeline.set_midline_enabled(show_midline)
-    pipeline.set_demographic_enabled(show_demographics)
+    with st.container(border=True):
+        st.markdown("##### 映像の見え方")
+        st.caption("どれも表示だけを変えます。左右差の計算には使いません（FR-027, FR-028）。")
+        midline_column, demographic_column = st.columns(2)
+        with midline_column:
+            show_midline = st.toggle(
+                "顔の中心線を表示",
+                value=True,
+                key="camera_midline_enabled",
+                help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+            )
+        with demographic_column:
+            # この pipeline が実際に保持している worker を条件にする。worker が
+            # 無いのに機能が動いていると示すことがないようにするためである。
+            show_demographics = st.toggle(
+                "年齢・性別の参考値を表示",
+                value=True,
+                key=DEMOGRAPHIC_ENABLED_STATE_KEY,
+                disabled=not pipeline.has_demographic_worker,
+                help=(
+                    "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
+                    "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
+                ),
+            )
+            if not pipeline.has_demographic_worker:
+                st.caption("年齢・性別モデルが未配置のため使用できません。")
+        pipeline.set_midline_enabled(show_midline)
+        pipeline.set_demographic_enabled(show_demographics)
 
-    # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。色以外の手掛かりは、
-    # ゲートが閉じている間は詳細結果タブの状態文言と理由、ゲートが閉じると
-    # HUD・詳細結果の数値が「—」へ変わること（値の有無）の 2 つで保つ（項目26）。
-    st.caption(
-        "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
-        "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
-        "同じ状態は、条件を満たしていない間は詳細結果タブの文言と理由でも確認でき、"
-        "満たすと HUD・詳細結果の数値が「—」から実際の値へ変わることでも分かります。"
-    )
-
-    background_column, status_column = st.columns(2)
-    with background_column:
         segmenter_path = configured_segmenter_path()
         if segmenter_status(segmenter_path) is InstallStatus.READY:
             background_mode = st.radio(
@@ -511,7 +511,33 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
             pipeline.set_background_mode(background_mode)
         else:
             st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
-    with status_column:
+
+        # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。色以外の手掛かり
+        # は、HUD 自身が出す状態のテキスト（FR-040 と同じ行）、ゲートが閉じている
+        # 間の詳細結果タブの文言と理由、そしてゲートが閉じると数値が「—」へ変わる
+        # こと（値の有無）の 3 つで保つ（項目26）。
+        st.caption(
+            "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
+            "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
+            "同じ状態は HUD 左上の状態表示でも読め、条件を満たしていない間は詳細結果タブの"
+            "文言と理由でも確認できます。満たすと HUD・詳細結果の数値が「—」から実際の値へ"
+            "変わることでも分かります。"
+        )
+
+    with st.container(border=True):
+        # 見出しは `render_smoothing_control` が自分で出す（`SMOOTHING_HEADING`）。
+        # ここでもう 1 行足すと、同じ囲みの中に見出しが 2 つ並ぶ。
+        # FR-040: panel は pipeline を知らない。選ばれた値をここで適用する。
+        # `set_smoothing_tau_seconds` は同じ値なら何もしないので、5 Hz の再実行で
+        # EMA が作り直されることはない（AC-SMOOTH-01）。
+        selected_tau = render_smoothing_control(
+            tau_seconds=pipeline.smoothing_tau_seconds,
+            analysis_interval_ms=pipeline.analysis_interval_ms,
+        )
+        pipeline.set_smoothing_tau_seconds(selected_tau)
+
+    with st.container(border=True):
+        st.markdown("##### 自動調整の現在値")
         _render_auto_tune_status(pipeline)
 
 
@@ -523,17 +549,23 @@ def _render_hud_position_control() -> None:
     見出しパネルとその配置プリセット（右・左・下）を削除したため、ここで
     描く radio は映像上 HUD の位置だけになる。
     """
-    st.radio(
-        "映像上の HUD の位置",
-        options=HUD_POSITION_OPTIONS,
-        key=HUD_POSITION_STATE_KEY,
-        horizontal=True,
-        help=(
-            "映像へ重ねる HUD の吹き出し"
-            "（全体の対称度・全体のスコア・部位別4つ・参考年齢・参考性別・折れ線グラフ）"
-            "の位置です。映像自体は加工しません。"
-        ),
-    )
+    with st.container(border=True):
+        st.markdown("##### 映像上のHUD")
+        st.radio(
+            "映像上の HUD の位置",
+            options=HUD_POSITION_OPTIONS,
+            key=HUD_POSITION_STATE_KEY,
+            horizontal=True,
+            help=(
+                "映像へ重ねる HUD の吹き出し"
+                "（状態・平滑化時間・全体の対称度・全体のスコア・部位別4つ・"
+                "参考年齢・参考性別・折れ線グラフ）の位置です。映像自体は加工しません。"
+            ),
+        )
+        st.caption(
+            "HUD は掴んで動かせます（左下の「⠿ ドラッグで移動」）。"
+            "プリセットを選び直すと、掴んだ位置は破棄して選んだ角へ戻ります。"
+        )
 
 
 def _exit_fullscreen() -> None:
@@ -646,8 +678,11 @@ def render_camera_section() -> None:
 
     # §5.1, AC-LAYOUT-01: 映像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
     # 上の表示がスクロールで手の届かない位置へ行かないようにする。
+    # アイコンは並んだタブを見分ける手掛かりであって、文言の置き換えではない
+    # （§5.4: 記号だけで意味を伝えない）。達成度・良し悪しを表す絵文字は使わない
+    # （§5.2）。
     detail_tab, symmetry_tab, settings_tab, export_tab = st.tabs(
-        ["詳細結果", "左右対称との比較", "表示設定", "エクスポート"]
+        ["📊 詳細結果", "🪞 左右対称との比較", "⚙️ 表示設定", "⬇️ エクスポート"]
     )
     with detail_tab:
         _render_detail_panel(pipeline)

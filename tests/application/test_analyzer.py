@@ -9,6 +9,7 @@ from face_symmetry_lab.domain.landmarks import LandmarkFrame, build_landmark_fra
 from face_symmetry_lab.domain.metrics import MetricConfig, PartMap, build_metric_config
 from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
+from face_symmetry_lab.domain.smoothing import SmoothingError
 
 # 640x480 のフレーム内にある、対称な顔の正規化ランドマーク。
 _BASE_POINTS = (
@@ -264,6 +265,109 @@ def test_update_swaps_thresholds_and_resets_the_gate_and_smoothing() -> None:
     assert (
         outcome.overall_distance_smooth == outcome.overall_distance_raw
     )  # 平滑化の履歴がリセットされた
+
+
+def test_set_tau_seconds_reads_back_without_touching_the_thresholds() -> None:
+    """FR-040: 利用者が動かすのは平滑化時間だけで、採点条件には触れない。"""
+    analyzer = _analyzer(thresholds=QualityThresholds(valid_frames_to_ok=3))
+
+    analyzer.set_tau_seconds(2.0)
+
+    assert analyzer.tau_seconds == pytest.approx(2.0)
+    assert analyzer.thresholds.valid_frames_to_ok == 3
+
+
+def test_set_tau_seconds_keeps_the_gate_open() -> None:
+    """FR-040/§8.8: ヒステリシスはリセットしない。
+
+    罠: `update(thresholds=self.thresholds, tau_seconds=...)` で済ませた実装は
+    `QualityGate` ごと作り直すため、平滑化時間を選び直すたびに `HOLD` へ戻り、
+    `valid_frames_to_ok` 分のフレームのあいだ数値が `—` になる。
+    """
+    analyzer = _analyzer()
+    _drive_to_ok(analyzer)
+
+    analyzer.set_tau_seconds(2.0)
+    outcome = analyzer.analyze(_frame(frame_id=6), at=0.6)
+
+    assert outcome.state.status is Status.OK
+
+
+def _skewed_points():
+    skewed = list(SYMMETRIC_POINTS)
+    skewed[19] = (0.20, SYMMETRIC_POINTS[19][1])
+    return tuple(skewed)
+
+
+def _drive_to_ok_with_depth(analyzer: FrameAnalyzer, depths) -> None:
+    for index in range(1, 6):
+        analyzer.analyze(
+            _depth_frame(SYMMETRIC_POINTS, frame_id=index, depths=depths), at=index * 0.1
+        )
+
+
+def test_set_tau_seconds_restarts_the_smoothing_history() -> None:
+    """§8.8: 古い時定数で均した値が、新しい区間の最初の値へ混ざらない。
+
+    全体（`d_3d`）と部位別（`d_3d,p`）の両方を見る。罠: `_ema_3d` だけを作り
+    直して部位別を取りこぼすと、部位別だけが古い時定数のまま動き続ける。
+    """
+    depths = _depths(SYMMETRIC_POINTS)
+    skewed = _skewed_points()
+    analyzer = _analyzer()
+    _drive_to_ok_with_depth(analyzer, depths)
+
+    lagging = analyzer.analyze(_depth_frame(skewed, frame_id=6, depths=depths), at=0.6)
+    assert lagging.symmetry_3d is not None
+    assert lagging.overall_distance_3d_smooth is not None
+    assert lagging.overall_distance_3d_smooth != pytest.approx(
+        lagging.symmetry_3d.overall_distance, abs=1e-9
+    )
+
+    analyzer.set_tau_seconds(2.0)
+    outcome = analyzer.analyze(_depth_frame(skewed, frame_id=7, depths=depths), at=0.7)
+
+    assert outcome.symmetry_3d is not None
+    assert outcome.overall_distance_3d_smooth == pytest.approx(
+        outcome.symmetry_3d.overall_distance, abs=1e-9
+    )
+    parts = outcome.part_distances_3d_smooth
+    assert parts is not None
+    for name, smoothed in parts.items():
+        assert smoothed == pytest.approx(outcome.symmetry_3d.distance(name), abs=1e-9)
+
+
+def test_a_longer_time_constant_makes_the_display_lag_more() -> None:
+    """罠: `tau` を控えるだけで EMA を作り直さない実装は、両者を同じ値にする。"""
+    depths = _depths(SYMMETRIC_POINTS)
+    skewed = _skewed_points()
+
+    def _run(tau: float) -> float:
+        analyzer = _analyzer()
+        _drive_to_ok_with_depth(analyzer, depths)
+        analyzer.set_tau_seconds(tau)
+        # リセット直後の 1 枚目は生値そのもの。2 枚目から時定数の違いが出る。
+        analyzer.analyze(_depth_frame(skewed, frame_id=6, depths=depths), at=0.6)
+        outcome = analyzer.analyze(
+            _depth_frame(SYMMETRIC_POINTS, frame_id=7, depths=depths), at=0.7
+        )
+        assert outcome.overall_distance_3d_smooth is not None
+        return outcome.overall_distance_3d_smooth
+
+    assert _run(2.0) > _run(0.2)
+
+
+@pytest.mark.parametrize("bad", [0.0, 6.0, float("nan")])
+def test_an_out_of_range_time_constant_is_refused_and_keeps_the_previous_one(
+    bad: float,
+) -> None:
+    analyzer = _analyzer()
+    analyzer.set_tau_seconds(1.0)
+
+    with pytest.raises(SmoothingError):
+        analyzer.set_tau_seconds(bad)
+
+    assert analyzer.tau_seconds == pytest.approx(1.0)
 
 
 def test_update_cannot_swap_the_pinned_metric_bundle() -> None:
