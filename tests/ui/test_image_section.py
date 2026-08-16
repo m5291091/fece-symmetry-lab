@@ -506,3 +506,19 @@ def test_the_page_module_no_longer_owns_the_image_mode() -> None:
     for moved in ("file_uploader", "analyze_still_image", "OpenCvDemographicEstimator"):
         assert moved not in source
     assert "render_image_section" in source
+
+
+def test_the_image_mode_never_renders_a_session_summary() -> None:
+    """FR-021: 静止画は 1 行しか持たず、分布が存在しない。
+
+    罠: Camera と同じ配線をそのまま持ち込む実装は、1 件だけの「中央値」と
+    「変動幅」を出す——どちらもその 1 枚の値そのものであって、要約ではない。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    source = inspect.getsource(image_section)
+
+    assert "summarize_session" not in source
+    assert "render_session_summary" not in source

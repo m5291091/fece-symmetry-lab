@@ -26,6 +26,7 @@ from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
 from face_symmetry_lab.domain.reference_baseline import BaselineReading
 from face_symmetry_lab.domain.score_scale import score_points
+from face_symmetry_lab.domain.score_scale import symmetry_percent as _symmetry_percent
 
 PART_LABELS: Final[dict[str, str]] = {
     "contour": "輪郭",
@@ -51,17 +52,16 @@ def format_distance(value: float | None) -> str:
 def symmetry_percent(value: float | None) -> float | None:
     """§8.6.3 の対称度変換を、文字列ではなく数値のまま返す。
 
-    `format_symmetry` と同じ式を共有する唯一の実装であり、`ui.hud` の折れ線
-    グラフが数値を必要とする場所（テキスト表示とは別に、SVG の `points` 属性
-    を計算する箇所）はここを経由する。式を 2 箇所に書くと、グラフとテキストが
-    別々の表示規則へ分岐しうる。
+    式そのものは `domain.score_scale.symmetry_percent` が持ち、ここは委譲する
+    だけである（`score_points_value` と同じ形）。domain へ置いてあるのは、
+    FR-021 の要約（`domain.session_summary`）も同じ変換を必要とするためで、
+    ui へ置いたままだと domain が ui へ依存することになる。
 
-    ずれが両眼間隔そのものを超える退化ケースのために 0% で下限を設ける。
-    それ以外の場所では `d` は上限のない値のままである（§8.6.3）。
+    `format_symmetry`・`ui.hud` の折れ線グラフ・要約・FR-042 のレポートが
+    すべてこの 1 つの式を共有する。2 箇所に書くと、画面上の別々の場所が同じ
+    測定値から別の数を出す。
     """
-    if value is None:
-        return None
-    return min(100.0, max(0.0, (1.0 - value) * 100.0))
+    return _symmetry_percent(value)
 
 
 def format_symmetry(value: float | None) -> str:

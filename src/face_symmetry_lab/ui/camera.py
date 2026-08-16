@@ -52,6 +52,7 @@ from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.session_summary import summarize_session
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.export_panel import render_export_panel
@@ -78,6 +79,7 @@ from face_symmetry_lab.ui.scores import (
     render_score_details,
 )
 from face_symmetry_lab.ui.smoothing_panel import render_smoothing_control
+from face_symmetry_lab.ui.summary_panel import render_session_summary
 from face_symmetry_lab.ui.symmetrization_panel import (
     SYMMETRIZATION_HEADING,
     render_symmetrization_view,
@@ -440,8 +442,19 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    """FR-021 の要約と FR-017 のダウンロードを、同じタブへ順に置く。
+
+    **bundle は 1 度だけ作る。** `export_bundle()` は lock の内側で記録を複製
+    するので、要約用とダウンロード用に 2 度呼ぶと、その間に届いたフレームの分だけ
+    両者がずれる（要約が語るセッションと、保存されるセッションが別物になる）。
+
+    要約を 5 Hz の fragment ではなくここへ置く理由は `ui.summary_panel` にある
+    ——最大 3,000 行の要約を毎秒 5 回計算する必要はない。
+    """
+    bundle = pipeline.export_bundle()
+    render_session_summary(summarize_session(bundle.records if bundle is not None else ()))
     render_export_panel(
-        pipeline.export_bundle(),
+        bundle,
         heading="セッションデータのエクスポート",
         warning=(
             "姿勢・左右差などの顔由来の派生データを含みます。"
@@ -708,7 +721,7 @@ def render_camera_section() -> None:
     # （§5.4: 記号だけで意味を伝えない）。達成度・良し悪しを表す絵文字は使わない
     # （§5.2）。
     detail_tab, symmetry_tab, settings_tab, export_tab = st.tabs(
-        ["📊 詳細結果", "🪞 左右対称との比較", "⚙️ 表示設定", "⬇️ エクスポート"]
+        ["📊 詳細結果", "🪞 左右対称との比較", "⚙️ 表示設定", "📄 まとめ・エクスポート"]
     )
     with detail_tab:
         _render_detail_panel(pipeline)

@@ -672,3 +672,42 @@ def test_the_display_snapshot_keys_the_latch_on_the_shared_signature() -> None:
 
     assert "hold_for_display(" in source
     assert "display_signature(snapshot.analysis)" in source
+
+
+# --- FR-021: セッション要約の配線 ---------------------------------------------
+
+
+def test_the_export_tab_summarises_the_session_before_the_download_buttons() -> None:
+    """FR-021: 要約はセッション単位の成果物なので、エクスポートと同じ場所へ置く。
+
+    罠: 5Hz の詳細 fragment へ入れる実装は、最大3,000行の要約を毎秒5回計算する。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "summarize_session(" in source
+    assert "render_session_summary(" in source
+    # 関数名 `_render_export_panel` 自身に一致しないよう、呼び出し行を探す。
+    assert source.index("render_session_summary(") < source.index("\n    render_export_panel(")
+
+
+def test_the_session_summary_is_not_recomputed_by_the_five_hertz_fragment() -> None:
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    for fragment in (camera._render_hud_fragment, camera._render_detail_fragment):
+        assert "summarize_session" not in inspect.getsource(fragment), fragment.__name__
+
+
+def test_the_export_tab_is_named_for_both_of_its_contents() -> None:
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+
+    assert "まとめ・エクスポート" in source

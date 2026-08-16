@@ -71,3 +71,24 @@ def score_points(distance: float | None) -> float | None:
     span = DISTANCE_AT_ZERO_SCORE - DISTANCE_AT_FULL_SCORE
     points = 100.0 * (DISTANCE_AT_ZERO_SCORE - distance) / span
     return min(100.0, max(0.0, points))
+
+
+def symmetry_percent(distance: float | None) -> float | None:
+    """§8.6.3 の対称度変換（`100% - ずれ%`）を、文字列ではなく数値のまま返す。
+
+    **この式の唯一の実装である。** 読み手は 3 つある——`ui.readings`（テキストと
+    HUD の折れ線グラフ）、`domain.session_summary`（FR-021 の中央値と四分位）、
+    そして FR-042 のレポート。式を 2 か所に書くと、画面上の別々の場所が同じ測定値
+    から別の数を出す。`ui.readings.symmetry_percent` はここへ委譲するだけである
+    （`score_points` と `ui.readings.score_points_value` の関係と同じ）。
+
+    線形かつ可逆で、較正された係数を持たない。したがって同じ測定値の読む向きを
+    変えるだけであり、採点ではない（§8.6.3）。
+
+    ずれが両眼間隔そのものを超える退化ケースのために 0% で下限を設ける。欠測と
+    非有限値は欠測のまま返す——`min`/`max` の clamp は NaN を黙って 0.0 へ落とす
+    ため、clamp より前に弾く（`score_points` と同じ理由）。
+    """
+    if distance is None or not math.isfinite(distance):
+        return None
+    return min(100.0, max(0.0, (1.0 - distance) * 100.0))
