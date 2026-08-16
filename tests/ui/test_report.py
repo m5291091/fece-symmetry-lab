@@ -48,6 +48,8 @@ def _section(segment_id: str | None) -> SummarySection:
         score=SummaryReading(median=82.0, minimum=70.5, maximum=90.1, iqr=6.8, sample_count=120),
         parts=dict.fromkeys(("contour", "eyes", "nose", "mouth"), _reading()),
         reason_counts=((ReasonCode.OFF_AXIS_YAW, 20),),
+        age_gate_evaluated=100,
+        age_gate_shown=62,
     )
 
 
@@ -500,3 +502,37 @@ def test_a_single_year_population_is_written_without_a_range() -> None:
 
     assert "30 歳" in html
     assert "真ん中50%" not in html.split("計測条件")[0].split("参照統計の")[-1]
+
+
+def test_the_camera_report_carries_the_reference_age_rate() -> None:
+    """FR-021 (5): 画面と同じ値をレポートにも出す（同じ domain の結果を読む）。"""
+    html = _camera()
+
+    assert "参考年齢を表示できたフレーム" in html
+    assert "62%" in html
+
+
+def test_the_report_never_names_why_the_reference_age_was_hidden() -> None:
+    """§10.11-2: できなかった内訳を、集計でも復元させない。"""
+    html = _camera()
+
+    for banned in ("範囲外", "undetermined", "out_of_range", "未成年", "18歳"):
+        assert banned not in html
+
+
+def test_a_session_the_gate_never_ran_omits_the_rate_row() -> None:
+    section = _section(None)
+    silent = type(section)(
+        segment_id=None,
+        total_count=section.total_count,
+        ok_count=section.ok_count,
+        valid_rate=section.valid_rate,
+        valid_span_ms=section.valid_span_ms,
+        symmetry=section.symmetry,
+        score=section.score,
+        parts=section.parts,
+        reason_counts=section.reason_counts,
+    )
+    html = _camera(summary=SessionSummary(overall=silent, segments=()))
+
+    assert "参考年齢を表示できたフレーム" not in html

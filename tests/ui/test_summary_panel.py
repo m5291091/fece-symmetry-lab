@@ -11,6 +11,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.ui.summary_panel import (
+    REFERENCE_AGE_RATE_LABEL,
     SUMMARY_HEADING,
     SUMMARY_LIMITS_NOTE,
     SUMMARY_SEGMENT_NOTE,
@@ -38,6 +39,8 @@ _FULL = (
     "        score=score,\n"
     "        parts={name: reading for name in ('contour', 'eyes', 'nose', 'mouth')},\n"
     "        reason_counts=((ReasonCode.OFF_AXIS_YAW, 20), (ReasonCode.TOO_FAR, 10)),\n"
+    "        age_gate_evaluated=100,\n"
+    "        age_gate_shown=62,\n"
     "    )\n"
     "render_session_summary(SessionSummary(\n"
     "    overall=section(None),\n"
@@ -188,3 +191,33 @@ def test_nothing_is_drawn_without_any_record() -> None:
 
     assert not at.exception
     assert SUMMARY_HEADING not in _all_text(at)
+
+
+# --- FR-021 (5): 参考年齢を表示できた割合（2026-08-16） -----------------------
+
+
+def test_the_reference_age_rate_is_shown_when_the_gate_ran() -> None:
+    text = _all_text(_run())
+
+    assert REFERENCE_AGE_RATE_LABEL in text
+    assert "62%" in text
+
+
+def test_the_rate_is_absent_when_the_gate_never_ran() -> None:
+    """0 件を 0% と書かない。測っていないことと「0% だった」は別である。"""
+    text = _all_text(_run(_MISSING))
+
+    assert REFERENCE_AGE_RATE_LABEL not in text
+
+
+@pytest.mark.parametrize("banned", ["範囲外", "判定できません", "未成年", "18歳", "子ども"])
+def test_the_rate_never_names_why_it_could_not_be_shown(banned: str) -> None:
+    """§10.11-2: できなかった内訳を出さない。
+
+    罠: 「範囲外だった割合」という裏返しのラベルは、per-frame では同一文言に
+    して区別させなかったものを、セッション単位で復元できるようにする。
+    """
+    at = _run()
+    text = _all_text(at) + " ".join(str(e.label) for e in at.metric)
+
+    assert banned not in text

@@ -20,6 +20,7 @@ import pytest
 from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.session_summary import (
     SummaryError,
+    SummarySection,
     summarize_session,
     trend_series,
 )
@@ -403,3 +404,76 @@ def test_a_short_session_is_left_alone() -> None:
 
 def test_an_empty_session_has_no_series() -> None:
     assert trend_series([]).symmetry == ()
+
+
+# --- FR-021 (5): 参考年齢を表示できた割合（2026-08-16） -----------------------
+
+
+def _gated(decision: str | None, **kwargs) -> _Record:
+    record = _Record(**kwargs)
+    record.age_gate_decision = decision
+    return record
+
+
+def test_the_reference_age_rate_counts_only_the_frames_the_gate_judged() -> None:
+    """AC-SUMMARY-03: 顔が写っていないフレームを分母に入れない。
+
+    罠: 全行を分母にする実装は、顔が外れていた時間のぶんだけ割合を下げ、
+    機能が壊れているように見せる。
+    """
+    records = [
+        _gated("in_range"),
+        _gated("in_range"),
+        _gated("out_of_range"),
+        _gated(None),  # 顔なし・姿勢ゲート閉でゲートを呼んでいない
+        _gated(None),
+    ]
+
+    section = summarize_session(records).overall
+
+    assert section is not None
+    assert section.age_gate_evaluated == 3
+    assert section.age_gate_shown == 2
+    assert section.reference_age_rate == pytest.approx(2 / 3)
+
+
+def test_a_session_the_gate_never_judged_has_no_rate() -> None:
+    """0 件を 0% と書かない。測っていないことと「0% だった」は別である。"""
+    section = summarize_session([_gated(None), _gated(None)]).overall
+
+    assert section is not None
+    assert section.age_gate_evaluated == 0
+    assert section.reference_age_rate is None
+
+
+def test_undetermined_counts_the_same_as_out_of_range() -> None:
+    """§10.11-2: 2 つを区別できる形にしない。
+
+    罠: 内訳を持つ実装は、per-frame では同一文言にして区別させなかったものを、
+    セッション単位で復元できるようにしてしまう。
+    """
+    blocked = summarize_session([_gated("in_range"), _gated("out_of_range")]).overall
+    unknown = summarize_session([_gated("in_range"), _gated("undetermined")]).overall
+
+    assert blocked is not None and unknown is not None
+    assert blocked.reference_age_rate == unknown.reference_age_rate
+    # 内訳を持つ field そのものが無い。数えているのは「呼んだ数」と「出せた数」だけ。
+    assert not any(
+        "out_of_range" in name or "undetermined" in name for name in SummarySection.__slots__
+    )
+
+
+def test_the_rate_is_split_per_segment_like_every_other_figure() -> None:
+    records = [
+        _gated("in_range", segment_id="seg-1"),
+        _gated("in_range", segment_id="seg-1"),
+        _gated("out_of_range", segment_id="seg-2"),
+        _gated("out_of_range", segment_id="seg-2"),
+    ]
+
+    summary = summarize_session(records)
+
+    first, second = summary.segments
+    assert first.reference_age_rate == pytest.approx(1.0)
+    assert second.reference_age_rate == pytest.approx(0.0)
+    assert summary.overall.reference_age_rate == pytest.approx(0.5)

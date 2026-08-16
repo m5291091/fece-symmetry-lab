@@ -40,6 +40,16 @@ SUMMARY_SEGMENT_NOTE: Final[str] = "設定が違う区間の値は、同じ中�
 
 SUMMARY_SPREAD_LABEL: Final[str] = "変動幅（真ん中50%）"
 
+#: FR-021 (5) / §10.11-2: **「表示できた割合」までとし、できなかった内訳を出さない。**
+#: 分けると、per-frame では同一文言にして区別させなかったものが、セッション単位で
+#: 復元できてしまう。ラベルも「範囲外だった割合」のような裏返しにしない。
+REFERENCE_AGE_RATE_LABEL: Final[str] = "参考年齢を表示できたフレーム"
+
+REFERENCE_AGE_RATE_HELP: Final[str] = (
+    "顔を検出して年齢の判定を行ったフレームのうち、参考年齢を表示できた割合です。"
+    "顔が写っていないフレームは数えていません。"
+)
+
 #: 表の行の並び。画面に出る 6 つと同じ順・同じラベルにそろえる。FR-042 の
 #: レポートも同じ並びを読む（画面と保存物で行の順が違わないように）。
 SUMMARY_ROW_LABELS: Final[tuple[tuple[str, str], ...]] = (
@@ -134,6 +144,15 @@ def _render_section(section: SummarySection) -> None:
         "—" if section.valid_span_ms is None else f"{section.valid_span_ms / 1000.0:.1f} 秒",
         help="最初と最後の有効フレームの間隔です。連続して有効だった時間ではありません。",
     )
+    rate = section.reference_age_rate
+    if rate is not None:
+        # FR-021 (5): ゲートを呼んだセッションでだけ出す。呼んでいないセッション
+        # へ 0% と書くと、測っていないことと「0% だった」が混ざる。
+        st.metric(
+            REFERENCE_AGE_RATE_LABEL,
+            f"{rate * 100.0:.0f}%",
+            help=REFERENCE_AGE_RATE_HELP,
+        )
     st.caption(f"記録 {section.total_count:,} 行 · うち有効 {section.ok_count:,} 行")
     _render_reading_table(section)
     _render_reasons(section)

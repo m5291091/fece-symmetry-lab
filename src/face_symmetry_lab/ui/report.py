@@ -66,6 +66,7 @@ from face_symmetry_lab.ui.readings import (
 )
 from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL
 from face_symmetry_lab.ui.summary_panel import (
+    REFERENCE_AGE_RATE_LABEL,
     SUMMARY_LIMITS_NOTE,
     SUMMARY_ROW_LABELS,
     SUMMARY_SEGMENT_NOTE,
@@ -267,15 +268,18 @@ def _section_block(
     baseline: SessionBaselineSummary | None = None,
 ) -> str:
     span = "—" if section.valid_span_ms is None else f"{section.valid_span_ms / 1000.0:.1f} 秒"
-    facts = _table(
-        ("項目", "値"),
-        [
-            ["計測条件を満たしたフレーム", f"{section.valid_rate * 100.0:.1f}%"],
-            ["記録した行数", f"{section.total_count:,}"],
-            ["うち有効な行数", f"{section.ok_count:,}"],
-            ["有効だった長さ", span],
-        ],
-    )
+    facts: list[list[str]] = [
+        ["計測条件を満たしたフレーム", f"{section.valid_rate * 100.0:.1f}%"],
+        ["記録した行数", f"{section.total_count:,}"],
+        ["うち有効な行数", f"{section.ok_count:,}"],
+        ["有効だった長さ", span],
+    ]
+    # FR-021 (5): ゲートを呼んだセッションでだけ行を足す。§10.11-2 のとおり、
+    # できなかった内訳は持たない。
+    rate = section.reference_age_rate
+    if rate is not None:
+        facts.append([REFERENCE_AGE_RATE_LABEL, f"{rate * 100.0:.0f}%"])
+    facts_table = _table(("項目", "値"), facts)
     reasons = ""
     if section.reason_counts:
         lines = [
@@ -284,7 +288,7 @@ def _section_block(
             for code, count in section.reason_counts
         ]
         reasons = "<h3>計測条件を満たさなかった主な理由</h3>" + _bullets(lines)
-    return facts + _summary_table(section, baseline=baseline) + reasons
+    return facts_table + _summary_table(section, baseline=baseline) + reasons
 
 
 #: 推移図の系列色。HUD の折れ線（`ui.hud_assets`）と同じ割り当てにする——同じ

@@ -85,6 +85,26 @@ class SummarySection:
     parts: dict[str, SummaryReading | None]
     #: 出現回数の多い順、上位 `TOP_REASON_COUNT` 件。同数のときは最初に現れた順。
     reason_counts: tuple[tuple[ReasonCode, int], ...]
+    #: FR-021 (5): 年齢ゲートを**呼んだ**行数と、そのうち参考年齢を表示できた行数。
+    #: 顔が写っていないフレーム（呼ばなかった行）は前者に入らない——「表示できな
+    #: かった」に数えると、機能が壊れているように読める。
+    #:
+    #: **できなかった内訳（`out_of_range` / `undetermined`）は持たない**（§10.11-2）。
+    #: per-frame では同一文言にして区別させなかったものが、セッション単位で復元
+    #: できてしまう。
+    age_gate_evaluated: int = 0
+    age_gate_shown: int = 0
+
+    @property
+    def reference_age_rate(self) -> float | None:
+        """参考年齢を表示できたフレームの割合。ゲートを呼んでいなければ欠測。
+
+        **0 件を 0% と書かない。** 測っていないことと「0% だった」は別である
+        （不変条件 11、AC-SUMMARY-03）。
+        """
+        if self.age_gate_evaluated <= 0:
+            return None
+        return self.age_gate_shown / self.age_gate_evaluated
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +185,17 @@ def _section(records: Sequence[object], *, segment_id: str | None) -> SummarySec
             counter[code] += 1
     ranked = sorted(counter.items(), key=lambda item: (-item[1], order[item[0]]))
 
+    # FR-021 (5): ゲートを呼んだ行だけを分母にする。`None` は「呼ばなかった」で
+    # あり、判定の一種ではない（§9.2）。
+    decisions = [
+        decision
+        for decision in (getattr(record, "age_gate_decision", None) for record in records)
+        if decision is not None
+    ]
+    shown = sum(
+        1 for decision in decisions if str(getattr(decision, "value", decision)) == "in_range"
+    )
+
     return SummarySection(
         segment_id=segment_id,
         total_count=len(records),
@@ -178,6 +209,8 @@ def _section(records: Sequence[object], *, segment_id: str | None) -> SummarySec
             for name in PART_NAMES
         },
         reason_counts=tuple(ranked[:TOP_REASON_COUNT]),
+        age_gate_evaluated=len(decisions),
+        age_gate_shown=shown,
     )
 
 
