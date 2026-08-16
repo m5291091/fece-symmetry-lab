@@ -167,7 +167,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `39aa549841fcf6d611170312a5988adcd84782b4dcbbf1933a7f1f23fa3692a4`_
+_File-list SHA-256: `a55e990ab30e9cfd71339b0a9096d973c619ce348bc0690082b726373034cf5b`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -194,6 +194,19 @@ face-symmetry-lab/
   - `age-gate-v1.json`
   - `model-manifest.json`
 - `data/`
+  - `agegate/`
+    - `age_gate_contract_fixture.json`
+    - `age_gate_feature_spec.json`
+    - `age_gate_model.onnx`
+    - `age_gate_model_card.md`
+    - `utkface_agegate_eval.json`
+    - `utkface_agegate_records.csv`
+    - `utkface_agegate_summary.json`
+  - `utkface/`
+    - `utkface_symmetry3d_group_means.csv`
+    - `utkface_symmetry3d_measurement_stats.csv`
+    - `utkface_symmetry3d_records.csv`
+    - `utkface_symmetry3d_summary.json`
   - `README.md`
 - `docs/`
   - `adr/`
