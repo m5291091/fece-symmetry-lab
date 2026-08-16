@@ -713,11 +713,12 @@ def test_the_export_tab_is_named_for_both_of_its_contents() -> None:
     assert "まとめ・エクスポート" in source
 
 
-def test_the_camera_report_only_embeds_an_explicitly_captured_view() -> None:
-    """ADR-0009: 取り込んでいないライブ映像のフレームを勝手に埋めない。
+def test_the_camera_report_carries_no_photo_at_all() -> None:
+    """2026-08-16: リアルタイムのレポートに顔写真は載せない。
 
-    罠: `pipeline` の直近フレームから図を作る実装は、利用者が一度も「この瞬間を
-    対称化して見る」を押していないセッションでも顔写真をファイルへ入れる。
+    図を持たないので、Camera 側は不変条件 1 の限定解除を必要としない——顔写真が
+    ディスクへ出る経路は Image だけに閉じる。罠: 取り込み済みビューを埋める旧
+    実装や、直近フレームから作る実装はここで落ちる。
     """
     import inspect
 
@@ -726,6 +727,26 @@ def test_the_camera_report_only_embeds_an_explicitly_captured_view() -> None:
     source = inspect.getsource(camera._render_export_panel)
 
     assert "build_camera_report(" in source
-    assert "SYMMETRIZATION_STATE_KEY" in source
-    assert "isinstance(view, SymmetrizationView)" in source
     assert "trend_series(" in source
+    assert "build_report_figures" not in source
+    assert "report_has_figures=False" in source
+
+
+def test_the_summary_and_export_survive_stopping_the_camera() -> None:
+    """FR-042/§5.1: 要約は 1 セッションが終わってから読むものである。
+
+    罠: `context.state.playing` が偽のときに即 return する旧実装では、STOP を
+    押した瞬間にまとめごと到達できなくなる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+    stopped = source.split("if not context.state.playing:")[1].split("return")[0]
+
+    assert "_render_export_panel(pipeline)" in stopped
+    assert "まとめ・エクスポート" in stopped
+    # 止まっている間、ライブ表示に依存するものは出さない。
+    assert "_render_detail_panel(" not in stopped
+    assert "_render_symmetrization_panel(" not in stopped

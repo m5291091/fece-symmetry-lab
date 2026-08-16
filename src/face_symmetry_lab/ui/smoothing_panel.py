@@ -54,16 +54,17 @@ SMOOTHING_HEADING: Final[str] = "##### 数値の落ち着き（移動平均の�
 #: 「何が変わらないか」を最初に書く。この設定を見た利用者がまず疑うのは
 #: 「数値そのものを自分で動かしているのではないか」であり、そこを曖昧にしたまま
 #: 追従時間だけを説明すると、測定の調整だと読まれる（§8.6、不変条件 10）。
-SMOOTHING_SCOPE_NOTE: Final[str] = (
-    "変わるのは画面の数値が動く速さだけです。左右差の計算式、部位別の生値、"
-    "全体のスコア、エクスポートの生値はこの設定では変わりません。"
-)
+#: §5.3.1: 常時表示は 1 行。ここは残す——この設定を見た利用者がまず疑うのは
+#: 「数値そのものを自分で動かしているのではないか」であり、そこを曖昧にすると
+#: 測定の調整だと読まれる（§8.6、不変条件 10）。
+SMOOTHING_SCOPE_NOTE: Final[str] = "変わるのは画面の数値が動く速さだけで、測定値は変わりません。"
 
 SMOOTHING_TRADEOFF_NOTE: Final[str] = (
-    "短くすると動きへの反応が速くなり、そのぶん表示のぶれも大きく見えます。"
-    "長くすると表示は落ち着きますが、実際の変化に追いつくまでの遅れが大きくなります。"
+    "短いほど反応が速くぶれも大きく、長いほど落ち着きますが追随が遅れます。"
 )
 
+#: §5.3.1: `help=` へ移した。選び直したときに何が起きるかは、選ぶ人がその場で
+#: 開ければよい。
 SMOOTHING_RESET_NOTE: Final[str] = (
     "選び直すと、それまでの平均をいったん捨てて新しい時間で測り直します。"
     "エクスポートも新しい区間として記録され、映像上のグラフは描き直しになります。"
@@ -90,12 +91,13 @@ HOLD_HELP: Final[str] = (
 #: 「平滑化を伸ばしたのに数字が止まらない」という行き止まりを説明する。この 1 文が
 #: 無いと、2 つの設定が同じことをする 2 通りのやり方に見える。
 HOLD_EFFECT_NOTE: Final[str] = (
-    "平均する時間を伸ばすと数値の動く幅が小さくなりますが、動く回数は変わりません。"
-    "読んでいる間に数字を止めたいときは、こちらを長くします。"
+    "平均する時間を伸ばしても動く回数は変わりません。数字を止めたいときはこちらを長くします。"
 )
 
 #: AC-HOLD-02 の挙動を先に伝える。止まっている数値が「いつまで有効か」を利用者が
 #: 判断できるようにするための文である。
+#: `help=` へ移す。ただし内容は削らない——止まっている数値がいつまで有効かは、
+#: この設定を使う人が必ず知る必要がある（AC-HOLD-02 の挙動そのもの）。
 HOLD_MISSING_NOTE: Final[str] = (
     "顔が外れたときや計測条件を満たさなくなったときは、この間隔を待たずにすぐ「—」へ戻ります。"
     "止まっている数値が、すでに測れていない状態のまま残ることはありません。"
@@ -206,13 +208,12 @@ def render_smoothing_control(
         HOLD_LABEL,
         options=_HOLD_LABELS,
         key=HOLD_STATE_KEY,
-        help=HOLD_HELP,
+        help=f"{HOLD_HELP}\n\n{HOLD_MISSING_NOTE}",
     )
     selected_hold = _LABEL_TO_HOLD[str(selected_hold_label)]
     st.caption(HOLD_EFFECT_NOTE)
-    st.caption(HOLD_MISSING_NOTE)
 
-    st.divider()
-    st.caption(SMOOTHING_SCOPE_NOTE)
-    st.caption(SMOOTHING_RESET_NOTE)
+    # §5.3.1（2026-08-16）: 常時出す注意は 1 行。リセットの挙動と「止まった数値が
+    # いつまで有効か」は `help` へ移した——内容は削っていない。
+    st.caption(SMOOTHING_SCOPE_NOTE, help=f"{SMOOTHING_RESET_NOTE}\n\n{HOLD_MISSING_NOTE}")
     return StabilityChoice(tau_seconds=selected, hold_seconds=selected_hold)

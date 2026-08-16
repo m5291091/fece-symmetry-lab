@@ -21,9 +21,10 @@ from face_symmetry_lab.domain.session_summary import (
     SessionSummary,
     SummaryReading,
     SummarySection,
+    TrendSeries,
 )
 from face_symmetry_lab.ui.report import (
-    REPORT_PROHIBITED_USES,
+    REPORT_NOTES,
     REPORT_SHARING_NOTE,
     REPORT_VERSION,
     ReportFigure,
@@ -95,9 +96,19 @@ def _outcome():
 
 
 def _camera(**kwargs) -> str:
-    settings = {"summary": _summary(), "bundle": _Bundle(), "figures": ()}
+    settings = {"summary": _summary(), "bundle": _Bundle()}
     settings.update(kwargs)
     return build_camera_report(**settings)
+
+
+def _series(**kwargs) -> TrendSeries:
+    settings = {
+        "symmetry": (97.5, 98.0, 98.4, 98.1),
+        "score": (80.0, 82.0, 84.0),
+        "parts": {name: (97.0, 98.0) for name in ("contour", "eyes", "nose", "mouth")},
+    }
+    settings.update(kwargs)
+    return TrendSeries(**settings)
 
 
 def _image(**kwargs) -> str:
@@ -125,7 +136,7 @@ def test_the_report_is_a_complete_html_document(build) -> None:
 @pytest.mark.parametrize("build", [_camera, _image])
 def test_the_report_never_reaches_outside_itself(build) -> None:
     """AC-REPORT-02: 開いた先で通信が起きるレポートを作らない。"""
-    html = build(figures=(_figure(),))
+    html = build()
 
     assert "http://" not in html
     assert "https://" not in html
@@ -134,20 +145,31 @@ def test_the_report_never_reaches_outside_itself(build) -> None:
 
 
 @pytest.mark.parametrize("build", [_camera, _image])
-def test_the_caveats_travel_with_the_file(build) -> None:
-    """§5.3 / §10.7: 保存されたファイルは画面の文脈を持たない。"""
+def test_a_minimal_note_travels_with_the_file(build) -> None:
+    """§5.3.1: 保存されたファイルは画面の文脈を持たないが、注意は数行に留める。"""
     html = build()
 
-    assert REPORT_SHARING_NOTE in html
-    for use in REPORT_PROHIBITED_USES:
-        assert use in html
+    for note in REPORT_NOTES:
+        assert note in html
+    assert "About" in html, "詳細は About が持つ、という導線だけを残す"
 
 
 @pytest.mark.parametrize("build", [_camera, _image])
-def test_the_sharing_note_says_what_the_file_may_contain(build) -> None:
+def test_the_notes_never_outgrow_the_measurements(build) -> None:
+    """§5.3.1: 読まれない注意文は、書いていないのと同じである。"""
+    html = build()
+    notes = sum(len(note) for note in REPORT_NOTES)
+
+    assert notes < 200, "注意は数行まで"
+    assert notes < len(html.split("<body")[1]) / 8
+
+
+def test_the_sharing_note_appears_only_where_a_photo_can_be() -> None:
+    """2026-08-16: Camera のレポートは顔写真を持たないので、この 1 行も出ない。"""
     assert "顔写真" in REPORT_SHARING_NOTE
-    assert "共有" in REPORT_SHARING_NOTE
-    assert REPORT_SHARING_NOTE in build()
+    assert REPORT_SHARING_NOTE in _image(figures=(_figure(),))
+    assert REPORT_SHARING_NOTE not in _image(figures=())
+    assert REPORT_SHARING_NOTE not in _camera()
 
 
 @pytest.mark.parametrize("build", [_camera, _image])
@@ -161,27 +183,36 @@ def test_the_provenance_lets_the_numbers_be_reproduced(build) -> None:
     assert "c" * 64 in html  # config fingerprint
 
 
-@pytest.mark.parametrize("build", [_camera, _image])
-def test_the_caveats_come_before_the_provenance_and_after_the_figures(build) -> None:
-    """§9.6: 図だけを切り出して共有されても注意書きが付いてくる位置に置く。"""
-    html = build(figures=(_figure(),))
+def test_the_notes_come_before_the_provenance_and_after_the_figures() -> None:
+    """§9.6: 図だけを切り出して共有されても注意が付いてくる位置に置く。"""
+    html = _image(figures=(_figure(),))
 
-    assert html.index("data:image/jpeg") < html.index(REPORT_SHARING_NOTE)
-    assert html.index(REPORT_SHARING_NOTE) < html.index("c" * 64)
+    assert html.index("data:image/jpeg") < html.index(REPORT_NOTES[0])
+    assert html.index(REPORT_NOTES[0]) < html.index("c" * 64)
 
 
-@pytest.mark.parametrize("build", [_camera, _image])
-def test_a_report_without_figures_has_no_empty_figure_section(build) -> None:
+def test_a_report_without_figures_has_no_empty_figure_section() -> None:
     """AC-REPORT-03: 図を切ったときに空の枠を残さない。"""
-    html = build(figures=())
+    html = _image(figures=())
 
     assert "<img" not in html
-    assert "図" not in html.split("<body")[1].split("この数値の読み方")[0]
+    assert "<h2>画像</h2>" not in html
 
 
-@pytest.mark.parametrize("build", [_camera, _image])
-def test_figures_are_embedded_with_their_captions(build) -> None:
-    html = build(figures=(_figure(),))
+def test_the_camera_report_never_carries_a_photo() -> None:
+    """2026-08-16: リアルタイムのレポートに顔写真は載せない。
+
+    Camera 側は不変条件 1 の限定解除を必要としなくなる——顔写真がディスクへ
+    出る経路は Image だけに閉じる。
+    """
+    html = _camera(series=_series())
+
+    assert "<img" not in html
+    assert "data:image" not in html
+
+
+def test_figures_are_embedded_with_their_captions() -> None:
+    html = _image(figures=(_figure(),))
 
     assert 'src="data:image/jpeg;base64,AAAA"' in html
     assert "対称化オーバーレイ" in html
@@ -190,7 +221,7 @@ def test_figures_are_embedded_with_their_captions(build) -> None:
 @pytest.mark.parametrize("build", [_camera, _image])
 def test_nothing_forbidden_reaches_the_file(build) -> None:
     """§9.1・§9.2・§9.3・§10.7 の「含めない」一覧。"""
-    html = build(figures=(_figure(),))
+    html = build()
 
     for banned in (
         "偏差値",
@@ -203,10 +234,7 @@ def test_nothing_forbidden_reaches_the_file(build) -> None:
         "EXIF",
     ):
         assert banned not in html
-    # 「順位」は否定形（「順位ではありません」）でのみ許す。`ui.scores` の
-    # `SCORE_SCALE_CAPTION` を再利用しているためで、肯定の主張として現れたら
-    # ここで落ちる。
-    assert html.count("順位") == html.count("順位ではありません")
+    assert "順位" not in html
 
 
 @pytest.mark.parametrize("build", [_camera, _image])
@@ -217,10 +245,9 @@ def test_no_value_judgement_reaches_the_file(build) -> None:
         assert banned not in html
 
 
-@pytest.mark.parametrize("build", [_camera, _image])
-def test_the_markup_escapes_whatever_it_is_given(build) -> None:
+def test_the_markup_escapes_whatever_it_is_given() -> None:
     """図の説明は呼び出し側の文字列である。生のまま埋めると markup が壊れる。"""
-    html = build(figures=(ReportFigure(caption="<b>x</b>&", data_uri="data:image/jpeg;base64,A"),))
+    html = _image(figures=(ReportFigure(caption="<b>x</b>&", data_uri="data:image/jpeg;base64,A"),))
 
     assert "<b>x</b>&" not in html
     assert "&lt;b&gt;x&lt;/b&gt;&amp;" in html
@@ -242,17 +269,30 @@ def test_the_camera_report_lists_the_hold_reasons() -> None:
     assert "20" in _camera()
 
 
-def test_the_camera_report_draws_the_trend_as_inline_svg() -> None:
-    """§9.6.1: 時系列は図として出す。外部ライブラリも外部画像も使わない。"""
-    html = _camera(series=(97.5, 98.0, 98.4, 98.1))
+def test_the_camera_report_draws_every_reading_as_inline_svg() -> None:
+    """§9.6.1（2026-08-16）: 1 本だけでは、どの部位が動いていたのか分からない。"""
+    html = _camera(series=_series())
 
     assert "<svg" in html
-    assert "polyline" in html
+    # 全体の対称度 + 部位別 4 つ + スコアで 6 本。
+    assert html.count("<polyline") == 6
+    for label in ("全体の対称度", "輪郭", "目", "鼻", "口"):
+        assert label in html
 
 
-def test_the_camera_report_omits_the_chart_when_there_is_no_series() -> None:
+def test_the_points_chart_is_separate_from_the_percentage_chart() -> None:
+    """§8.6.7: 目盛りの違う 2 つを 1 つの軸へ重ねない。"""
+    html = _camera(series=_series())
+
+    assert html.count("<svg") == 2
+
+
+def test_a_chart_is_omitted_when_its_series_is_empty() -> None:
     """罠: 空の系列で軸だけの図を出す実装は、測れなかったことを図で嘘にする。"""
-    assert "<svg" not in _camera(series=())
+    assert "<svg" not in _camera(series=None)
+    assert "<svg" not in _camera(series=_series(symmetry=(), score=(), parts={}))
+    # 点だけが取れたセッションでは、点の図だけが出る。
+    assert _camera(series=_series(symmetry=(), parts={})).count("<svg") == 1
 
 
 def test_the_camera_report_does_not_carry_every_row() -> None:
@@ -275,6 +315,12 @@ def test_a_single_segment_session_still_reports_the_whole() -> None:
     html = _camera(summary=_summary(segments=1))
 
     assert "98.12%" in html
+
+
+def test_the_camera_report_keeps_pointing_at_the_ledger() -> None:
+    html = _camera()
+
+    assert "CSV" in html and "JSON" in html
 
 
 def test_a_camera_report_without_any_record_is_refused() -> None:

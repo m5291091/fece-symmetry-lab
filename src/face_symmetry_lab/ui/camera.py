@@ -49,7 +49,7 @@ from face_symmetry_lab.application.realtime import (
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
-from face_symmetry_lab.application.symmetrization import SymmetrizationView, symmetrize_frame
+from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
@@ -75,7 +75,6 @@ from face_symmetry_lab.ui.model_setup import (
 )
 from face_symmetry_lab.ui.readings import display_signature
 from face_symmetry_lab.ui.report import build_camera_report
-from face_symmetry_lab.ui.report_figures import build_report_figures
 from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
@@ -412,8 +411,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     """
     st.markdown(SYMMETRIZATION_HEADING)
     st.caption(
-        "この瞬間の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
-        "実測点と重ねて表示します。ズレの大きさを形で見るための表示で、"
+        "この瞬間の顔を正中線で折りたたみ、そろえた位置と重ねて表示します。"
         "どちらが正しい・望ましいという意味はありません。"
     )
 
@@ -440,7 +438,6 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         return
 
     render_symmetrization_view(view, warp_requested=warp)
-    st.caption("取り込んだ映像はこのブラウザセッションのメモリだけに残り、保存も送信もしません。")
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -459,28 +456,15 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     render_session_summary(summary)
 
     def _report(include_figures: bool) -> str:
-        # FR-042 §9.6.1: 図は、利用者が「この瞬間を対称化して見る」で**明示的に
-        # 取り込んだ**ビューがあるときだけ。取り込んでいないライブ映像のフレームを
-        # 勝手に埋めるのは、明示操作による保存という限定解除の範囲を外れる
-        # （ADR-0009）。取り込みに失敗したときの値は文字列なので型で弾く。
-        view = st.session_state.get(SYMMETRIZATION_STATE_KEY)
-        return build_camera_report(
-            summary=summary,
-            bundle=bundle,
-            figures=build_report_figures(
-                include_figures=include_figures,
-                view=view if isinstance(view, SymmetrizationView) else None,
-            ),
-            series=trend_series(records),
-        )
+        # 2026-08-16: リアルタイムのレポートに顔写真は載せない。`include_figures`
+        # は Image だけが使う——Camera 側は不変条件 1 の限定解除を必要としない。
+        del include_figures
+        return build_camera_report(summary=summary, bundle=bundle, series=trend_series(records))
 
     render_export_panel(
         bundle,
         heading="セッションデータのエクスポート",
-        warning=(
-            "姿勢・左右差などの顔由来の派生データを含みます。"
-            "共有先と利用目的を確認してから保存してください。"
-        ),
+        warning="姿勢・左右差などの顔由来の派生データを含みます。",
         key_prefix="download_session",
         # ライブセッションは記録を積み上げるため、件数を示してこの
         # ダウンロードが実際にどこまでを含むかを伝える。
@@ -494,6 +478,9 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         ),
         report_builder=_report,
         report_mode="session",
+        # 2026-08-16: リアルタイムのレポートは顔写真を持たない。切り替えも注意も
+        # 出す対象が無い。
+        report_has_figures=False,
     )
 
 
@@ -506,14 +493,16 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
     """
     zoom_policy = pipeline.zoom_policy
     zoom_caption = f" · ズーム目標 {zoom_policy.target_px}px" if zoom_policy is not None else ""
+    # §5.3.1: 現在値だけを 1 行で出し、何をどう調整しているかの説明は `help` へ。
     st.caption(
-        "Advanced設定はAIが自動調整します（明るさ・追跡ズーム・"
-        "history_capacity・age_interval_ms・analysis_interval_ms）。"
-        f"現在値: 検出用の明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
-        f"analysis_interval_ms={pipeline.analysis_interval_ms}。"
-        "明るさ補正はlandmark検出にだけ使い、表示される映像の明るさは変えません。"
-        "品質ゲート閾値は固定既定値です。左右差の計算には調整可能な係数が無いため、"
-        "自動調整が数値を動かすことはありません。"
+        f"明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
+        f"解析周期 {pipeline.analysis_interval_ms} ms",
+        help=(
+            "明るさ・追跡ズーム・cadence は AI が自動調整します（FR-029, FR-030）。"
+            "明るさ補正は landmark 検出にだけ使い、表示される映像は変わりません。"
+            "品質ゲート閾値は固定既定値で、左右差の計算には調整できる係数がないため、"
+            "自動調整が数値を動かすことはありません。"
+        ),
     )
 
 
@@ -531,7 +520,7 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
     """
     with st.container(border=True):
         st.markdown("##### 映像の見え方")
-        st.caption("どれも表示だけを変えます。左右差の計算には使いません（FR-027, FR-028）。")
+        st.caption("どれも表示だけを変えます。")
         midline_column, demographic_column = st.columns(2)
         with midline_column:
             show_midline = st.toggle(
@@ -573,15 +562,15 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
             st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
 
         # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。色以外の手掛かり
-        # は、HUD 自身が出す状態のテキスト（FR-040 と同じ行）、ゲートが閉じている
-        # 間の詳細結果タブの文言と理由、そしてゲートが閉じると数値が「—」へ変わる
-        # こと（値の有無）の 3 つで保つ（項目26）。
+        # は HUD 自身が出す状態のテキストが担うので（FR-040 と同じ行）、ここは
+        # §5.3.1 に従って 1 行に留め、残りは `help` へ置く。
         st.caption(
-            "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
-            "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
-            "同じ状態は HUD 左上の状態表示でも読め、条件を満たしていない間は詳細結果タブの"
-            "文言と理由でも確認できます。満たすと HUD・詳細結果の数値が「—」から実際の値へ"
-            "変わることでも分かります。"
+            "映像の枠色は品質ゲートの状態です。",
+            help=(
+                "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものでは"
+                "ありません。同じ状態は HUD の状態表示でも読め、満たしていない間は詳細結果"
+                "タブに理由が出ます。"
+            ),
         )
 
     with st.container(border=True):
@@ -624,10 +613,7 @@ def _render_hud_position_control() -> None:
                 "参考年齢・参考性別・折れ線グラフ）の位置です。映像自体は加工しません。"
             ),
         )
-        st.caption(
-            "HUD は掴んで動かせます（左下の「⠿ ドラッグで移動」）。"
-            "プリセットを選び直すと、掴んだ位置は破棄して選んだ角へ戻ります。"
-        )
+        st.caption("HUD は掴んで動かせます。プリセットを選び直すと元の角へ戻ります。")
 
 
 def _exit_fullscreen() -> None:
@@ -669,10 +655,8 @@ def render_camera_section() -> None:
     # ここで述べるのはプライバシー境界（毎回読めることに意味がある）と、数値
     # がどこに出るかの 1 文だけに絞る。算出方法と制約は About ページにある。
     st.subheader("リアルタイム ランドマーク表示")
-    st.caption(
-        "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "主要な数値は映像へ重ねる HUD に表示し、設定と詳しい数値は映像の下のタブにまとめています。"
-    )
+    # §5.3.1: プライバシー境界（毎回読めることに意味がある）だけを 1 行で残す。
+    st.caption("映像は端末内のメモリだけで処理され、保存も外部送信もしません。")
 
     model_path = resolve_ready_landmarker()
     if model_path is None:
@@ -721,9 +705,17 @@ def render_camera_section() -> None:
     if not context.state.playing:
         # 不変条件 3: 明示的な同意の後にだけカメラ許可を求める導線を保つ。
         st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
-        # 開始前でも設定は画面上にあるべきだが、提示できる結果・取り込み・
-        # エクスポートはまだ無い。
-        with st.expander("表示設定"):
+        # FR-042/§5.1（2026-08-16）: **計測を止めた後もまとめとエクスポートへ
+        # 到達できる。** 要約は 1 セッションが終わってから読むものであり、STOP を
+        # 押した時点でタブごと消えてはならない。記録がまだ無い開始前は、パネル側
+        # が `empty_notice` で「まだ何も無い」と説明する。ライブ表示に依存する
+        # 詳細結果・対称化は、止まっている間は出す意味が無いので置かない。
+        stopped_export_tab, stopped_settings_tab = st.tabs(
+            ["📄 まとめ・エクスポート", "⚙️ 表示設定"]
+        )
+        with stopped_export_tab:
+            _render_export_panel(pipeline)
+        with stopped_settings_tab:
             _render_display_controls(pipeline)
             _render_hud_position_control()
         return

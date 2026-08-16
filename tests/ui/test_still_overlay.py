@@ -651,8 +651,7 @@ def test_the_overlay_states_the_population_and_its_limits() -> None:
     assert "20 歳" in html and "男性" in html and "75 件" in html
     assert "人種で絞り込まず" in html
     assert "探索値" in html
-    assert "基準値でも目標値でもありません" in html
-    assert "個人評価・人物間比較には使えません" in html
+    assert "基準値ではありません" in html
 
 
 def test_the_note_never_pushes_the_drag_grip_out_of_the_box() -> None:

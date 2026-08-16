@@ -44,6 +44,7 @@ def render_export_panel(
     empty_notice: str | None = None,
     report_builder: ReportBuilder | None = None,
     report_mode: str = "session",
+    report_has_figures: bool = True,
 ) -> None:
     """エクスポート節を描画する。データが無いときは download button を出さない。
 
@@ -79,6 +80,7 @@ def render_export_panel(
             builder=report_builder,
             key_prefix=key_prefix,
             mode=report_mode,
+            has_figures=report_has_figures,
         )
 
     csv_column, json_column = st.columns(2)
@@ -104,24 +106,28 @@ def _render_report_download(
     builder: ReportBuilder,
     key_prefix: str,
     mode: str,
+    has_figures: bool,
 ) -> None:
     """FR-042: 人が読む HTML レポート。
 
-    **注意は押す前に出す。** 図を含めるとこのファイルは顔写真を持つので、
-    押した後に本体で伝えるだけでは遅い（ADR-0009 (d)）。図を切っているときは
-    出さない——起こらないことへの注意を出し続けると、注意そのものが読み流される。
+    ``has_figures`` が偽のモード（Camera）では、切り替えも注意も出さない。
+    そのレポートは顔写真を持たないので、選ぶものも警告する対象も無い
+    （2026-08-16）。
+
+    図を持ちうるモード（Image）では、**注意は押す前に出す**。押した後に本体で
+    伝えるだけでは遅い（ADR-0009 (d)）。図を切っているときは出さない——起こら
+    ないことへの注意を出し続けると、注意そのものが読み流される。
     """
-    include_figures = st.checkbox(
-        FIGURE_TOGGLE_LABEL,
-        value=True,
-        key=f"{key_prefix}_report_figures",
-        help=(
-            "ランドマークを重ねたプレビューや対称化した図を、レポートの中へ埋め込みます。"
-            "外しても数値と来歴は変わりません。"
-        ),
-    )
-    if include_figures:
-        st.warning(REPORT_SHARING_NOTE)
+    include_figures = False
+    if has_figures:
+        include_figures = st.checkbox(
+            FIGURE_TOGGLE_LABEL,
+            value=True,
+            key=f"{key_prefix}_report_figures",
+            help="ランドマークや対称化の図をレポートへ埋め込みます。数値と来歴は変わりません。",
+        )
+        if include_figures:
+            st.caption(REPORT_SHARING_NOTE)
     st.download_button(
         "レポート（HTML）を保存",
         data=builder(include_figures).encode("utf-8"),

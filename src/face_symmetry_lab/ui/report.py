@@ -41,7 +41,11 @@ from face_symmetry_lab.domain.reference_baseline import (
     baseline_reading,
 )
 from face_symmetry_lab.domain.score_explanation import explain_score
-from face_symmetry_lab.domain.session_summary import SessionSummary, SummarySection
+from face_symmetry_lab.domain.session_summary import (
+    SessionSummary,
+    SummarySection,
+    TrendSeries,
+)
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.readings import (
     GENDER_LABELS,
@@ -57,13 +61,7 @@ from face_symmetry_lab.ui.readings import (
     score_points_value,
     symmetry_percent,
 )
-from face_symmetry_lab.ui.scores import (
-    PART_EQUAL_WEIGHT_LABEL,
-    PART_LEVEL_VARIATION_CAPTION,
-    READING_LIMITS,
-    READING_LIMITS_HEADING,
-    SCORE_SCALE_CAPTION,
-)
+from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL
 from face_symmetry_lab.ui.summary_panel import (
     SUMMARY_LIMITS_NOTE,
     SUMMARY_ROW_LABELS,
@@ -78,21 +76,22 @@ from face_symmetry_lab.ui.summary_panel import (
 #: 台帳の列が変わらなくても、レポートの構成は変わりうる。
 REPORT_VERSION: Final[str] = "face-symmetry-report/1.0.0"
 
-#: §10.4 / ADR-0009 (d): **顔写真がディスクへ出る唯一の経路**である。ダウンロード
-#: 操作の直前（`ui.export_panel`）とここの両方に置く——前者は保存する人へ、後者は
-#: ファイルを受け取った人へ届く。
-REPORT_SHARING_NOTE: Final[str] = (
-    "このファイルには、顔写真を含む図が入っていることがあります。"
-    "保存した後のファイルはアプリの管理外で、共有先や複製をアプリからは制御できません。"
-    "取り扱いと共有先をご自身でご確認ください。"
+#: §5.3.1: 画面と同じく、レポートの注意も最小限にする。以前は §5.3 の留保全文と
+#: §10.7 の禁止用途一覧を書き写しており、注意文が測定値より長かった——**読まれない
+#: 注意文は、書いていないのと同じである。** 根拠と全文は About が持つ。
+#:
+#: ここへ残すのは、ファイル単体で成立させるために要る 2 文だけである。1 つ目は
+#: 「この数字が何でないか」、2 つ目は使ってはいけない用途。どちらも受け取った人が
+#: 画面を見ずに読む可能性がある。
+REPORT_NOTES: Final[tuple[str, ...]] = (
+    "同一人物・同一環境の中で傾向を見るための探索値です。他の人との比較、医療・採用・保険などの判断には使えません。",
+    "詳しい算出方法と制限は、アプリの About ページに記載しています。",
 )
 
-#: §10.7 の禁止用途。**「順位」「偏差値」等の語をここへ書かない**——禁止を述べる
-#: つもりでも、語がファイルへ残ると検索や引用で肯定文に見える形へ切り出されうる。
-REPORT_PROHIBITED_USES: Final[tuple[str, ...]] = (
-    "医療・採用・保険・教育・監視・本人確認・人物評価には使用できません。",
-    "人物間の比較、平均顔との比較、ランキングのいずれにも使用できません。",
-    "画像は本人、または明示的な同意を得た人物のものに限ります。",
+#: §10.4 / ADR-0009 (d): 図を入れたときだけ足す 1 行。Camera のレポートは図を
+#: 持たないので、この文も出ない。
+REPORT_SHARING_NOTE: Final[str] = (
+    "このファイルには顔写真が含まれます。保存後の共有先はアプリからは制御できません。"
 )
 
 _TREND_WIDTH_PX: Final[int] = 720
@@ -102,6 +101,11 @@ _TREND_HEIGHT_PX: Final[int] = 180
 #: 保存物で別の縦幅に見えないようにするためである。
 _TREND_Y_MIN: Final[float] = 95.0
 _TREND_Y_MAX: Final[float] = 100.0
+
+#: 「全体のスコア」の窓。§8.6.7 の目盛りは 0〜100 点で、実測はその全域へ広がる
+#: （§14.4 の 3 セッションで 81〜88 点）ため、対称度と違って全域を見せる。
+_SCORE_Y_MIN: Final[float] = 0.0
+_SCORE_Y_MAX: Final[float] = 100.0
 
 _STYLE: Final[str] = (
     "body{font-family:system-ui,-apple-system,'Hiragino Sans','Noto Sans JP',sans-serif;"
@@ -121,6 +125,9 @@ _STYLE: Final[str] = (
     "padding:10px 14px;margin:10px 0}"
     "ul{margin:8px 0;padding-left:20px}code{font-size:.85em;word-break:break-all}"
     "svg{width:100%;height:auto;background:#fafbfc;border:1px solid #d8dbe0;border-radius:6px}"
+    ".legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.8rem;color:#4a4f57;margin:4px 0}"
+    ".legend .key{display:inline-flex;align-items:center;gap:5px}"
+    ".legend i{width:14px;height:3px;border-radius:2px;display:inline-block}"
 )
 
 
@@ -201,24 +208,15 @@ def _figures_section(figures: Sequence[ReportFigure]) -> str:
     return "<h2>画像</h2>" + "".join(blocks)
 
 
-def _caveats_section() -> str:
-    """§5.3 の留保。**`ui.scores` の定数をそのまま使う。**
+def _notes_section(*, has_figures: bool) -> str:
+    """§5.3.1: 注意はここ 1 か所・数行だけ。
 
-    レポート用に書き直すと、同じ制限が画面とファイルで別の言い方になる。
+    §5.3 の留保全文と §10.7 の禁止用途一覧を書き写さない。図が無いときは共有の
+    1 行も出さない——起こらないことへの注意を出し続けると、注意そのものが
+    読み流される。
     """
-    return (
-        f"<h2>{_text(READING_LIMITS_HEADING)}</h2>"
-        + _paragraphs(READING_LIMITS)
-        + _paragraphs((SCORE_SCALE_CAPTION, PART_LEVEL_VARIATION_CAPTION), css_class="meta")
-    )
-
-
-def _prohibited_section() -> str:
-    return (
-        "<h2>使ってはいけない用途と、このファイルの取り扱い</h2>"
-        + _bullets(REPORT_PROHIBITED_USES)
-        + f"<p class='note'>{_text(REPORT_SHARING_NOTE)}</p>"
-    )
+    notes = (*REPORT_NOTES, REPORT_SHARING_NOTE) if has_figures else REPORT_NOTES
+    return "<div class='note'>" + _paragraphs(notes) + "</div>"
 
 
 def _provenance_section(bundle: object) -> str:
@@ -301,50 +299,116 @@ def _section_block(section: SummarySection) -> str:
     return facts + _summary_table(section) + reasons
 
 
-def _trend_svg(series: Sequence[float]) -> str:
-    """§9.6.1: 推移を inline SVG で描く。
+#: 推移図の系列色。HUD の折れ線（`ui.hud_assets`）と同じ割り当てにする——同じ
+#: 部位が画面と保存物で違う色になると、並べて見たときに読み替えが要る。
+_TREND_COLORS: Final[dict[str, str]] = {
+    "overall": "#2b5f8f",
+    "contour": "#4FC3F7",
+    "eyes": "#7CB342",
+    "nose": "#EF8B22",
+    "mouth": "#D8467F",
+}
 
-    縦軸の窓は HUD と同じ 95〜100% に固定する。自動スケールにするとノイズが
-    誇張されて「大きく動いた」と誤読される（`ui.hud` と同じ判断）。窓の外は端へ
-    clamp し、軸の数値を図中へ明示する。
 
-    **空の系列では何も描かない。** 軸だけの図は「測ったが平らだった」と読める。
-    """
-    if not series:
+def _polyline(values: Sequence[float], *, low: float, high: float, color: str) -> str:
+    """1 系列を、窓 `low`〜`high` へ clamp して描く。"""
+    if not values:
         return ""
-    span = _TREND_Y_MAX - _TREND_Y_MIN
-    step = _TREND_WIDTH_PX / max(1, len(series) - 1)
-    points = []
-    for index, value in enumerate(series):
-        clamped = min(_TREND_Y_MAX, max(_TREND_Y_MIN, value))
-        y = _TREND_HEIGHT_PX - ((clamped - _TREND_Y_MIN) / span) * _TREND_HEIGHT_PX
-        points.append(f"{index * step:.1f},{y:.1f}")
+    span = high - low
+    step = _TREND_WIDTH_PX / max(1, len(values) - 1)
+    points = " ".join(
+        f"{index * step:.1f},"
+        f"{_TREND_HEIGHT_PX - ((min(high, max(low, value)) - low) / span) * _TREND_HEIGHT_PX:.1f}"
+        for index, value in enumerate(values)
+    )
     return (
-        "<h3>全体の対称度の推移</h3>"
+        f'<polyline points="{points}" fill="none" stroke="{color}" '
+        'stroke-width="1.8" stroke-linejoin="round"></polyline>'
+    )
+
+
+def _chart(
+    lines: Sequence[tuple[str, Sequence[float], str]],
+    *,
+    low: float,
+    high: float,
+    unit: str,
+) -> str:
+    """1 つの軸に載る系列をまとめて 1 枚の図にする。
+
+    縦軸の窓は固定する。自動スケールにするとノイズが誇張されて「大きく動いた」と
+    誤読される（`ui.hud` と同じ判断）。**空の系列では何も描かない**——軸だけの図は
+    「測ったが平らだった」と読める。
+    """
+    drawn = [(label, values, color) for label, values, color in lines if values]
+    if not drawn:
+        return ""
+    body = "".join(_polyline(values, low=low, high=high, color=color) for _, values, color in drawn)
+    legend = "".join(
+        f'<span class="key"><i style="background:{color}"></i>{_text(label)}</span>'
+        for label, _, color in drawn
+    )
+    return (
         f'<svg viewBox="0 0 {_TREND_WIDTH_PX} {_TREND_HEIGHT_PX}" '
         'preserveAspectRatio="none" role="img">'
-        f'<polyline points="{" ".join(points)}" fill="none" stroke="#3f7fbf" '
-        'stroke-width="2" stroke-linejoin="round"></polyline>'
-        f'<text x="6" y="14" font-size="11" fill="#4a4f57">{_TREND_Y_MAX:.0f}%</text>'
+        f"{body}"
+        f'<text x="6" y="14" font-size="11" fill="#4a4f57">{high:.0f}{_text(unit)}</text>'
         f'<text x="6" y="{_TREND_HEIGHT_PX - 6}" font-size="11" fill="#4a4f57">'
-        f"{_TREND_Y_MIN:.0f}%</text>"
+        f"{low:.0f}{_text(unit)}</text>"
         "</svg>"
-        "<p class='meta'>縦軸は 95〜100% に固定してあります。"
-        "範囲の外は端に貼り付きます。横軸は記録された順序です。</p>"
+        f'<div class="legend">{legend}</div>'
     )
+
+
+def _trend_section(series: TrendSeries | None) -> str:
+    """§9.6.1: 画面に出る 6 つすべての推移。
+
+    **% と点で図を分ける。** 目盛りの違う 2 つを 1 つの軸へ重ねると、どちらの
+    単位で読めばよいのか分からなくなる（§8.6.7 が両者を分けているのと同じ理由）。
+    """
+    if series is None or series.is_empty:
+        return ""
+    percent_chart = _chart(
+        [
+            ("全体の対称度", series.symmetry, _TREND_COLORS["overall"]),
+            *(
+                (PART_LABELS[name], series.parts.get(name, ()), _TREND_COLORS[name])
+                for name in PART_NAMES
+            ),
+        ],
+        low=_TREND_Y_MIN,
+        high=_TREND_Y_MAX,
+        unit="%",
+    )
+    score_chart = _chart(
+        [(PART_EQUAL_WEIGHT_LABEL, series.score, _TREND_COLORS["overall"])],
+        low=_SCORE_Y_MIN,
+        high=_SCORE_Y_MAX,
+        unit=" 点",
+    )
+    blocks = ""
+    if percent_chart:
+        blocks += "<h3>対称度の推移</h3>" + percent_chart
+    if score_chart:
+        blocks += f"<h3>{_text(PART_EQUAL_WEIGHT_LABEL)}の推移</h3>" + score_chart
+    return blocks + "<p class='meta'>横軸は記録された順序です。縦軸の範囲外は端に貼り付きます。</p>"
 
 
 def build_camera_report(
     *,
     summary: SessionSummary,
     bundle: object,
-    figures: Sequence[ReportFigure] = (),
-    series: Sequence[float] = (),
+    series: TrendSeries | None = None,
 ) -> str:
     """§9.6.1: Camera の 1 セッション分。
 
-    **全行の生データは持たない。** 3,000 行を HTML へ入れても読めず、台帳としては
+    **全行の生データを持たない。** 3,000 行を HTML へ入れても読めず、台帳としては
     CSV / JSON が既にある。代わりにそちらを案内する。
+
+    **顔写真も持たない**（2026-08-16 の指示）。リアルタイムのレポートで見たいのは
+    1 セッションの推移であって 1 瞬間の顔ではない。持たせないことで、Camera 側は
+    不変条件 1 の限定解除を必要としなくなる——顔写真がディスクへ出る経路は Image
+    だけに閉じる。
     """
     if summary.overall is None:
         raise ReportError("記録が 1 件も無いセッションのレポートは作れません。")
@@ -355,7 +419,7 @@ def build_camera_report(
     )
     body += "<h2>このセッションの要約</h2>" + _section_block(summary.overall)
     body += f"<p class='meta'>{_text(SUMMARY_LIMITS_NOTE)}</p>"
-    body += _trend_svg(series)
+    body += _trend_section(series)
 
     if len(summary.segments) > 1:
         body += "<h2>区間ごとの内訳</h2>"
@@ -365,13 +429,8 @@ def build_camera_report(
             label = f"区間 {index}（{short}）" if short else f"区間 {index}"
             body += f"<h3>{_text(label)}</h3>" + _section_block(section)
 
-    body += _figures_section(figures)
-    body += _caveats_section()
-    body += (
-        "<p class='meta'>1 フレームごとの記録は、このレポートには含まれていません。"
-        "同じ画面の CSV / JSON をご利用ください。</p>"
-    )
-    body += _prohibited_section()
+    body += "<p class='meta'>1 フレームごとの記録は CSV / JSON にあります。</p>"
+    body += _notes_section(has_figures=False)
     body += _provenance_section(bundle)
     return _document(title="リアルタイム計測のまとめ", body=body)
 
@@ -535,7 +594,6 @@ def build_image_report(
         body += f"<p class='note'>{_text(notice)}</p>"
 
     body += _figures_section(figures)
-    body += _caveats_section()
-    body += _prohibited_section()
+    body += _notes_section(has_figures=bool(figures))
     body += _provenance_section(bundle)
     return _document(title="写真 1 枚の計測結果", body=body)

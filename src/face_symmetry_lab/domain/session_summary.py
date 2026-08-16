@@ -187,30 +187,81 @@ def _section(records: Sequence[object], *, segment_id: str | None) -> SummarySec
 MAX_TREND_POINTS: int = 600
 
 
-def trend_series(
-    records: Iterable[object],
-    *,
-    max_points: int = MAX_TREND_POINTS,
-) -> tuple[float, ...]:
-    """FR-042 §9.6.1 の推移図が描く系列（対称度 %）。
+@dataclass(frozen=True, slots=True)
+class TrendSeries:
+    """FR-042 §9.6.1 の推移図が描く系列。単位は**表示単位**である。
 
-    要約と同じく **OK 行の生値だけ**を読み、表示単位へ変換して返す。`max_points`
-    を超えるときは等間隔で間引く——**先頭や末尾を切り捨てない**。切り捨てると、
-    セッションの一部だけを描いた図に「全体の推移」という見出しが付く。
+    `symmetry` と `parts` は % で同じ軸へ重ねられるが、`score` は点なので
+    **別の図にする**——目盛りの違う 2 つを 1 つの軸へ重ねると、どちらの単位で
+    読めばよいのか分からなくなる（§8.6.7 が % と点を分けているのと同じ理由）。
+
+    系列ごとに長さが違うことがある。部位が個別に欠測したフレームでは、その部位
+    だけ点が 1 つ少ないためである。横軸は「記録された順序」であって時刻ではない。
     """
-    values = [
-        percent
-        for percent in (
-            symmetry_percent(value) for value in _collect(list(records), "distance3d_overall_raw")
-        )
-        if percent is not None
-    ]
-    if max_points < 1:
-        raise SummaryError("推移図の点数は 1 以上である必要があります。")
+
+    symmetry: tuple[float, ...]
+    score: tuple[float, ...]
+    parts: dict[str, tuple[float, ...]]
+
+    @property
+    def is_empty(self) -> bool:
+        """描くものが 1 つも無い（軸だけの図を出さないための判定）。"""
+        return not self.symmetry and not self.score and not any(self.parts.values())
+
+
+def _thinned(
+    distances: Sequence[float],
+    *,
+    convert: Callable[[float | None], float | None],
+    max_points: int,
+) -> tuple[float, ...]:
+    """表示単位へ変換し、`max_points` を超えるぶんを等間隔で間引く。
+
+    **先頭や末尾を切り捨てない。** 切り捨てると、セッションの一部だけを描いた図に
+    「全体の推移」という見出しが付く。
+    """
+    values = [value for value in map(convert, distances) if value is not None]
     if len(values) <= max_points:
         return tuple(values)
     stride = len(values) / max_points
     return tuple(values[min(len(values) - 1, int(index * stride))] for index in range(max_points))
+
+
+def trend_series(
+    records: Iterable[object],
+    *,
+    max_points: int = MAX_TREND_POINTS,
+) -> TrendSeries:
+    """FR-042 §9.6.1 の推移図が描く 6 系列。
+
+    要約と同じく **OK 行の生値だけ**を読み、表示単位へ変換して返す。画面に出る
+    6 つ（全体の対称度・全体のスコア・部位別 4 つ）をすべて描くのは、1 本だけでは
+    「どの部位が動いていたのか」がセッションの後から分からないためである
+    （2026-08-16 の指示）。
+    """
+    if max_points < 1:
+        raise SummaryError("推移図の点数は 1 以上である必要があります。")
+    rows = list(records)
+    return TrendSeries(
+        symmetry=_thinned(
+            _collect(rows, "distance3d_overall_raw"),
+            convert=symmetry_percent,
+            max_points=max_points,
+        ),
+        score=_thinned(
+            _collect(rows, "distance3d_parts_equal_raw"),
+            convert=score_points,
+            max_points=max_points,
+        ),
+        parts={
+            name: _thinned(
+                _collect(rows, f"distance3d_{name}_raw"),
+                convert=symmetry_percent,
+                max_points=max_points,
+            )
+            for name in PART_NAMES
+        },
+    )
 
 
 def summarize_session(records: Iterable[object]) -> SessionSummary:

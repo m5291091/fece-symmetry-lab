@@ -234,3 +234,21 @@ def test_the_warning_is_dropped_when_no_figure_is_embedded() -> None:
     text = _all_text(_run_report(uncheck=True))
 
     assert REPORT_SHARING_NOTE not in text
+
+
+def test_a_report_without_figures_offers_no_toggle_and_no_warning() -> None:
+    """2026-08-16: Camera のレポートは顔写真を持たない。選ぶものも警告する対象も無い。"""
+    from face_symmetry_lab.ui.report import REPORT_SHARING_NOTE
+
+    at = AppTest.from_string(
+        _report_script().replace(
+            "    report_mode='session',\n",
+            "    report_mode='session',\n    report_has_figures=False,\n",
+        )
+    )
+    at.run()
+
+    assert not at.exception
+    assert at.checkbox == []
+    assert REPORT_SHARING_NOTE not in _all_text(at)
+    assert at.session_state["builder_calls"] == [False]

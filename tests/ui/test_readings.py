@@ -311,14 +311,20 @@ def test_the_baseline_note_carries_no_value_judgement(banned: str) -> None:
     assert banned not in baseline_note(age=20, gender=GenderLabel.MALE, count=75)
 
 
-def test_the_baseline_note_states_what_the_mean_is_not() -> None:
-    """§5.3 / §10.12-5: 平均が基準値・目標値でないことを同じ場所へ書く。"""
+def test_the_baseline_note_is_a_single_line() -> None:
+    """§10.12-5 / §5.3.1（2026-08-16）: 但し書きは 1 行まで。
+
+    以前はこれが吹き出しの中で測定値より長く、そのために読まれなくなっていた。
+    残すのは「括弧の中が何か」と「探索値であること」、そして母集団だけである。
+    根拠と制限の全文は About が持つ。
+    """
     note = baseline_note(age=20, gender=GenderLabel.FEMALE, count=75)
-    assert "基準値でも目標値でもありません" in note
-    assert "探索値" in note
-    assert "個人評価・人物間比較には使えません" in note
-    assert "非商用研究限定" in note
+
     assert "括弧内は表示値と平均の差です" in note
+    assert "探索値" in note
+    assert "20 歳" in note and "75" in note
+    assert "人種で絞り込まず" in note
+    assert len(BASELINE_CAVEAT) < 60
 
 
 # --- FR-040 / §5.4: 状態と平滑化時間のテキスト表示 ----------------------------

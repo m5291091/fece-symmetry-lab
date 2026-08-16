@@ -161,24 +161,30 @@ def test_the_part_equal_weight_headline_label_uses_the_user_specified_wording() 
 
 
 def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
-    """§5.2/§5.3: reorienting the number must not turn it into a grade.
+    """§5.3.1（2026-08-16）: 常時表示は 1 行。根拠は `help` と About が持つ。"""
+    from face_symmetry_lab.ui.scores import DISTANCE_UNIT_HELP
 
-    Checked against the strings the user actually reads as a verdict — the
-    heading and the unit caption — rather than the whole module, so an
-    explicit disclaimer ("良し悪しを表しません") cannot fail this.
-    """
-    for forbidden in ("スコア", "得点", "評価", "優秀", "理想", "完璧"):
-        assert forbidden not in SCORE_HEADING
-        assert forbidden not in DISTANCE_UNIT_CAPTION
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
+    )
+    combined = " ".join(str(element.value) for element in at.caption)
 
-    # 注記は 100% が何であるかを述べ続けなければならない。さもないと、向きを
-    # 変えただけのものが、利用者の目指す目標へ黙って変わってしまう。
-    assert "上限" in DISTANCE_UNIT_CAPTION
+    assert "試験中の指標です" in combined
+    assert DISTANCE_UNIT_CAPTION in combined
     assert "目標値ではありません" in DISTANCE_UNIT_CAPTION
-
-    for forbidden in ("スコア", "得点", "評価", "優秀", "理想", "完璧"):
-        assert forbidden not in PART_LEVEL_VARIATION_CAPTION
-        assert forbidden not in PART_EQUAL_WEIGHT_HELP
+    # 長い説明は `help` へ移した（常時は見えないが、その場で読める）。
+    assert "狭い範囲に集まりやすく" in DISTANCE_UNIT_HELP
+    assert "狭い範囲に集まりやすく" not in combined
+    for banned in ("良い", "悪い", "美しい", "理想"):
+        assert banned not in combined
 
 
 def test_the_part_equal_weight_help_explains_the_term_is_not_a_calibrated_score() -> None:
@@ -324,9 +330,13 @@ def test_show_parts_false_hides_the_part_metrics_but_keeps_the_required_notices(
         assert part not in labels
 
     captions = " ".join(element.value for element in at.caption)
-    assert PART_LEVEL_VARIATION_CAPTION in captions
+    # §5.3.1（2026-08-16）: 部位別の揺れ幅は `help` へ移した。部位別を出さない
+    # ときは、その注記も要らない。
+    assert PART_LEVEL_VARIATION_CAPTION not in captions
     assert SCORE_HEADING in [element.value for element in at.subheader]
-    assert any("試験中の指標" in element.value for element in at.info)
+    # §5.3.1: `st.info` の 2 文から `st.caption` の 1 行へ。「試験中の指標」で
+    # あること（不変条件 8）は残す。
+    assert any("試験中の指標" in element.value for element in at.caption)
     # 計算過程は残り続ける（部位別 4 つの値も、その中には出る）。
     walkthrough = _code_text(at)
     for deviation in ("2.11", "1.44", "0.62", "1.83"):
@@ -734,52 +744,55 @@ def test_the_score_scale_caption_warns_that_a_reshoot_moves_the_points() -> None
         assert forbidden not in SCORE_SCALE_CAPTION
 
 
-def test_the_score_scale_caption_is_rendered_outside_the_expander() -> None:
-    """§8.6.7: 注記は定数として存在するだけでなく、畳まれていない位置に出る。"""
-    from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION
+def test_the_score_scale_caption_states_how_much_it_moves() -> None:
+    """§5.3.1: 1 行へ縮めたが、**撮り直しで動く量だけは残す**。
 
-    at = _render_details(body=_STEP_SAMPLE)
-
-    assert SCORE_SCALE_CAPTION in [element.value for element in at.caption]
-
-
-# --- §5.3: 末尾の留保を「読める形」で出す -------------------------------------
-
-
-def test_the_closing_limits_are_grouped_under_a_visible_heading() -> None:
-    """§5.3 が義務付ける留保を、無名の灰色段落の列として積まない。
-
-    以前は詳細結果の末尾に `st.caption` が 4 本続き（単位・価値尺度でないこと・
-    相対比較専用・指標の版）、読み手には区切りの無い壁だった。見出しを持つ
-    1 つの箱へまとめて走査できる形にする。**畳まない**——`SCORE_SCALE_CAPTION`
-    と同じ理由で、開かないと見えない場所へ置くと数字だけが独り歩きする。
+    数字が動かないものだと読まれると、引き伸ばした目盛りは誤解の元になる。
+    根拠（アンカーの由来・被写体 1 名）は `help` と About が持つ。
     """
-    from face_symmetry_lab.ui.scores import READING_LIMITS, READING_LIMITS_HEADING
+    from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION, SCORE_SCALE_HELP
 
-    at = _render_details(body=_STEP_SAMPLE)
-
-    captions = " ".join(element.value for element in at.caption)
-    markdown = " ".join(element.value for element in at.markdown)
-
-    assert READING_LIMITS_HEADING in captions + markdown
-    for limit in READING_LIMITS:
-        assert limit in captions, "留保そのものは 1 つも減らさない"
-    # 畳まれていないこと（expander の中では `at.expander` 側にしか現れない）。
-    assert len(at.expander) == 1, "計算過程の expander 以外を増やさない"
+    assert "6.8" in SCORE_SCALE_CAPTION
+    assert len(SCORE_SCALE_CAPTION) < 60
+    assert "被写体 1 名" in SCORE_SCALE_HELP
 
 
-def test_the_closing_limits_still_state_every_required_caveat() -> None:
-    """§5.3/§10.7: まとめ直しても、述べる内容は 1 つも落とさない。"""
+def test_the_closing_limits_are_a_single_line() -> None:
+    """§5.3.1（2026-08-16）: 見出し付きの箱に 3 本の長文を並べない。
+
+    罠: 以前の版はここに 3 本、その上にさらに 2 本の caption があり、灰色の壁だった。
+    **読まれない注意文は、書いていないのと同じである。**
+    """
     from face_symmetry_lab.ui.scores import READING_LIMITS
 
-    combined = " ".join(READING_LIMITS)
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
+    )
+    captions = [str(element.value) for element in at.caption]
 
-    assert "目標値ではありません" in combined
-    assert "平均しても全体の対称度にはなりません" in combined
-    assert "医学的評価" in combined
-    assert "同一人物・同一環境" in combined
-    for forbidden in ("良い", "悪い", "美しい", "優秀", "優れ", "満点", "合格", "理想"):
-        assert forbidden not in combined
+    assert len(READING_LIMITS) == 1
+    assert len(READING_LIMITS[0]) < 100
+    assert any(READING_LIMITS[0] in caption for caption in captions)
+
+
+def test_the_closing_limit_still_states_what_it_cannot_be_used_for() -> None:
+    """減らしたのは分量であって、禁止そのものではない（§5.3.1）。"""
+    from face_symmetry_lab.ui.scores import READING_LIMITS
+
+    text = " ".join(READING_LIMITS)
+
+    assert "他人との比較" in text
+    assert "医学的評価" in text
+    for banned in ("良い", "悪い", "美しい", "理想", "偏差値", "順位"):
+        assert banned not in text
 
 
 def test_the_metric_versions_stay_separate_from_the_caveats() -> None:

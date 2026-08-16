@@ -137,28 +137,41 @@ def test_the_readouts_follow_the_analysis_cadence() -> None:
 
 
 def test_the_copy_states_what_the_setting_does_not_change() -> None:
-    """FR-040: 表示の時間応答だけを変え、指標・生値・エクスポートを変えない。"""
+    """FR-040: 表示の時間応答だけを変え、測定値を変えないことは常時出す。
+
+    §5.3.1 で分量を削ったが、**この 1 行は残す**——この設定を見た利用者がまず
+    疑うのは「数値そのものを自分で動かしているのではないか」であり、そこを
+    曖昧にすると測定の調整だと読まれる（不変条件 10）。
+    """
     text = _all_text(_run())
 
     assert SMOOTHING_SCOPE_NOTE in text
-    assert "計算式" in SMOOTHING_SCOPE_NOTE
-    assert "生値" in SMOOTHING_SCOPE_NOTE
+    assert "測定値は変わりません" in SMOOTHING_SCOPE_NOTE
+    assert len(SMOOTHING_SCOPE_NOTE) < 60
 
 
 def test_the_copy_states_the_trade_off_in_both_directions() -> None:
     text = _all_text(_run())
 
     assert SMOOTHING_TRADEOFF_NOTE in text
-    assert "短く" in SMOOTHING_TRADEOFF_NOTE
-    assert "長く" in SMOOTHING_TRADEOFF_NOTE
+    assert "短い" in SMOOTHING_TRADEOFF_NOTE
+    assert "長い" in SMOOTHING_TRADEOFF_NOTE
 
 
-def test_the_copy_states_that_changing_it_restarts_the_average() -> None:
-    """§8.8: EMA リセットと新しい区間は、利用者から見える挙動である。"""
-    text = _all_text(_run())
+def test_the_reset_behaviour_is_reachable_without_being_always_on_screen() -> None:
+    """§8.8 の挙動は残すが、§5.3.1 に従って `help` へ移した。
 
-    assert SMOOTHING_RESET_NOTE in text
+    罠: 定数ごと消す実装だと、選び直したときに何が起きるのかどこにも書かれない。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import smoothing_panel
+
+    source = inspect.getsource(smoothing_panel.render_smoothing_control)
+
     assert "区間" in SMOOTHING_RESET_NOTE
+    assert 'help=f"{SMOOTHING_RESET_NOTE}' in source
+    assert SMOOTHING_RESET_NOTE not in _all_text(_run()), "常時表示からは外す"
 
 
 @pytest.mark.parametrize(
@@ -227,12 +240,19 @@ def test_the_copy_explains_why_a_longer_average_is_not_enough() -> None:
     assert "動く回数は変わりません" in HOLD_EFFECT_NOTE
 
 
-def test_the_copy_promises_that_a_stale_number_never_survives_a_lost_face() -> None:
-    """AC-HOLD-02 は実装の約束であり、画面にも書く（止まった数値の有効性）。"""
-    text = _all_text(_run())
+def test_the_stale_number_promise_is_reachable_from_the_control() -> None:
+    """AC-HOLD-02 は実装の約束であり、この設定を使う人が必ず知る必要がある。
 
-    assert HOLD_MISSING_NOTE in text
+    §5.3.1 で常時表示からは外したが、**内容は削らず** widget の `help` へ移した。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import smoothing_panel
+
+    source = inspect.getsource(smoothing_panel.render_smoothing_control)
+
     assert "—" in HOLD_MISSING_NOTE
+    assert source.count("HOLD_MISSING_NOTE") >= 1
 
 
 def test_no_heading_repeats_a_widget_label() -> None:

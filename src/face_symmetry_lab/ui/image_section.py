@@ -366,10 +366,7 @@ def _render_image_export(
     render_export_panel(
         bundle,
         heading="この画像の分析データをエクスポート",
-        warning=(
-            "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
-            "共有先と利用目的を確認してから保存してください。"
-        ),
+        warning="姿勢・左右差・参考年齢などの顔由来データを含みます。",
         # 1 枚の写真は常にちょうど 1 件の記録になるので、件数を出しても
         # 情報が増えない。
         key_prefix="download_image",
