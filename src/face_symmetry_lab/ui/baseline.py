@@ -15,9 +15,13 @@ from __future__ import annotations
 import streamlit as st
 
 from face_symmetry_lab.adapters.io.reference_dataset import CsvReferenceCellRepository
+from face_symmetry_lab.application.demographic_observations import (
+    DemographicObservationSet,
+)
 from face_symmetry_lab.application.reference_baseline import (
     BaselineProvider,
     BaselineSummary,
+    SessionBaselineSummary,
 )
 from face_symmetry_lab.application.reference_browser import ReferenceBrowser
 from face_symmetry_lab.domain.models import DemographicEstimate
@@ -57,3 +61,24 @@ def resolve_baseline(
         return None
     resolved = provider if provider is not None else default_baseline_provider()
     return resolved.resolve(estimate)
+
+
+def resolve_session_baseline(
+    observations: DemographicObservationSet,
+    *,
+    provider: BaselineProvider | None = None,
+) -> SessionBaselineSummary | None:
+    """FR-039/§9.6.1: 1 セッション分の母集団。観測が無ければ何も返さない。
+
+    **渡してよいのは `RealtimeLandmarkPipeline.demographic_observations` だけ**
+    である——あちらは年齢ゲートが表示を許した推定しか溜めない。エクスポートの記録
+    から作った列を渡すと、ゲートが隠した判断が母集団の年齢から復元できてしまう
+    （§10.12-3）。
+
+    `resolve_baseline` と同じく、観測が無いときは provider にも触れない（参照
+    データの読み込みを、実際に要るまで遅らせる）。
+    """
+    if observations.is_empty:
+        return None
+    resolved = provider if provider is not None else default_baseline_provider()
+    return resolved.resolve_session(observations)

@@ -750,3 +750,21 @@ def test_the_summary_and_export_survive_stopping_the_camera() -> None:
     # 止まっている間、ライブ表示に依存するものは出さない。
     assert "_render_detail_panel(" not in stopped
     assert "_render_symmetrization_panel(" not in stopped
+
+
+def test_the_camera_report_takes_its_population_from_the_shown_estimates() -> None:
+    """AC-BASELINE-05: 記録ではなく pipeline の観測から母集団を決める。
+
+    罠: `bundle.records` の `estimated_age_years` から作る実装は、年齢ゲートが
+    表示を止めたフレームの年齢も混ぜる——§9.2 の `age_gate_decision` 列が未実装
+    なので記録側では区別も付かず、ゲートが隠した判断が母集団の年齢から復元できて
+    しまう（§10.12-3）。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "resolve_session_baseline(pipeline.demographic_observations)" in source
+    assert "estimated_age_years" not in source

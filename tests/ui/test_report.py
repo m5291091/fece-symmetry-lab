@@ -24,7 +24,6 @@ from face_symmetry_lab.domain.session_summary import (
     TrendSeries,
 )
 from face_symmetry_lab.ui.report import (
-    REPORT_NOTES,
     REPORT_SHARING_NOTE,
     REPORT_VERSION,
     ReportFigure,
@@ -145,50 +144,34 @@ def test_the_report_never_reaches_outside_itself(build) -> None:
 
 
 @pytest.mark.parametrize("build", [_camera, _image])
-def test_a_minimal_note_travels_with_the_file(build) -> None:
-    """§5.3.1: 保存されたファイルは画面の文脈を持たないが、注意は数行に留める。"""
+def test_the_report_has_no_notes_section_and_no_provenance_table(build) -> None:
+    """2026-08-16 の指示: 注意文の節と来歴の表をレポートから外した。
+
+    FR-020 の再現性は CSV / JSON が担う——あちらは各行が版一式を自己完結して
+    持っており（§9.4）、同じ情報を 2 つの成果物へ書き写す必要はない。
+    """
     html = build()
 
-    for note in REPORT_NOTES:
-        assert note in html
-    assert "About" in html, "詳細は About が持つ、という導線だけを残す"
-
-
-@pytest.mark.parametrize("build", [_camera, _image])
-def test_the_notes_never_outgrow_the_measurements(build) -> None:
-    """§5.3.1: 読まれない注意文は、書いていないのと同じである。"""
-    html = build()
-    notes = sum(len(note) for note in REPORT_NOTES)
-
-    assert notes < 200, "注意は数行まで"
-    assert notes < len(html.split("<body")[1]) / 8
+    assert "この数値を再現するための情報" not in html
+    assert "1 フレームごとの記録" not in html
+    assert "About" not in html
+    assert "探索値です。他の人との比較" not in html
+    assert "c" * 64 not in html, "config fingerprint の表も無い"
 
 
 def test_the_sharing_note_appears_only_where_a_photo_can_be() -> None:
-    """2026-08-16: Camera のレポートは顔写真を持たないので、この 1 行も出ない。"""
+    """§10.4 / ADR-0009 (d): 残す 1 行はここだけ。Camera は図を持たないので出ない。"""
     assert "顔写真" in REPORT_SHARING_NOTE
     assert REPORT_SHARING_NOTE in _image(figures=(_figure(),))
     assert REPORT_SHARING_NOTE not in _image(figures=())
     assert REPORT_SHARING_NOTE not in _camera()
 
 
-@pytest.mark.parametrize("build", [_camera, _image])
-def test_the_provenance_lets_the_numbers_be_reproduced(build) -> None:
-    """FR-020 と同じ作法。版一式が本体にある。"""
-    html = build()
-
-    assert "symmetry-3d/1.0.0" in html
-    assert "4.0.0" in html
-    assert "face_landmarker" in html
-    assert "c" * 64 in html  # config fingerprint
-
-
-def test_the_notes_come_before_the_provenance_and_after_the_figures() -> None:
-    """§9.6: 図だけを切り出して共有されても注意が付いてくる位置に置く。"""
+def test_the_sharing_note_follows_the_figures() -> None:
+    """§9.6: 図だけを切り出して共有されても、その 1 行が付いてくる位置に置く。"""
     html = _image(figures=(_figure(),))
 
-    assert html.index("data:image/jpeg") < html.index(REPORT_NOTES[0])
-    assert html.index(REPORT_NOTES[0]) < html.index("c" * 64)
+    assert html.index("data:image/jpeg") < html.index(REPORT_SHARING_NOTE)
 
 
 def test_a_report_without_figures_has_no_empty_figure_section() -> None:
@@ -296,13 +279,15 @@ def test_a_chart_is_omitted_when_its_series_is_empty() -> None:
 
 
 def test_the_camera_report_does_not_carry_every_row() -> None:
-    """§9.6.1: 3,000 行は読めない。台帳は CSV / JSON が持つ。"""
+    """§9.6.1: 3,000 行は読めない。台帳は CSV / JSON が持つ。
+
+    案内文そのものは 2026-08-16 に削除したので、ここで見るのは「行が無いこと」
+    だけである。列名が 1 つも現れなければ、行の羅列も無い。
+    """
     html = _camera()
 
-    assert "CSV" in html
-    assert "JSON" in html
-    # 行の羅列が無いことを、frame_id のような列名が現れないことで確かめる。
     assert "frame_id" not in html
+    assert "elapsed_ms" not in html
 
 
 def test_the_camera_report_states_why_segments_are_split() -> None:
@@ -315,12 +300,6 @@ def test_a_single_segment_session_still_reports_the_whole() -> None:
     html = _camera(summary=_summary(segments=1))
 
     assert "98.12%" in html
-
-
-def test_the_camera_report_keeps_pointing_at_the_ledger() -> None:
-    html = _camera()
-
-    assert "CSV" in html and "JSON" in html
 
 
 def test_a_camera_report_without_any_record_is_refused() -> None:
@@ -443,3 +422,81 @@ def test_the_baseline_column_appears_when_the_population_is_shown() -> None:
 
     assert "参照統計の平均" in html
     assert "平均" in html
+
+
+# --- FR-039 / §9.6.1: セッションの参照平均（2026-08-16） ----------------------
+
+
+def _session_baseline():
+    from face_symmetry_lab.application.reference_baseline import SessionBaselineSummary
+    from face_symmetry_lab.domain.models import GenderLabel
+    from face_symmetry_lab.domain.reference_baseline import (
+        OVERALL_METRIC,
+        PART_METRICS,
+        SCORE_METRIC,
+        ObservedAges,
+    )
+    from face_symmetry_lab.domain.reference_stats import MetricSummary
+
+    return SessionBaselineSummary(
+        ages=ObservedAges(median=20, low=20, high=24, sample_count=42),
+        genders=(GenderLabel.MALE,),
+        count=283,
+        metrics={
+            OVERALL_METRIC: MetricSummary(mean=96.31, sd=1.2),
+            SCORE_METRIC: MetricSummary(mean=41.5, sd=9.0),
+            **{name: MetricSummary(mean=96.0, sd=1.0) for name in PART_METRICS.values()},
+        },
+    )
+
+
+def test_the_camera_report_carries_the_population_average() -> None:
+    """2026-08-16: 男 20 歳と判定されたら、その範囲の平均も載せる。"""
+    html = _camera(baseline=_session_baseline())
+
+    assert "参照統計の平均" in html
+    assert "96.31%" in html
+    assert "41.5 点" in html
+
+
+def test_the_population_is_named_next_to_its_average() -> None:
+    """§10.12-5: 何と比べているのかが書いていなければ、平均だけが残る。"""
+    html = _camera(baseline=_session_baseline())
+
+    assert "20 歳" in html
+    assert "20〜24 歳" in html
+    assert "男性" in html
+    assert "283" in html
+    assert "人種で絞り込まず" in html
+
+
+def test_the_average_column_is_absent_without_a_population() -> None:
+    """§10.12-3: 参考年齢を表示できなかったセッションでは併記も母集団も出ない。"""
+    html = _camera(baseline=None)
+
+    assert "参照統計の平均" not in html
+    assert "人種で絞り込まず" not in html
+
+
+def test_the_session_average_carries_no_difference_column() -> None:
+    """中央値と平均は別の母集団の代表値どうしなので、引き算しても意味を成さない。"""
+    html = _camera(baseline=_session_baseline())
+
+    assert "（+" not in html
+    assert "（-" not in html
+
+
+def test_a_single_year_population_is_written_without_a_range() -> None:
+    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+
+    baseline = _session_baseline()
+    narrow = type(baseline)(
+        ages=ObservedAges(median=30, low=30, high=30, sample_count=5),
+        genders=baseline.genders,
+        count=baseline.count,
+        metrics=baseline.metrics,
+    )
+    html = _camera(baseline=narrow)
+
+    assert "30 歳" in html
+    assert "真ん中50%" not in html.split("計測条件")[0].split("参照統計の")[-1]

@@ -24,6 +24,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 表示の落ち着き（移動平均の間隔・更新間隔）を選ぶ UI（FR-040, FR-041） | `src/face_symmetry_lab/ui/smoothing_panel.py` |
 | 表示値を一定時間だけ差し替えないラッチ（FR-041） | `src/face_symmetry_lab/domain/display_hold.py` |
 | セッション要約の記述統計（FR-021） | `src/face_symmetry_lab/domain/session_summary.py` |
+| 表示できた参考年齢・参考性別の観測（FR-039、レポートの母集団） | `src/face_symmetry_lab/application/demographic_observations.py` |
 | セッション要約の描画（FR-021） | `src/face_symmetry_lab/ui/summary_panel.py` |
 | 結果レポート（HTML）の組み立て（FR-042） | `src/face_symmetry_lab/ui/report.py` |
 | レポートへ入れる図の組み立て（FR-042） | `src/face_symmetry_lab/ui/report_figures.py` |
@@ -154,7 +155,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 凍結参照アセットの読み込みと sha256 検証 | `adapters/io/reference_dataset.py` | `tests/adapters/test_reference_dataset.py` | FR-037, §9.5, §10.9, AC-REFERENCE-03 |
 | 参照統計ページの描画と注意書き | `ui/reference_page.py` | `tests/ui/test_reference_page.py` | FR-037, §10.7, AC-REFERENCE-02〜04 |
 | 参照平均の併記（母集団の選択と差） | `domain/reference_baseline.py` | `tests/domain/test_reference_baseline.py` | FR-039, §10.12, AC-BASELINE-01, AC-BASELINE-02 |
-| 参照平均の use case（失敗分離・memo 化） | `application/reference_baseline.py` | `tests/application/test_reference_baseline.py` | FR-039, §10.12, AC-BASELINE-01, AC-BASELINE-03 |
+| 参照平均の use case（失敗分離・memo 化・セッション単位） | `application/reference_baseline.py` | `tests/application/test_reference_baseline.py` | FR-039, §9.6.1, §10.12, AC-BASELINE-01, AC-BASELINE-03, AC-BASELINE-05 |
+| 表示できた判定の観測 | `application/demographic_observations.py` | `tests/application/test_demographic_observations.py` | FR-039, FR-042, §10.12, AC-BASELINE-05 |
 | 参照平均の画面側の解決 | `ui/baseline.py` | `tests/ui/test_baseline.py` | FR-039, §10.12, AC-BASELINE-01 |
 | 個票 → セルテーブルの生成と自己検証 (dev-only) | `scripts/build_reference_dataset.py` | `tests/repository/test_build_reference_dataset.py` | FR-037, §9.5, §10.9 |
 
@@ -167,7 +169,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `2abc11c3714417685bfa318b82d3f7050e36330dcbc31d4cf3df592117e9f5ca`_
+_File-list SHA-256: `3498d68aa2483d6b1666e7b28fb34e9b7d456ad24e39f37b9e6780bad8855e8e`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -254,7 +256,7 @@ face-symmetry-lab/
         - … (4 files)
       - … (1 files)
     - `application/`
-      - … (18 files)
+      - … (19 files)
     - `domain/`
       - … (25 files)
     - `runtime/`
@@ -284,6 +286,7 @@ face-symmetry-lab/
     - `test_analysis_cadence.py`
     - `test_analyzer.py`
     - `test_auto_tune_controller.py`
+    - `test_demographic_observations.py`
     - `test_demographic_relay.py`
     - `test_demographic_worker.py`
     - `test_frame_capture.py`

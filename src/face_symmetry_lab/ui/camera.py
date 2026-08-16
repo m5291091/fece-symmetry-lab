@@ -55,6 +55,7 @@ from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
+from face_symmetry_lab.ui.baseline import resolve_session_baseline
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.hud import (
     HUD_POSITION_OPTIONS,
@@ -459,7 +460,15 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         # 2026-08-16: リアルタイムのレポートに顔写真は載せない。`include_figures`
         # は Image だけが使う——Camera 側は不変条件 1 の限定解除を必要としない。
         del include_figures
-        return build_camera_report(summary=summary, bundle=bundle, series=trend_series(records))
+        # FR-039/§9.6.1: 母集団は **pipeline が溜めた「表示を許した推定」** から
+        # 決める。`bundle.records` から作ると、年齢ゲートが隠した判断が母集団の
+        # 年齢から復元できてしまう（§10.12-3、AC-BASELINE-05）。
+        return build_camera_report(
+            summary=summary,
+            bundle=bundle,
+            series=trend_series(records),
+            baseline=resolve_session_baseline(pipeline.demographic_observations),
+        )
 
     render_export_panel(
         bundle,

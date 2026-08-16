@@ -18,7 +18,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+import statistics
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
@@ -107,3 +108,71 @@ def baseline_reading(
     if value is None or not math.isfinite(value):
         return BaselineReading(mean=summary.mean, delta=None)
     return BaselineReading(mean=summary.mean, delta=value - summary.mean)
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedAges:
+    """FR-039（2026-08-16）: 1 セッションで観測した参考年齢の範囲。
+
+    `low`〜`high` は**四分位範囲（真ん中 50%）**を 1 歳へ丸めて外側へ広げたもので、
+    観測の min〜max ではない。1 フレームの外れ値（例: 1 回だけ 55 歳）で母集団が
+    不当に広がるのを避けるためである。要約（FR-021）が「変動幅（真ん中 50%）」を
+    使うのと同じ語・同じ理由にそろえてある。
+
+    `median` は母集団として画面へ出す代表値である。範囲だけを出すと「20〜28 歳の
+    平均」がどのあたりの顔に対するものか読み取れない。
+    """
+
+    median: int
+    low: int
+    high: int
+    sample_count: int
+
+
+def observed_ages(age_years: Sequence[float]) -> ObservedAges | None:
+    """観測した参考年齢の列から、母集団に使う範囲を決める。
+
+    各値は `baseline_age` と**同じ丸め**を通す（画面の「27 歳」と母集団の年齢が
+    食い違わないようにするため、§10.12-2）。§9.5 の範囲外（18〜75 の外）と非有限値は
+    そこで落ちる——clamp しない。落とした後に 1 件も残らなければ `None` を返す。
+
+    四分位は `statistics.quantiles` の補間を使い、`low` は切り下げ、`high` は
+    切り上げで整数へ寄せる。**外側へ広げる**のは、丸めで母集団が実際の観測より
+    狭くなることを避けるためである。標本が 1 件のときは、その 1 歳がそのまま範囲になる。
+    """
+    ages = [age for age in (baseline_age(value) for value in age_years) if age is not None]
+    if not ages:
+        return None
+    if len(ages) == 1:
+        only = ages[0]
+        return ObservedAges(median=only, low=only, high=only, sample_count=1)
+    first, _second, third = statistics.quantiles(ages, n=4, method="inclusive")
+    low = max(MIN_AGE, math.floor(first))
+    high = min(MAX_AGE, math.ceil(third))
+    return ObservedAges(
+        median=round(statistics.median(ages)),
+        low=min(low, high),
+        high=max(low, high),
+        sample_count=len(ages),
+    )
+
+
+def session_baseline_filter(
+    *,
+    ages: ObservedAges,
+    genders: Iterable[GenderLabel],
+) -> ReferenceFilter:
+    """§9.6.1: セッション全体を 1 つの母集団として読むための絞り込み。
+
+    `baseline_filter` の一般化である。あちらが `age_range=(age, age)` と 1 つの
+    性別で 1 点を指すのに対し、こちらは範囲と性別の集合を指す。**性別は観測された
+    ラベルの和集合**にする——判定が途中で入れ替わったなら、その両方がそのセッション
+    で表示された判定だからである。
+
+    `races` を空のまま返すのは `baseline_filter` と同じ理由で、アプリが人種を推定
+    しないためである（不変条件 7）。
+    """
+    return ReferenceFilter(
+        genders=frozenset(gender.value for gender in genders),
+        age_range=(ages.low, ages.high),
+    )

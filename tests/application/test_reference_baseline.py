@@ -230,3 +230,67 @@ def test_every_gender_and_age_cell_in_the_bundled_data_clears_the_threshold() ->
 
     assert len(totals) == 116
     assert min(totals.values()) >= MIN_COUNT_FOR_STATISTICS
+
+
+# --- FR-039 / §9.6.1: セッション全体の母集団（2026-08-16） --------------------
+
+
+def _observations(ages, genders):
+    from face_symmetry_lab.application.demographic_observations import (
+        DemographicObservationSet,
+    )
+
+    return DemographicObservationSet(ages=tuple(ages), genders=tuple(genders))
+
+
+def test_a_session_resolves_one_population_from_the_observed_range() -> None:
+    """§9.6.1: 1 点では決められないので、四分位範囲と性別の集合で引く。"""
+    provider = _provider()
+
+    summary = provider.resolve_session(
+        _observations([20.0, 20.0, 21.0, 21.0], [GenderLabel.MALE] * 4)
+    )
+
+    assert summary is not None
+    assert summary.genders == (GenderLabel.MALE,)
+    assert summary.ages.low <= summary.ages.median <= summary.ages.high
+    assert summary.count > 0
+    assert summary.metrics
+
+
+def test_a_session_with_both_genders_spans_both() -> None:
+    """判定が入れ替わったなら、その両方がそのセッションで表示された判定である。"""
+    provider = _provider()
+
+    both = provider.resolve_session(
+        _observations([20.0] * 4, [GenderLabel.MALE, GenderLabel.FEMALE] * 2)
+    )
+    male_only = provider.resolve_session(_observations([20.0] * 4, [GenderLabel.MALE] * 4))
+
+    assert both is not None and male_only is not None
+    assert set(both.genders) == {GenderLabel.MALE, GenderLabel.FEMALE}
+    assert both.count > male_only.count, "両方を含めた母集団のほうが大きい"
+
+
+def test_a_wider_observed_range_takes_in_more_of_the_table() -> None:
+    provider = _provider()
+
+    narrow = provider.resolve_session(_observations([20.0] * 4, [GenderLabel.MALE] * 4))
+    wide = provider.resolve_session(_observations([20.0, 20.0, 21.0, 21.0], [GenderLabel.MALE] * 4))
+
+    assert narrow is not None and wide is not None
+    assert wide.count > narrow.count
+
+
+def test_a_session_without_any_shown_estimate_has_no_population() -> None:
+    """観測が 1 件も無ければ併記しない（不変条件 12）。"""
+    provider = _provider()
+
+    assert provider.resolve_session(_observations([], [])) is None
+
+
+def test_a_session_outside_the_table_has_no_population() -> None:
+    """§9.5 の範囲外へ「18 歳の平均」を当てない。"""
+    provider = _provider()
+
+    assert provider.resolve_session(_observations([88.0], [GenderLabel.MALE])) is None

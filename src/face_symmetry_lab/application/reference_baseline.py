@@ -19,9 +19,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from face_symmetry_lab.application.demographic_observations import (
+    DemographicObservationSet,
+)
 from face_symmetry_lab.application.reference_browser import ReferenceBrowser
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
-from face_symmetry_lab.domain.reference_baseline import baseline_age, baseline_filter
+from face_symmetry_lab.domain.reference_baseline import (
+    ObservedAges,
+    baseline_age,
+    baseline_filter,
+    observed_ages,
+    session_baseline_filter,
+)
 from face_symmetry_lab.domain.reference_stats import MetricSummary
 
 
@@ -35,6 +44,21 @@ class BaselineSummary:
 
     age: int
     gender: GenderLabel
+    count: int
+    metrics: Mapping[str, MetricSummary]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBaselineSummary:
+    """FR-039/§9.6.1: 1 セッション分の母集団（範囲と、観測された性別の集合）。
+
+    `BaselineSummary` が 1 点を指すのに対し、こちらは範囲を指す。画面へ出すのは
+    範囲・性別・件数と、観測した参考年齢の中央値である——範囲だけでは「どのあたりの
+    顔に対する平均か」が読み取れない（§10.12-5 と同じ理由）。
+    """
+
+    ages: ObservedAges
+    genders: tuple[GenderLabel, ...]
     count: int
     metrics: Mapping[str, MetricSummary]
 
@@ -84,6 +108,45 @@ class BaselineProvider:
         return BaselineSummary(
             age=age,
             gender=gender,
+            count=aggregate.count,
+            metrics=aggregate.metrics,
+        )
+
+    def resolve_session(
+        self,
+        observations: DemographicObservationSet,
+    ) -> SessionBaselineSummary | None:
+        """FR-039/§9.6.1: 1 セッション分の観測から母集団を 1 つ決める。
+
+        `resolve` が 1 点（1 歳・1 性別）を指すのに対し、こちらは**四分位範囲と
+        観測された性別の集合**を指す。リアルタイムでは参考年齢が数秒ごとに変わる
+        ため、1 点では決められない。
+
+        渡してよいのは `RealtimeLandmarkPipeline.demographic_observations`——
+        **表示を許された推定だけ**——である。記録から作った列を渡してはならない
+        （§10.12-3）。観測が無い・範囲が §9.5 の外・件数がしきい値未満・参照データが
+        読めないのいずれでも `None` を返す（不変条件 12）。
+        """
+        if observations.is_empty:
+            return None
+        ages = observed_ages(observations.ages)
+        if ages is None:
+            return None
+        genders = tuple(dict.fromkeys(observations.genders))
+        if not genders:
+            return None
+        try:
+            result = self._browser.query(session_baseline_filter(ages=ages, genders=genders))
+        except Exception:  # 失敗分離。型を先読みしない（不変条件 12）。
+            return None
+        if result is None or result.aggregate is None:
+            return None
+        aggregate = result.aggregate
+        if not aggregate.has_statistics:
+            return None
+        return SessionBaselineSummary(
+            ages=ages,
+            genders=genders,
             count=aggregate.count,
             metrics=aggregate.metrics,
         )

@@ -31,7 +31,10 @@ from html import escape
 from typing import Final
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
-from face_symmetry_lab.application.reference_baseline import BaselineSummary
+from face_symmetry_lab.application.reference_baseline import (
+    BaselineSummary,
+    SessionBaselineSummary,
+)
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.reference_baseline import (
@@ -75,18 +78,6 @@ from face_symmetry_lab.ui.summary_panel import (
 #: §9.6: レポートそのものの版。レコードスキーマ（`4.0.0`）とは別に数える——
 #: 台帳の列が変わらなくても、レポートの構成は変わりうる。
 REPORT_VERSION: Final[str] = "face-symmetry-report/1.0.0"
-
-#: §5.3.1: 画面と同じく、レポートの注意も最小限にする。以前は §5.3 の留保全文と
-#: §10.7 の禁止用途一覧を書き写しており、注意文が測定値より長かった——**読まれない
-#: 注意文は、書いていないのと同じである。** 根拠と全文は About が持つ。
-#:
-#: ここへ残すのは、ファイル単体で成立させるために要る 2 文だけである。1 つ目は
-#: 「この数字が何でないか」、2 つ目は使ってはいけない用途。どちらも受け取った人が
-#: 画面を見ずに読む可能性がある。
-REPORT_NOTES: Final[tuple[str, ...]] = (
-    "同一人物・同一環境の中で傾向を見るための探索値です。他の人との比較、医療・採用・保険などの判断には使えません。",
-    "詳しい算出方法と制限は、アプリの About ページに記載しています。",
-)
 
 #: §10.4 / ADR-0009 (d): 図を入れたときだけ足す 1 行。Camera のレポートは図を
 #: 持たないので、この文も出ない。
@@ -208,36 +199,19 @@ def _figures_section(figures: Sequence[ReportFigure]) -> str:
     return "<h2>画像</h2>" + "".join(blocks)
 
 
-def _notes_section(*, has_figures: bool) -> str:
-    """§5.3.1: 注意はここ 1 か所・数行だけ。
+def _sharing_section(*, has_figures: bool) -> str:
+    """§10.4 / ADR-0009 (d): 図を入れたときだけ出す 1 行。
 
-    §5.3 の留保全文と §10.7 の禁止用途一覧を書き写さない。図が無いときは共有の
-    1 行も出さない——起こらないことへの注意を出し続けると、注意そのものが
-    読み流される。
+    2026-08-16 の指示で、レポートの注意文の節と来歴の表は削除した。**残すのはここ
+    だけである**——顔写真がディスクへ出る唯一の経路であり、受け取った人が画面を
+    見ずに読む可能性がある。図が無いときは何も出さない（Camera は常にこちら）。
+
+    FR-020 の再現性は CSV / JSON が担う。あちらは各行が版一式を自己完結して持って
+    おり（§9.4）、同じ情報を 2 つの成果物へ書き写す必要はない。
     """
-    notes = (*REPORT_NOTES, REPORT_SHARING_NOTE) if has_figures else REPORT_NOTES
-    return "<div class='note'>" + _paragraphs(notes) + "</div>"
-
-
-def _provenance_section(bundle: object) -> str:
-    """FR-020 と同じ作法で、再現に必要な版一式を本体へ入れる。"""
-    manifest = getattr(bundle, "manifest", None)
-    if manifest is None:
-        raise ReportError("レポートには manifest が必要です。")
-    rows: list[list[str]] = [
-        ["レポートの版", REPORT_VERSION],
-        ["レコードスキーマ", str(getattr(manifest, "schema_version", "—"))],
-        ["指標", str(getattr(manifest, "metric_version", "—"))],
-        ["アプリ", str(getattr(manifest, "app_version", "—"))],
-        ["依存ロック (sha256)", str(getattr(manifest, "lock_digest", "—"))],
-    ]
-    for model in getattr(manifest, "models", ()) or ():
-        rows.append([f"モデル: {model.name}", f"{model.version} / {model.sha256}"])
-    revisions = getattr(manifest, "config_revisions", ()) or ()
-    if revisions:
-        latest = revisions[-1]
-        rows.append(["設定 fingerprint", str(latest.fingerprint)])
-    return "<h2>この数値を再現するための情報</h2>" + _table(("項目", "値"), rows)
+    if not has_figures:
+        return ""
+    return f"<p class='note'>{_text(REPORT_SHARING_NOTE)}</p>"
 
 
 def _document(*, title: str, body: str) -> str:
@@ -257,27 +231,41 @@ def _header(title: str, subtitle: str) -> str:
 # --- Camera（§9.6.1） ---------------------------------------------------------
 
 
-def _summary_table(section: SummarySection) -> str:
+def _summary_table(section: SummarySection, *, baseline: SessionBaselineSummary | None) -> str:
+    """要約の表。母集団が決まっているときだけ「参照統計の平均」列を足す。
+
+    FR-039 の併記と違い**差の列は作らない**——中央値と平均は別の母集団の代表値
+    どうしなので、引き算しても「表示している 1 つの数との差」にはならない。
+    """
+    means = _session_baseline_rows(baseline)
     rows: list[list[str]] = []
     for key, label in SUMMARY_ROW_LABELS:
         reading = reading_for(section, key)
         fmt = format_summary_points if key == "score" else format_summary_percent
         if reading is None:
-            rows.append([label, "—", "—", "—", "—"])
-            continue
-        rows.append(
-            [
+            row = [label, "—", "—", "—", "—"]
+        else:
+            row = [
                 label,
                 fmt(reading.median),
                 fmt(reading.iqr) if reading.iqr is not None else "—",
                 f"{fmt(reading.minimum)} 〜 {fmt(reading.maximum)}",
                 f"{reading.sample_count:,}",
             ]
-        )
-    return _table(("値", "中央値", SUMMARY_SPREAD_LABEL, "最小 〜 最大", "件数"), rows)
+        if means:
+            row.append(means.get(key, "—"))
+        rows.append(row)
+    headers = ["値", "中央値", SUMMARY_SPREAD_LABEL, "最小 〜 最大", "件数"]
+    if means:
+        headers.append("参照統計の平均")
+    return _table(headers, rows)
 
 
-def _section_block(section: SummarySection) -> str:
+def _section_block(
+    section: SummarySection,
+    *,
+    baseline: SessionBaselineSummary | None = None,
+) -> str:
     span = "—" if section.valid_span_ms is None else f"{section.valid_span_ms / 1000.0:.1f} 秒"
     facts = _table(
         ("項目", "値"),
@@ -296,7 +284,7 @@ def _section_block(section: SummarySection) -> str:
             for code, count in section.reason_counts
         ]
         reasons = "<h3>計測条件を満たさなかった主な理由</h3>" + _bullets(lines)
-    return facts + _summary_table(section) + reasons
+    return facts + _summary_table(section, baseline=baseline) + reasons
 
 
 #: 推移図の系列色。HUD の折れ線（`ui.hud_assets`）と同じ割り当てにする——同じ
@@ -394,11 +382,56 @@ def _trend_section(series: TrendSeries | None) -> str:
     return blocks + "<p class='meta'>横軸は記録された順序です。縦軸の範囲外は端に貼り付きます。</p>"
 
 
+def _session_baseline_rows(baseline: SessionBaselineSummary | None) -> dict[str, str]:
+    """FR-039/§9.6.1: セッションの母集団に対する「平均」の表示文字列。
+
+    Image の併記（`_baseline_rows`）と違い、**差は出さない。** 中央値と平均を
+    引き算しても、表示している 1 つの数どうしの差ではなくなる（中央値は分布の
+    代表値、平均は別の母集団の代表値である）。並べるのは平均だけにする。
+    """
+    if baseline is None:
+        return {}
+    metrics = baseline.metrics
+    rows = {
+        "symmetry": _baseline_mean(metrics, OVERALL_METRIC, points=False),
+        "score": _baseline_mean(metrics, SCORE_METRIC, points=True),
+    }
+    for name in PART_NAMES:
+        rows[name] = _baseline_mean(metrics, PART_METRICS[name], points=False)
+    return rows
+
+
+def _baseline_mean(metrics: Mapping[str, object], name: str, *, points: bool) -> str:
+    summary = metrics.get(name)
+    mean = getattr(summary, "mean", None)
+    if mean is None:
+        return "—"
+    return f"{mean:.1f} 点" if points else f"{mean:.2f}%"
+
+
+def _population_line(baseline: SessionBaselineSummary | None) -> str:
+    """§10.12-5: 母集団が何であるかを、平均と同じ場所へ 1 行で書く。"""
+    if baseline is None:
+        return ""
+    genders = "・".join(GENDER_LABELS.get(gender, "—") for gender in baseline.genders)
+    ages = baseline.ages
+    span = (
+        f"{ages.median} 歳"
+        if ages.low == ages.high
+        else f"{ages.median} 歳（真ん中50%: {ages.low}〜{ages.high} 歳）"
+    )
+    return (
+        f"平均: 参照統計の {span}・{genders}"
+        f"（人種で絞り込まず {baseline.count:,} 件）。探索値です。"
+    )
+
+
 def build_camera_report(
     *,
     summary: SessionSummary,
     bundle: object,
     series: TrendSeries | None = None,
+    baseline: SessionBaselineSummary | None = None,
 ) -> str:
     """§9.6.1: Camera の 1 セッション分。
 
@@ -417,7 +450,9 @@ def build_camera_report(
         "リアルタイム計測のまとめ",
         f"{REPORT_VERSION} · 時刻はセッション開始からの相対値です。",
     )
-    body += "<h2>このセッションの要約</h2>" + _section_block(summary.overall)
+    body += "<h2>このセッションの要約</h2>" + _section_block(summary.overall, baseline=baseline)
+    if baseline is not None:
+        body += f"<p class='meta'>{_text(_population_line(baseline))}</p>"
     body += f"<p class='meta'>{_text(SUMMARY_LIMITS_NOTE)}</p>"
     body += _trend_section(series)
 
@@ -429,9 +464,6 @@ def build_camera_report(
             label = f"区間 {index}（{short}）" if short else f"区間 {index}"
             body += f"<h3>{_text(label)}</h3>" + _section_block(section)
 
-    body += "<p class='meta'>1 フレームごとの記録は CSV / JSON にあります。</p>"
-    body += _notes_section(has_figures=False)
-    body += _provenance_section(bundle)
     return _document(title="リアルタイム計測のまとめ", body=body)
 
 
@@ -594,6 +626,5 @@ def build_image_report(
         body += f"<p class='note'>{_text(notice)}</p>"
 
     body += _figures_section(figures)
-    body += _notes_section(has_figures=bool(figures))
-    body += _provenance_section(bundle)
+    body += _sharing_section(has_figures=bool(figures))
     return _document(title="写真 1 枚の計測結果", body=body)
