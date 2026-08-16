@@ -145,3 +145,92 @@ def test_without_a_notice_the_panel_stays_silent() -> None:
     assert not at.exception
     assert _all_text(at) == ""
     assert list(at.download_button) == []
+
+
+# --- FR-042: 結果レポート（HTML） ---------------------------------------------
+
+
+def _report_script(*, uncheck: bool = False) -> str:
+    """レポート builder を渡したときのパネル。builder は引数を記録するだけ。"""
+    toggle = "st.session_state['download_test_report_figures'] = False\n" if uncheck else ""
+    return (
+        "import streamlit as st\n"
+        "from tests.ui.test_export_panel import recorded_bundle\n"
+        "from face_symmetry_lab.ui.export_panel import render_export_panel\n"
+        f"{toggle}"
+        "def builder(include_figures):\n"
+        "    st.session_state['builder_calls'] = "
+        "st.session_state.get('builder_calls', []) + [include_figures]\n"
+        "    return '<!doctype html><html><body>report</body></html>'\n"
+        "render_export_panel(\n"
+        "    recorded_bundle(),\n"
+        "    heading='セッションデータのエクスポート',\n"
+        "    warning='顔由来の派生データを含みます。',\n"
+        "    key_prefix='download_test',\n"
+        "    report_builder=builder,\n"
+        "    report_mode='session',\n"
+        ")\n"
+    )
+
+
+def _run_report(*, uncheck: bool = False) -> AppTest:
+    at = AppTest.from_string(_report_script(uncheck=uncheck))
+    at.run()
+    return at
+
+
+def test_a_report_builder_adds_a_third_button_without_removing_the_ledger() -> None:
+    """FR-042: CSV / JSON は据え置き、レポートが 3 つ目として増える。"""
+    at = _run_report()
+
+    assert not at.exception
+    labels = [element.label for element in at.download_button]
+    assert "CSV を保存" in labels
+    assert "JSON を保存" in labels
+    assert len(labels) == 3
+
+
+def test_the_report_button_writes_an_html_file() -> None:
+    at = _run_report()
+
+    report = next(
+        element
+        for element in at.download_button
+        if element.label not in ("CSV を保存", "JSON を保存")
+    )
+    assert report.label.endswith("を保存")
+    assert "HTML" in report.label or "レポート" in report.label
+
+
+def test_the_figure_toggle_defaults_to_on() -> None:
+    """§15.1: 既定 ON（2026-08-16 の判断、ADR-0009 (d)）。"""
+    at = _run_report()
+
+    assert len(at.checkbox) == 1
+    assert at.checkbox[0].value is True
+    assert at.session_state["builder_calls"] == [True]
+
+
+def test_turning_the_toggle_off_reaches_the_builder() -> None:
+    """罠: チェックを読まずに常に図付きで作る実装は、OFF にしても顔写真を出す。"""
+    at = _run_report(uncheck=True)
+
+    assert at.session_state["builder_calls"] == [False]
+
+
+def test_the_sharing_warning_is_shown_before_the_download() -> None:
+    """FR-042: 押した後では遅い。保存する人へは操作の直前で伝える。"""
+    from face_symmetry_lab.ui.report import REPORT_SHARING_NOTE
+
+    text = _all_text(_run_report())
+
+    assert REPORT_SHARING_NOTE in text
+
+
+def test_the_warning_is_dropped_when_no_figure_is_embedded() -> None:
+    """図を切ったレポートに顔写真は入らない。出ない注意を出し続けない。"""
+    from face_symmetry_lab.ui.report import REPORT_SHARING_NOTE
+
+    text = _all_text(_run_report(uncheck=True))
+
+    assert REPORT_SHARING_NOTE not in text

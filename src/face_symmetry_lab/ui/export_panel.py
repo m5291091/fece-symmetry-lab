@@ -1,11 +1,18 @@
-"""両方の入力モードが共有する CSV / JSON ダウンロードパネル（FR-017, §9）。
+"""両方の入力モードが共有するダウンロードパネル（FR-017 / FR-042, §9）。
 
-Camera と Image で異なるのは文言と widget のキーだけである。再現性の注記と
-2 つのダウンロードボタンはどちらでも同じ契約なので、2 箇所へ分かれて食い違わ
-ないよう、ここにまとめて置く。
+Camera と Image で異なるのは文言と widget のキー、そしてレポートの中身だけで
+ある。再現性の注記とダウンロードボタンはどちらでも同じ契約なので、2 箇所へ
+分かれて食い違わないよう、ここにまとめて置く。
+
+FR-042 で 3 つ目のボタン（人が読む HTML レポート）が加わった。**CSV / JSON は
+1 列も変えていない**——台帳と読み物は目的が違うので併存させる（ADR-0009 (b)）。
+レポートの中身は入力モードごとに違うため、この module は組み立てを知らず、
+呼び出し側が渡す builder を呼ぶだけである。
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 import streamlit as st
 
@@ -15,6 +22,16 @@ from face_symmetry_lab.adapters.export.session_exporter import (
     json_bytes,
 )
 from face_symmetry_lab.domain.export import SessionExport
+from face_symmetry_lab.ui.report import REPORT_SHARING_NOTE, report_filename
+
+#: `include_figures` を受け取り、レポートの HTML を返す。図の符号化は呼び出し側の
+#: 責任である（この module は cv2 も画像も知らない）。
+ReportBuilder = Callable[[bool], str]
+
+#: §15.1 / ADR-0009 (d): 図の埋め込みは**既定 ON**。人間の明示判断である
+#: （2026-08-16）。安全側の既定を提案したが採られなかったので、代わりに操作の
+#: 直前とレポート本体の両方へ注意を置くことで補っている。
+FIGURE_TOGGLE_LABEL: str = "顔写真を含む図をレポートへ入れる"
 
 
 def render_export_panel(
@@ -25,6 +42,8 @@ def render_export_panel(
     key_prefix: str,
     show_record_count: bool = False,
     empty_notice: str | None = None,
+    report_builder: ReportBuilder | None = None,
+    report_mode: str = "session",
 ) -> None:
     """エクスポート節を描画する。データが無いときは download button を出さない。
 
@@ -54,6 +73,14 @@ def render_export_panel(
         f"{count}metric {bundle.manifest.metric_version} · config {revision.fingerprint[:12]}…"
     )
 
+    if report_builder is not None:
+        _render_report_download(
+            bundle,
+            builder=report_builder,
+            key_prefix=key_prefix,
+            mode=report_mode,
+        )
+
     csv_column, json_column = st.columns(2)
     csv_column.download_button(
         "CSV を保存",
@@ -68,4 +95,37 @@ def render_export_panel(
         file_name=export_filename(bundle, "json"),
         mime="application/json",
         key=f"{key_prefix}_json",
+    )
+
+
+def _render_report_download(
+    bundle: SessionExport,
+    *,
+    builder: ReportBuilder,
+    key_prefix: str,
+    mode: str,
+) -> None:
+    """FR-042: 人が読む HTML レポート。
+
+    **注意は押す前に出す。** 図を含めるとこのファイルは顔写真を持つので、
+    押した後に本体で伝えるだけでは遅い（ADR-0009 (d)）。図を切っているときは
+    出さない——起こらないことへの注意を出し続けると、注意そのものが読み流される。
+    """
+    include_figures = st.checkbox(
+        FIGURE_TOGGLE_LABEL,
+        value=True,
+        key=f"{key_prefix}_report_figures",
+        help=(
+            "ランドマークを重ねたプレビューや対称化した図を、レポートの中へ埋め込みます。"
+            "外しても数値と来歴は変わりません。"
+        ),
+    )
+    if include_figures:
+        st.warning(REPORT_SHARING_NOTE)
+    st.download_button(
+        "レポート（HTML）を保存",
+        data=builder(include_figures).encode("utf-8"),
+        file_name=report_filename(bundle, mode=mode),
+        mime="text/html",
+        key=f"{key_prefix}_report",
     )

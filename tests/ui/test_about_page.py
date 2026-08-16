@@ -95,3 +95,17 @@ def test_about_page_forbids_reading_the_difference_as_a_rank() -> None:
     markdown_text = " ".join(element.value for element in at.markdown)
 
     assert "参照平均との差を、順位・優劣・目標として扱うこと" in markdown_text
+
+
+def test_about_states_that_a_saved_report_may_contain_a_photo() -> None:
+    """§10.4 / ADR-0009: ダウンロード後のファイルはアプリの管理外である。
+
+    レポート本体にも同じことを書くが（受け取った人へ届く）、About にも要る
+    ——保存する前に読む場所だからである。
+    """
+    at = _run()
+    text = " ".join(str(element.value) for element in at.markdown)
+
+    assert "顔写真を含む図がファイルへ入ります" in text
+    assert "共有先や複製をアプリからは制御できません" in text
+    assert "自動でファイルを作ることはなく" in text

@@ -57,7 +57,7 @@ from face_symmetry_lab.application.still_image import (
     StillImageAnalysis,
     analyze_still_image,
 )
-from face_symmetry_lab.application.symmetrization import symmetrize_frame
+from face_symmetry_lab.application.symmetrization import SymmetrizationView, symmetrize_frame
 from face_symmetry_lab.domain.export import InputMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, MetricConfigError
@@ -79,6 +79,8 @@ from face_symmetry_lab.ui.readings import (
     resolve_overall_distance,
     resolve_part_distance_3d,
 )
+from face_symmetry_lab.ui.report import build_image_report
+from face_symmetry_lab.ui.report_figures import build_report_figures
 from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
@@ -326,9 +328,43 @@ def _maybe_estimate_image_demographics(
 # --- タブの中身 ---------------------------------------------------------------
 
 
-def _render_image_export(recorder: SessionRecorder) -> None:
+def _render_image_export(
+    recorder: SessionRecorder,
+    *,
+    analysis: StillImageAnalysis | None = None,
+    view: SymmetrizationView | None = None,
+    gate_outcome: AgeGateOutcome | None = None,
+) -> None:
+    """FR-017 の台帳と、FR-042 の読み物を同じ場所へ置く。
+
+    §9.6.2 の内容は「画面に出ているもの」と同じでなければならない。そこで
+    参考年齢・参考性別は、**吹き出しへ実際に渡したのと同じ解決**を通す——
+    `_resolve_shown_estimate` を共有することで、年齢ゲートが隠した判断が
+    レポートの母集団から復元されることを防ぐ（§10.12-3）。
+    """
+    bundle = recorder.export_bundle()
+    builder = None
+    if analysis is not None:
+        estimate = _resolve_shown_estimate(gate_outcome)
+        notice = "" if gate_outcome is None else age_gate_notice(gate_outcome.status)
+
+        def builder(include_figures: bool) -> str:
+            return build_image_report(
+                outcome=analysis.outcome,
+                bundle=bundle,
+                figures=build_report_figures(
+                    include_figures=include_figures,
+                    preview=analysis.landmarks.preview,
+                    view=view,
+                ),
+                baseline=resolve_baseline(estimate),
+                estimate=estimate,
+                show_demographics=estimate is not None,
+                notice=notice,
+            )
+
     render_export_panel(
-        recorder.export_bundle(),
+        bundle,
         heading="この画像の分析データをエクスポート",
         warning=(
             "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
@@ -337,15 +373,24 @@ def _render_image_export(recorder: SessionRecorder) -> None:
         # 1 枚の写真は常にちょうど 1 件の記録になるので、件数を出しても
         # 情報が増えない。
         key_prefix="download_image",
+        report_builder=builder,
+        report_mode="image",
     )
 
 
-def _render_image_symmetrization(rgb: np.ndarray, analysis: StillImageAnalysis) -> None:
+def _render_image_symmetrization(
+    rgb: np.ndarray, analysis: StillImageAnalysis
+) -> SymmetrizationView | None:
     """FR-034: Camera と同じ一発の折り返しを、アップロードされた写真へ適用する。
 
     アップロードはすでに静止したフレームなので取り込む対象が無く、画面上の
     写真からそのまま表示を計算する（§14.3g）。それ以外——並び・文言・変形の
     任意指定——は `ui.symmetrization_panel` が Camera と共有する。
+
+    FR-042: 作ったビューを**返す**。`st.tabs` はどのタブが表示されていても毎回
+    すべての中身を構築するため、この計算は既に毎回走っている。レポート用に
+    もう一度折りたたむのは同じ費用を 2 度払うだけであり、しかも 2 つの図が
+    別々の計算から出ることになる。失敗したときは `None`。
     """
     st.markdown(SYMMETRIZATION_HEADING)
     # §8.6.4 は全画素を作り直し、このパネルは再実行のたびに描き直される。
@@ -360,7 +405,7 @@ def _render_image_symmetrization(rgb: np.ndarray, analysis: StillImageAnalysis) 
         )
     except SymmetrizationError as error:
         st.info(str(error))
-        return
+        return None
 
     st.caption(
         "写真の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
@@ -368,6 +413,7 @@ def _render_image_symmetrization(rgb: np.ndarray, analysis: StillImageAnalysis) 
         "どちらが正しい・望ましいという意味はありません。"
     )
     render_symmetrization_view(view, warp_requested=warp)
+    return view
 
 
 def _render_image_demographic_detail(
@@ -411,6 +457,21 @@ def _render_image_demographic_detail(
 # --- セクション全体 -----------------------------------------------------------
 
 
+def _resolve_shown_estimate(gate_outcome: AgeGateOutcome | None) -> DemographicEstimate | None:
+    """**実際に画面へ出す**参考年齢・参考性別を 1 か所で決める。
+
+    吹き出し（FR-039 の母集団もここから解決される）と FR-042 のレポートが同じ
+    関数を通る。片方が session state の推定をそのまま読むと、**年齢ゲートが
+    隠した判断が母集団の年齢から復元されてしまう**（§10.12-3）。ゲートが表示を
+    許さないときは、推定が成功していても `None` を返す。
+    """
+    session_estimate = st.session_state.get(RESULT_STATE_KEY)
+    estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
+    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
+        return None
+    return estimate
+
+
 def _render_preview_with_overlay(
     analysis: StillImageAnalysis,
     gate_outcome: AgeGateOutcome | None = None,
@@ -434,10 +495,7 @@ def _render_preview_with_overlay(
     ゲートが参考年齢を隠した後の `None` をそのまま渡すので、隠した判断が母集団の
     年齢から復元されることがない（§10.12-3）。
     """
-    session_estimate = st.session_state.get(RESULT_STATE_KEY)
-    estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
-    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
-        estimate = None
+    estimate = _resolve_shown_estimate(gate_outcome)
     notice = "" if gate_outcome is None else age_gate_notice(gate_outcome.status)
     render_image_with_overlay(
         analysis.landmarks.preview,
@@ -540,15 +598,21 @@ def render_image_section() -> None:
             )
             # 静止画は状態を持たないため、生の値をそのまま表示する（§8.7）。
             render_score_details(analysis.outcome, show_smoothed=False)
+    symmetrization_view: SymmetrizationView | None = None
     with symmetry_tab:
         if analysis is None:
             st.info("ランドマークが取れていないため、比較を作成できません。")
         else:
-            _render_image_symmetrization(rgb, analysis)
+            symmetrization_view = _render_image_symmetrization(rgb, analysis)
     with demographic_tab:
         _render_image_demographic_detail(age_input, age_gate_outcome)
     with export_tab:
         if recorder is None:
             st.info("エクスポートできる分析結果がまだありません。")
         else:
-            _render_image_export(recorder)
+            _render_image_export(
+                recorder,
+                analysis=analysis,
+                view=symmetrization_view,
+                gate_outcome=age_gate_outcome,
+            )

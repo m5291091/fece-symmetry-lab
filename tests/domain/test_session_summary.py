@@ -21,6 +21,7 @@ from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.session_summary import (
     SummaryError,
     summarize_session,
+    trend_series,
 )
 
 
@@ -338,3 +339,44 @@ def test_a_non_finite_or_negative_distance_is_refused(bad: float) -> None:
     """不変条件 11: 壊れた値を黙って中央値へ混ぜない。"""
     with pytest.raises(SummaryError):
         summarize_session([_Record(overall=bad)])
+
+
+# --- FR-042: 推移図の系列 -----------------------------------------------------
+
+
+def test_the_trend_series_carries_the_valid_rows_in_display_units() -> None:
+    series = trend_series(_ok_records([0.010, 0.020, 0.030]))
+
+    assert series == pytest.approx((99.0, 98.0, 97.0))
+
+
+def test_the_trend_series_skips_rows_that_are_not_ok() -> None:
+    records = [
+        _Record(status=Status.OK, overall=0.02),
+        _Record(status=Status.HOLD, overall=None),
+        _Record(status=Status.OK, overall=0.03),
+    ]
+
+    assert trend_series(records) == pytest.approx((98.0, 97.0))
+
+
+def test_a_long_session_is_thinned_without_losing_its_ends() -> None:
+    """罠: 先頭 600 点で切る実装は、セッションの一部だけを「全体の推移」と呼ぶ。"""
+    values = [0.010 + index * 0.00001 for index in range(3000)]
+
+    series = trend_series(_ok_records(values), max_points=600)
+
+    assert len(series) == 600
+    assert series[0] == pytest.approx(100.0 * (1.0 - values[0]))
+    # 末尾付近まで到達している（先頭だけを切り出していない）。
+    assert series[-1] == pytest.approx(100.0 * (1.0 - values[-1]), abs=0.01)
+
+
+def test_a_short_session_is_left_alone() -> None:
+    series = trend_series(_ok_records([0.02, 0.03]), max_points=600)
+
+    assert len(series) == 2
+
+
+def test_an_empty_session_has_no_series() -> None:
+    assert trend_series([]) == ()

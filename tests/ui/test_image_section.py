@@ -522,3 +522,48 @@ def test_the_image_mode_never_renders_a_session_summary() -> None:
 
     assert "summarize_session" not in source
     assert "render_session_summary" not in source
+
+
+# --- FR-042: 結果レポートの配線 -----------------------------------------------
+
+
+def test_the_image_export_offers_a_report_built_from_the_shown_estimate() -> None:
+    """§10.12-3: レポートの母集団は、吹き出しへ実際に出した推定からだけ決まる。
+
+    罠: session state の推定を直接読む実装は、年齢ゲートが隠した判断を
+    レポートの母集団の年齢から復元させる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    source = inspect.getsource(image_section._render_image_export)
+
+    assert "build_image_report(" in source
+    assert "_resolve_shown_estimate(" in source
+    assert 'report_mode="image"' in source
+
+
+def test_the_bubble_and_the_report_resolve_the_estimate_the_same_way() -> None:
+    """罠: 2 か所で別々に解決すると、片方だけがゲートの判断を漏らす。"""
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    for function in (
+        image_section._render_preview_with_overlay,
+        image_section._render_image_export,
+    ):
+        assert "_resolve_shown_estimate(" in inspect.getsource(function)
+
+
+def test_the_symmetrisation_view_is_reused_rather_than_recomputed() -> None:
+    """FR-042: 同じ折りたたみを 2 度計算しない（費用と、図の食い違いの両方）。"""
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    section = inspect.getsource(image_section.render_image_section)
+
+    assert "symmetrization_view = _render_image_symmetrization(" in section
+    assert "view=symmetrization_view" in section

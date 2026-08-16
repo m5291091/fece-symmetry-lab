@@ -47,29 +47,42 @@ SUMMARY_SEGMENT_NOTE: Final[str] = (
 
 SUMMARY_SPREAD_LABEL: Final[str] = "変動幅（真ん中50%）"
 
-#: 表の行の並び。画面に出る 6 つと同じ順・同じラベルにそろえる。
-_ROW_LABELS: Final[tuple[tuple[str, str], ...]] = (
+#: 表の行の並び。画面に出る 6 つと同じ順・同じラベルにそろえる。FR-042 の
+#: レポートも同じ並びを読む（画面と保存物で行の順が違わないように）。
+SUMMARY_ROW_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("symmetry", "全体の対称度"),
     ("score", "全体のスコア"),
     *tuple((name, PART_LABELS[name]) for name in PART_LABELS),
 )
 
 
-def _percent(value: float | None) -> str:
+def format_summary_percent(value: float | None) -> str:
+    """要約の対称度（既に % へ変換済みの値）。欠測は `—`（0 で埋めない）。
+
+    `ui.readings.format_symmetry` とは入力が違う——あちらは距離を受け取って
+    変換まで行うが、要約は `domain.session_summary` が変換済みの値を返す。
+    桁は同じ 2 桁にそろえる（画面の別々の場所で丸めが違わないように）。
+    """
     return "—" if value is None else f"{value:.2f}%"
 
 
-def _points(value: float | None) -> str:
+def format_summary_points(value: float | None) -> str:
+    """要約の「全体のスコア」（既に点へ変換済み）。`%` を付けない（§8.6.7）。"""
     return "—" if value is None else f"{value:.1f} 点"
 
 
 def _cells(reading: SummaryReading | None, *, points: bool) -> tuple[str, str, str]:
     """中央値・変動幅・最小〜最大の 3 セル。欠測は `—`（0 で埋めない）。"""
-    fmt = _points if points else _percent
+    fmt = format_summary_points if points else format_summary_percent
     if reading is None:
         return ("—", "—", "—")
     spread = fmt(reading.iqr) if reading.iqr is not None else "—"
     return (fmt(reading.median), spread, f"{fmt(reading.minimum)} 〜 {fmt(reading.maximum)}")
+
+
+def reading_for(section: SummarySection, key: str) -> SummaryReading | None:
+    """`SUMMARY_ROW_LABELS` のキー 1 つに対応する読みを引く。"""
+    return _reading_of(section, key)
 
 
 def _reading_of(section: SummarySection, key: str) -> SummaryReading | None:
@@ -91,8 +104,8 @@ def _render_reading_table(section: SummarySection) -> None:
     header = f"| 値 | 中央値 | {SUMMARY_SPREAD_LABEL} | 最小 〜 最大 | 件数 |"
     divider = "|---|---:|---:|---:|---:|"
     rows = []
-    for key, label in _ROW_LABELS:
-        reading = _reading_of(section, key)
+    for key, label in SUMMARY_ROW_LABELS:
+        reading = reading_for(section, key)
         median, spread, extremes = _cells(reading, points=key == "score")
         count = "—" if reading is None else f"{reading.sample_count:,}"
         rows.append(f"| {label} | {median} | {spread} | {extremes} | {count} |")

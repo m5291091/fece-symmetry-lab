@@ -25,6 +25,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 表示値を一定時間だけ差し替えないラッチ（FR-041） | `src/face_symmetry_lab/domain/display_hold.py` |
 | セッション要約の記述統計（FR-021） | `src/face_symmetry_lab/domain/session_summary.py` |
 | セッション要約の描画（FR-021） | `src/face_symmetry_lab/ui/summary_panel.py` |
+| 結果レポート（HTML）の組み立て（FR-042） | `src/face_symmetry_lab/ui/report.py` |
+| レポートへ入れる図の組み立て（FR-042） | `src/face_symmetry_lab/ui/report_figures.py` |
+| 図の縮小と data URI 符号化（FR-042） | `src/face_symmetry_lab/adapters/imaging/image_encoding.py` |
 | Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
 | 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
 | Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
@@ -102,6 +105,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 表示ラッチ（更新間隔） | `domain/display_hold.py` | `tests/domain/test_display_hold.py` | FR-041, §15.1, AC-HOLD-01, AC-HOLD-02 |
 | セッション要約（記述統計） | `domain/session_summary.py` | `tests/domain/test_session_summary.py` | FR-021, §10.7, §14.4, AC-SUMMARY-01, AC-SUMMARY-02 |
 | セッション要約の描画 | `ui/summary_panel.py` | `tests/ui/test_summary_panel.py` | FR-021, §5.2, §5.3, §10.7, AC-SUMMARY-01, AC-SUMMARY-02 |
+| 結果レポート（HTML） | `ui/report.py` | `tests/ui/test_report.py` | FR-042, §9.6, §10.7, AC-REPORT-01, AC-REPORT-02 |
+| レポートの図の組み立て | `ui/report_figures.py` | `tests/ui/test_report_figures.py` | FR-042, FR-034, FR-035, AC-REPORT-03 |
+| 図の縮小と data URI 符号化 | `adapters/imaging/image_encoding.py` | `tests/adapters/test_image_encoding.py` | FR-042, §10.4, AC-REPORT-02 |
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
@@ -129,7 +135,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
 | Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
 | Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
-| CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020 |
+| ダウンロードパネル（CSV / JSON / レポート、Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020, FR-042 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
@@ -161,7 +167,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `4a5d8dac744edf528e2d5af898d5a9c15c4da89b02074a361bdf2b4320ee7a3d`_
+_File-list SHA-256: `2abc11c3714417685bfa318b82d3f7050e36330dcbc31d4cf3df592117e9f5ca`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -241,7 +247,7 @@ face-symmetry-lab/
       - `export/`
         - … (2 files)
       - `imaging/`
-        - … (2 files)
+        - … (3 files)
       - `inference/`
         - … (7 files)
       - `io/`
@@ -254,11 +260,12 @@ face-symmetry-lab/
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (19 files)
+      - … (21 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
   - `adapters/`
+    - `test_image_encoding.py`
     - `test_mediapipe_landmarker.py`
     - `test_mediapipe_segmenter.py`
     - `test_metric_config.py`
@@ -349,6 +356,8 @@ face-symmetry-lab/
     - `test_model_setup.py`
     - `test_readings.py`
     - `test_reference_page.py`
+    - `test_report.py`
+    - `test_report_figures.py`
     - `test_scores.py`
     - `test_smoothing_panel.py`
     - `test_still_overlay.py`

@@ -711,3 +711,21 @@ def test_the_export_tab_is_named_for_both_of_its_contents() -> None:
     source = inspect.getsource(camera.render_camera_section)
 
     assert "まとめ・エクスポート" in source
+
+
+def test_the_camera_report_only_embeds_an_explicitly_captured_view() -> None:
+    """ADR-0009: 取り込んでいないライブ映像のフレームを勝手に埋めない。
+
+    罠: `pipeline` の直近フレームから図を作る実装は、利用者が一度も「この瞬間を
+    対称化して見る」を押していないセッションでも顔写真をファイルへ入れる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "build_camera_report(" in source
+    assert "SYMMETRIZATION_STATE_KEY" in source
+    assert "isinstance(view, SymmetrizationView)" in source
+    assert "trend_series(" in source

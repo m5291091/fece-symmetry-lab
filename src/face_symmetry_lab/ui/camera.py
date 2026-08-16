@@ -49,10 +49,10 @@ from face_symmetry_lab.application.realtime import (
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
-from face_symmetry_lab.application.symmetrization import symmetrize_frame
+from face_symmetry_lab.application.symmetrization import SymmetrizationView, symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.metrics import MetricConfigError
-from face_symmetry_lab.domain.session_summary import summarize_session
+from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
 from face_symmetry_lab.ui.export_panel import render_export_panel
@@ -74,6 +74,8 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_status,
 )
 from face_symmetry_lab.ui.readings import display_signature
+from face_symmetry_lab.ui.report import build_camera_report
+from face_symmetry_lab.ui.report_figures import build_report_figures
 from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
@@ -452,7 +454,26 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     ——最大 3,000 行の要約を毎秒 5 回計算する必要はない。
     """
     bundle = pipeline.export_bundle()
-    render_session_summary(summarize_session(bundle.records if bundle is not None else ()))
+    records = bundle.records if bundle is not None else ()
+    summary = summarize_session(records)
+    render_session_summary(summary)
+
+    def _report(include_figures: bool) -> str:
+        # FR-042 §9.6.1: 図は、利用者が「この瞬間を対称化して見る」で**明示的に
+        # 取り込んだ**ビューがあるときだけ。取り込んでいないライブ映像のフレームを
+        # 勝手に埋めるのは、明示操作による保存という限定解除の範囲を外れる
+        # （ADR-0009）。取り込みに失敗したときの値は文字列なので型で弾く。
+        view = st.session_state.get(SYMMETRIZATION_STATE_KEY)
+        return build_camera_report(
+            summary=summary,
+            bundle=bundle,
+            figures=build_report_figures(
+                include_figures=include_figures,
+                view=view if isinstance(view, SymmetrizationView) else None,
+            ),
+            series=trend_series(records),
+        )
+
     render_export_panel(
         bundle,
         heading="セッションデータのエクスポート",
@@ -471,6 +492,8 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
             "まだ書き出せる記録がありません。"
             "カメラを開始し、品質ゲートを満たすフレームが得られると記録が貯まります。"
         ),
+        report_builder=_report,
+        report_mode="session",
     )
 
 
