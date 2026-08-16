@@ -188,10 +188,9 @@ ABOUT_FOOTER_SUMMARY: Final[str] = (
     "数値履歴は再現性メタデータ付きの CSV / JSON として保存できます。"
 )
 
-ABOUT_FOOTER_NOTICE: Final[str] = (
-    "左右差は両眼の間隔に対する対応点のずれとして表示します（0〜100 のスコアではありません）。"
-    "数値は、同一人物・同一環境での相対変化だけを参照してください。"
-)
+#: §5.3.1: フッターは 1 行。算出方法・誤差要因・禁止用途は About が持ち、下の
+#: `st.page_link` がそこへの導線になる。
+ABOUT_FOOTER_NOTICE: Final[str] = "数値は同一人物・同一環境での相対変化だけを参照してください。"
 
 
 def _render_about_footer() -> None:
@@ -210,7 +209,7 @@ def _render_about_footer() -> None:
     for column, (label, value) in zip(st.columns(len(FOOTER_FACTS)), FOOTER_FACTS, strict=True):
         column.caption(label)
         column.markdown(f"**{value}**")
-    st.info(ABOUT_FOOTER_NOTICE)
+    st.caption(ABOUT_FOOTER_NOTICE)
     about_link, reference_link = st.columns(2)
     with about_link:
         st.page_link(ABOUT_PAGE, label="対称度の算出方法・制約について詳しく見る", icon="📘")

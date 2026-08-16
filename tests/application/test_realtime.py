@@ -209,6 +209,7 @@ class RecorderSpy:
         self.error_frames: list[int] = []
         self.reset_calls = 0
         self.reset_kwargs: list[dict[str, object]] = []
+        self.age_gate_provenance: list[object] = []
         self.demographic_attachments: list[tuple[DemographicEstimate, int]] = []
         self.resize_calls: list[int] = []
         #: §14.3e (H1): HUD の折れ線グラフが読む世代識別子（`PipelineSnapshot.
@@ -218,6 +219,8 @@ class RecorderSpy:
 
     def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
         self.analysis_frames.append(frame.frame_id)
+        # §9.2: ゲートの来歴が記録経路まで届いているか（届かないフレームは None）。
+        self.age_gate_provenance.append(kwargs.get("age_gate"))
 
     def append_error(self, *, frame_id: int, **kwargs) -> None:
         self.error_frames.append(frame_id)
@@ -1810,3 +1813,77 @@ def test_closing_the_pipeline_releases_the_capture() -> None:
     pipeline.close()
 
     assert pipeline.take_capture() is None
+
+
+# --- §9.2 / FR-038: ゲート判定の記録（2026-08-16） ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (AgeGateStatus.IN_RANGE, "in_range"),
+        (AgeGateStatus.OUT_OF_RANGE, "out_of_range"),
+        (AgeGateStatus.UNDETERMINED, "undetermined"),
+    ],
+)
+def test_a_judged_frame_carries_its_decision_and_version(status, expected: str) -> None:
+    """§9.2: 「ゲートで弾かれた」のか「モデル未配置」なのかを行から区別できる。"""
+    from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService
+    from face_symmetry_lab.application.session import age_gate_provenance
+
+    service = AgeGateService(
+        None,
+        threshold=0.2,
+        spec_version="age-gate/1.0.0",
+        spec_revision=3,
+        model_sha256="b" * 64,
+    )
+
+    provenance = age_gate_provenance(
+        AgeGateOutcome(status=status, decision=None, reason=None), service=service
+    )
+
+    assert provenance is not None
+    assert provenance.decision.value == expected
+    assert provenance.version == "age-gate/1.0.0"
+    assert provenance.spec_revision == 3
+    assert provenance.model_sha256 == "b" * 64
+
+
+def test_a_frame_the_gate_never_judged_carries_nothing() -> None:
+    """罠: `not_evaluated` を列へ書く実装は、呼んでいない判定に名前を与える。"""
+    from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService
+    from face_symmetry_lab.application.session import age_gate_provenance
+
+    service = AgeGateService(None, threshold=0.2, spec_version="age-gate/1.0.0")
+    outcome = AgeGateOutcome(status=AgeGateStatus.NOT_EVALUATED, decision=None, reason=None)
+
+    assert age_gate_provenance(outcome, service=service) is None
+    assert age_gate_provenance(outcome, service=None) is None
+    assert age_gate_provenance(None, service=service) is None
+
+
+def test_the_gate_provenance_reaches_the_recorder() -> None:
+    """配線の検証。姿勢を返さない landmarker ではゲートが呼ばれず `None` が届く。"""
+    from face_symmetry_lab.application.age_gate import AgeGateService
+
+    recorder = RecorderSpy()
+    pipeline = _pipeline(
+        FakeLandmarker(face_count=1),
+        analyzer=StubAnalyzer(),
+        recorder=recorder,
+        age_gate=AgeGateService(None, threshold=0.2, spec_version="age-gate/1.0.0"),
+    )
+
+    pipeline.process(_rgb())
+
+    assert recorder.age_gate_provenance == [None]
+
+
+def test_a_pipeline_without_a_gate_records_nothing() -> None:
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=StubAnalyzer(), recorder=recorder)
+
+    pipeline.process(_rgb())
+
+    assert recorder.age_gate_provenance == [None]

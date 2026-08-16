@@ -42,7 +42,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 自動調整の判断ロジック | `src/face_symmetry_lab/application/auto_tune_controller.py` |
 | Realtime age/gender worker | `src/face_symmetry_lab/application/demographic_worker.py` |
 | Session history / export records | `src/face_symmetry_lab/application/session.py` |
-| CSV / JSON export adapter | `src/face_symmetry_lab/adapters/export/session_exporter.py` |
 | Still-image landmarks | `src/face_symmetry_lab/application/still_image.py` |
 | Runtime ports | `src/face_symmetry_lab/application/ports.py` |
 | Pinned model manifest | `configs/model-manifest.json` |
@@ -131,7 +130,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | MediaPipe segmentation adapter | `adapters/inference/mediapipe_segmenter.py` | `tests/adapters/test_mediapipe_segmenter.py` | FR-027, AC-DISPLAY-01 |
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
-| CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
 | 詳細結果の描画と §5.3 の文言 | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3, §8.6.3 |
 | 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
 | Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
@@ -169,7 +167,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `3498d68aa2483d6b1666e7b28fb34e9b7d456ad24e39f37b9e6780bad8855e8e`_
+_File-list SHA-256: `39aa549841fcf6d611170312a5988adcd84782b4dcbbf1933a7f1f23fa3692a4`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -247,7 +245,7 @@ face-symmetry-lab/
   - `face_symmetry_lab/`
     - `adapters/`
       - `export/`
-        - … (2 files)
+        - … (1 files)
       - `imaging/`
         - … (3 files)
       - `inference/`
@@ -277,7 +275,6 @@ face-symmetry-lab/
     - `test_piecewise_warp.py`
     - `test_reference_dataset.py`
     - `test_runtime_errors.py`
-    - `test_session_exporter.py`
     - `test_tracking_zoom_landmarker.py`
   - `application/`
     - `__init__.py`

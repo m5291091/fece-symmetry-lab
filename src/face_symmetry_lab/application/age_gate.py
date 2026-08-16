@@ -77,10 +77,29 @@ class AgeGateService:
         *,
         threshold: float,
         spec_version: str,
+        spec_revision: int | None = None,
+        model_sha256: str | None = None,
     ) -> None:
         self._classifier = classifier
         self._threshold = threshold
         self._spec_version = spec_version
+        #: §9.2: 記録へ残す来歴。**閾値そのものは列に持たない**——この版から
+        #: `configs/age-gate-v1.json` を引ける（§10.11-8）。classifier が無い
+        #: フォールバックでは `None` のままで、記録側も `None` になる。
+        self._spec_revision = spec_revision
+        self._model_sha256 = model_sha256
+
+    @property
+    def spec_version(self) -> str:
+        return self._spec_version
+
+    @property
+    def spec_revision(self) -> int | None:
+        return self._spec_revision
+
+    @property
+    def model_sha256(self) -> str | None:
+        return self._model_sha256
 
     def evaluate(
         self,

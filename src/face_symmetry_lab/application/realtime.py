@@ -25,7 +25,10 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
-from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService
+from face_symmetry_lab.application.age_gate import (
+    AgeGateOutcome,
+    AgeGateService,
+)
 from face_symmetry_lab.application.age_gate import (
     evaluate_age_gate_for_frame as _evaluate_age_gate_for_frame,
 )
@@ -49,7 +52,11 @@ from face_symmetry_lab.application.ports import (
 )
 from face_symmetry_lab.application.preview_compositor import PreviewCompositor
 from face_symmetry_lab.application.quality import QualityThresholds
-from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.application.session import (
+    AgeGateProvenance,
+    SessionRecorder,
+    age_gate_provenance,
+)
 from face_symmetry_lab.domain.auto_tuning import (
     recommend_age_interval_ms,
     recommend_history_capacity,
@@ -344,6 +351,7 @@ class RealtimeLandmarkPipeline:
             demographic_sample,
             elapsed_ms=timestamp_ms,
             processing_ms=processing_ms,
+            age_gate=age_gate_provenance(age_gate_outcome, service=self._age_gate),
         )
 
         self._apply_cadence_tuning(
@@ -384,6 +392,7 @@ class RealtimeLandmarkPipeline:
         *,
         elapsed_ms: int,
         processing_ms: float,
+        age_gate: AgeGateProvenance | None = None,
     ) -> None:
         """エクスポート用の履歴へ 1 フレーム分を書く。
 
@@ -404,6 +413,7 @@ class RealtimeLandmarkPipeline:
                 analysis,
                 elapsed_ms=elapsed_ms,
                 processing_ms=processing_ms,
+                age_gate=age_gate,
             )
             if demographic_sample is not None:
                 estimate, observed_elapsed_ms = demographic_sample

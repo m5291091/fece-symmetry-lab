@@ -53,18 +53,24 @@ _MULTISELECT_PLACEHOLDER: Final[str] = "すべて（絞り込まない）"
 #: AC-REFERENCE-01: 未選択の軸は絞り込みに使われず全件が対象になる。**その挙動を
 #: 画面へ書く。** 書かないと、既定表示の件数が「全件」なのか「たまたま何かで
 #: 絞られた数」なのかを読み取る手掛かりが画面上に無い。
-_FILTER_SCOPE_CAPTION: Final[str] = (
-    "未選択の軸は絞り込みに使いません（その軸は全件が対象になります）。"
-    "軸をまたぐ条件は同時に満たすものだけが残り、同じ軸の複数選択はそのいずれかに一致するものが残ります。"
+#: §5.3.1: 常時表示は 1 行。絞り込みの規則（軸をまたぐと積、同じ軸は和）は
+#: `help` へ移した——絞り込みを触っている人だけが必要とする情報である。
+_FILTER_SCOPE_CAPTION: Final[str] = "未選択の軸は絞り込みに使いません（全件が対象になります）。"
+
+_FILTER_SCOPE_HELP: Final[str] = (
+    "軸をまたぐ条件は同時に満たすものだけが残り、"
+    "同じ軸の複数選択はそのいずれかに一致するものが残ります。"
 )
 
 #: §8.6.7: 「点」は実測が集まる範囲へ合わせて引き伸ばした目盛りである。Analyze 側
 #: （`ui.scores.SCORE_SCALE_CAPTION`）にだけ開示を置くと、同じ「点」を 2 つの画面で
 #: 違う扱いにしてしまう。**§10.7 が禁じる語（順位・パーセンタイル・偏差値）を
 #: 使わずに、母集団の中の位置を表さないことを述べる。**
-_SCORE_SCALE_CAPTION: Final[str] = (
+_SCORE_SCALE_CAPTION: Final[str] = "点は引き伸ばした目盛りで、母集団の中の位置を表しません。"
+
+_SCORE_SCALE_HELP: Final[str] = (
     "点は、実測が集まる範囲（ずれ 1.0〜5.0%）へ合わせて引き伸ばした目盛りで読んだ値です。"
-    "引き伸ばした分だけばらつきも拡大します。母集団の中の位置を表す値ではありません。"
+    "引き伸ばした分だけばらつきも拡大します。"
 )
 
 #: §9.5 の 7 指標のうち、部位別・全体の平均対称度（%）として並べる 5 つ。
@@ -85,7 +91,7 @@ def _default_browser() -> ReferenceBrowser:
 def _render_filters() -> ReferenceFilter:
     """人種・性別・年齢の 3 軸。既定は未選択（= 絞り込まない、全件が対象）。"""
     st.subheader("絞り込み")
-    st.caption(_FILTER_SCOPE_CAPTION)
+    st.caption(_FILTER_SCOPE_CAPTION, help=_FILTER_SCOPE_HELP)
     race_column, gender_column = st.columns(2)
     selected_races = race_column.multiselect(
         "人種",
@@ -164,7 +170,7 @@ def _render_results(result: ReferenceQueryResult, *, min_group_for_ci: int) -> N
             "標準偏差（点）",
             "—" if score_summary.sd is None else f"{score_summary.sd:.2f}",
         )
-        st.caption(_SCORE_SCALE_CAPTION)
+        st.caption(_SCORE_SCALE_CAPTION, help=_SCORE_SCALE_HELP)
 
         st.caption("部位別・全体の平均対称度（%）")
         # **5 つを `st.metric` へ分けない。** `st.metric` の値は 36px・
@@ -208,7 +214,7 @@ def _render_disclosures(metadata: ReferenceDatasetMetadata) -> None:
         f"- {metadata.dataset_name} は非商用研究限定のデータセットです"
         f"（{metadata.license_scope} · {metadata.dataset_url}）。"
     )
-    st.caption("データセット配布元の注意書き（原文のまま）")
+    st.caption("配布元の注意書き（原文）")
     st.text(metadata.warning)
 
 
@@ -226,20 +232,20 @@ def _render_version_info(metadata: ReferenceDatasetMetadata) -> None:
 def render_reference_page(browser: ReferenceBrowser | None = None) -> None:
     """参照統計ページ（FR-037）。`browser` は test 用の差し替え口。"""
     st.title("参照統計ブラウザ（UTKFace）")
-    st.caption("EXPLORATORY DESCRIPTIVE STATISTICS · NON-COMMERCIAL RESEARCH USE")
-    st.info(
-        "この画面は、事前に集計した参照データセットの探索的な記述統計を表示します。"
-        "正常値・目標値・個人評価・人物間比較には使用できません。"
-        "この画面にはカメラ・画像の分析結果を表示しません。"
+    # §5.3.1: 見出し直下は 1 行。3 文あった `st.info` を畳み、残りは `help` へ。
+    st.caption(
+        "探索的な記述統計です。正常値・目標値・個人評価・人物間比較には使えません。",
+        help=(
+            "事前に集計した参照データセット（UTKFace、非商用研究限定）を表示します。"
+            "この画面にはカメラ・画像の分析結果を表示しません。"
+        ),
     )
 
     resolved = browser if browser is not None else _default_browser()
 
     if not resolved.is_available:
         st.warning(
-            "参照データを読み込めないため、この画面は利用できません"
-            f"（{resolved.unavailable_reason}）。"
-            "カメラ・画像の左右差分析、参考年齢・参考性別、エクスポートには影響しません。"
+            f"参照データを読み込めないため、この画面は利用できません（{resolved.unavailable_reason}）。"
         )
         return
 

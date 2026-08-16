@@ -132,26 +132,22 @@ def test_the_detail_panel_states_the_deviation_beside_the_symmetry() -> None:
     assert "対称度との和は 100%" in captions
 
 
-def test_the_detail_panel_carries_the_score_help_that_the_headline_used_to_hold() -> None:
-    """§8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は必ず画面に出す。
+def test_the_score_help_is_reachable_from_the_walkthrough() -> None:
+    """§8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は残す。
 
-    見出し結果の削除（2026-08-12）で `help=` の置き場が無くなったため、計算過程の
-    節がこの説明の唯一の受け皿になる。罠: 見出しと一緒に説明ごと消した実装は、
-    引き伸ばした点数だけが何の断りもなく残ってここで落ちる。
+    §5.3.1（2026-08-16）で常時表示からは外したが、**内容は削らず** step 3 の
+    `help` へまとめた。罠: 定数ごと消した実装は、引き伸ばした点数だけが何の
+    断りもなく残る。
     """
-    at = _render_details(
-        body=(
-            "outcome = _outcome_for_display(\n"
-            "    symmetry_3d=_symmetry_3d_result(\n"
-            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-            "    ),\n"
-            "    smooth_3d=0.018,\n"
-            ")\n"
-            "render_score_details(outcome, show_smoothed=False)\n"
-        )
-    )
+    import inspect
 
-    assert PART_EQUAL_WEIGHT_HELP in [element.value for element in at.caption]
+    from face_symmetry_lab.ui import scores
+
+    source = inspect.getsource(scores._render_score_calculation_detail)
+
+    assert "PART_EQUAL_WEIGHT_HELP" in source
+    assert "help=" in source
+    assert "採点" in PART_EQUAL_WEIGHT_HELP
 
 
 def test_the_part_equal_weight_headline_label_uses_the_user_specified_wording() -> None:
@@ -621,34 +617,24 @@ def test_the_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:
     assert "当てはめられません" in notices
 
 
-def test_the_walkthrough_keeps_the_caveats_after_the_steps_rather_than_inside_them() -> None:
+def test_the_walkthrough_keeps_its_one_caveat_after_the_steps() -> None:
     """H4: 手順と、手順の読み方に対する留保は別のものである。
 
-    4 つの注記（重みの違い・目盛りを広げた理由・実測レンジ・help）は 3 つの
-    ステップがすべて終わったあとに置く。罠: ステップの間へ挟む実装は、手順を
-    追っている途中で読者を注意書きへ迷い込ませる。
+    §5.3.1（2026-08-16）で 5 本あった注記を 1 本へ畳んだが、置く位置は変えない
+    ——3 つのステップがすべて終わったあとである。罠: ステップの間へ挟む実装は、
+    手順を追っている途中で読者を注意書きへ迷い込ませる。
     """
-    from face_symmetry_lab.ui.scores import (
-        SCORE_CALCULATION_HIGH_VALUE_NOTE,
-        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
-        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
-    )
+    from face_symmetry_lab.ui.scores import SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION
 
     at = _render_details(body=_STEP_SAMPLE)
 
     captions = [element.value for element in at.caption]
-    markdown = [element.value for element in at.markdown]
     last_step_caption_index = captions.index(
         next(caption for caption in captions if "1ポイント" in caption)
     )
-    for note in (
-        PART_EQUAL_WEIGHT_HELP,
-        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
-        SCORE_CALCULATION_HIGH_VALUE_NOTE,
-        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
-    ):
-        assert captions.index(note) > last_step_caption_index
-    assert f"**{SCORE_STEP_TITLES[2]}**" in markdown
+
+    assert captions.index(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION) > last_step_caption_index
+    assert f"**{SCORE_STEP_TITLES[2]}**" in [element.value for element in at.markdown]
 
 
 def test_the_walkthrough_uses_no_progress_bar_or_gauge() -> None:

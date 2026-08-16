@@ -214,4 +214,12 @@ def build_age_gate_service() -> AgeGateService:
         classifier = OnnxAgeGateClassifier(spec=spec)
     except ValueError:
         classifier = None
-    return AgeGateService(classifier, threshold=spec.threshold, spec_version=spec.gate_version)
+    return AgeGateService(
+        classifier,
+        threshold=spec.threshold,
+        spec_version=spec.gate_version,
+        # §9.2: 記録へ残す来歴。classifier の生成に失敗しても spec は読めている
+        # ので、どの版で判定を試みたかは残せる。
+        spec_revision=spec.spec_revision,
+        model_sha256=spec.onnx_sha256,
+    )

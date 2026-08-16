@@ -6,6 +6,7 @@ import json
 import threading
 from collections import deque
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from typing import cast
@@ -13,9 +14,11 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService, AgeGateStatus
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.quality import QualityThresholds
 from face_symmetry_lab.domain.export import (
+    AgeGateDecisionLabel,
     ConfigRevision,
     ExportManifest,
     ExportRecord,
@@ -85,6 +88,58 @@ def config_fingerprint(settings: Mapping[str, object]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return sha256(canonical).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class AgeGateProvenance:
+    """§9.2/FR-038: 1 フレーム分のゲート判定と、その動作点の版。
+
+    **生の確率は持たない。** 記録すると凍結閾値以外での再判定・順位付け・
+    「どれだけ若く見えるか」という読み替えを可能にしてしまう（§9.2）。判定・版・
+    凍結閾値の 3 つから当時の挙動は一意に辿れる。
+
+    ゲートを呼ばなかったフレーム（顔なし・姿勢ゲート閉）ではこの DTO 自体を作らず、
+    記録側は 4 列とも `None` になる——呼んでいない判定に名前を与えると、行を読む側が
+    「ゲートが何かを決めた」と受け取る。
+    """
+
+    decision: AgeGateDecisionLabel
+    version: str
+    spec_revision: int | None
+    model_sha256: str | None
+
+
+#: §9.2: `AgeGateStatus` から記録用のラベルへの対応。**`NOT_EVALUATED` を持たない**
+#: ——呼ばなかったフレームは列ごと `None` になる。
+_AGE_GATE_LABELS: dict[AgeGateStatus, AgeGateDecisionLabel] = {
+    AgeGateStatus.IN_RANGE: AgeGateDecisionLabel.IN_RANGE,
+    AgeGateStatus.OUT_OF_RANGE: AgeGateDecisionLabel.OUT_OF_RANGE,
+    AgeGateStatus.UNDETERMINED: AgeGateDecisionLabel.UNDETERMINED,
+}
+
+
+def age_gate_provenance(
+    outcome: AgeGateOutcome | None,
+    *,
+    service: AgeGateService | None,
+) -> AgeGateProvenance | None:
+    """§9.2/FR-038: ゲートを**呼んだ**フレームだけ、判定と版を記録用に作る。
+
+    `NOT_EVALUATED`（顔なし・姿勢ゲート閉で呼ばなかった）とゲート未接続は `None`
+    を返す——呼んでいない判定に名前を与えると、行を読む側が「ゲートが何かを決めた」
+    と受け取る。生の確率は持ち出さない（§9.2）。
+    """
+    if outcome is None or service is None:
+        return None
+    label = _AGE_GATE_LABELS.get(outcome.status)
+    if label is None:
+        return None
+    return AgeGateProvenance(
+        decision=label,
+        version=service.spec_version,
+        spec_revision=service.spec_revision,
+        model_sha256=service.model_sha256,
+    )
 
 
 class SessionRecorder:
@@ -159,6 +214,7 @@ class SessionRecorder:
         pipeline_latency_ms: float | None = None,
         input_mode: InputMode = InputMode.CAMERA,
         captured_at: datetime | None = None,
+        age_gate: AgeGateProvenance | None = None,
     ) -> ExportRecord:
         symmetry = outcome.symmetry
         symmetry_3d = outcome.symmetry_3d
@@ -183,6 +239,12 @@ class SessionRecorder:
                 pitch_deg=pose.pitch_deg if pose is not None else None,
                 roll_deg=pose.roll_deg if pose is not None else None,
                 face_area_ratio=outcome.face_area_ratio,
+                # §9.2/FR-038: 判定と版だけを残す（生の確率は残さない）。ゲートを
+                # 呼ばなかったフレームは 4 列とも `None` になる。
+                age_gate_decision=age_gate.decision if age_gate is not None else None,
+                age_gate_version=age_gate.version if age_gate is not None else None,
+                age_gate_spec_revision=age_gate.spec_revision if age_gate is not None else None,
+                age_gate_model_sha256=age_gate.model_sha256 if age_gate is not None else None,
                 # symmetry-2d/2.0.0: 画面から外れた診断列（§8.6.6, §9.2）。
                 distance_contour_raw=symmetry.distance("contour") if symmetry is not None else None,
                 distance_eyes_raw=symmetry.distance("eyes") if symmetry is not None else None,

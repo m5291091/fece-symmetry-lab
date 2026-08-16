@@ -392,16 +392,25 @@ def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
             else _step_scale_block(explanation),
             language="text",
         )
-        st.caption(SCORE_CALCULATION_SLOPE_NOTE)
+        st.caption(
+            SCORE_CALCULATION_SLOPE_NOTE,
+            # §5.3.1（2026-08-16）: ここには 5 本の caption が並んでいた。手順を
+            # 読み終えた直後に注記の壁が続くと、手順そのものまで読まれなくなる。
+            # 「採点ではない」「順位ではない」「アンカー 2 点」は §8.6.3 の要求
+            # なので**内容は削らず**、`help` へまとめて移した。
+            help="\n\n".join(
+                (
+                    PART_EQUAL_WEIGHT_HELP,
+                    SCORE_CALCULATION_HIGH_VALUE_NOTE,
+                    SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
+                )
+            ),
+        )
 
         st.divider()
-        # §8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は help・説明文
-        # として必ず出す。見出し結果の削除（2026-08-12）で `help=` の置き場が
-        # 無くなったため、ここが唯一の受け皿になる。
-        st.caption(PART_EQUAL_WEIGHT_HELP)
+        # 2 つの総合量が一致しない理由だけは常時出す。数字が 2 つ並んでいる場所で
+        # 「なぜ違うのか」が読めないと、どちらかが誤りだと受け取られる。
         st.caption(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION)
-        st.caption(SCORE_CALCULATION_HIGH_VALUE_NOTE)
-        st.caption(SCORE_CALCULATION_MEASURED_RANGE_CAPTION)
 
 
 # --- 状態と姿勢 ---------------------------------------------------------------

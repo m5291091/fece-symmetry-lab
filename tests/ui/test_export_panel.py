@@ -1,8 +1,9 @@
-"""FR-017 / FR-020: Camera と Image が共有する CSV / JSON パネル（`ui.export_panel`）。
+"""FR-042 / FR-020: Camera と Image が共有するダウンロードパネル（`ui.export_panel`）。
 
 このパネルの契約は 2 つある。**記録があるときだけ download button を出す**
-（FR-017）ことと、そのとき版と config fingerprint を必ず添える（FR-020）ことで
-ある。
+（FR-042 が FR-017 から引き継いだ条件）ことと、そのとき版と config fingerprint を
+必ず添える（FR-020）ことである。書き出せるのは HTML レポート 1 種類だけで、
+CSV / JSON は 2026-08-16 に撤回した。
 
 `empty_notice` は前者を緩めるものではない。記録が無いときに **download button の
 代わりに** 一行の説明を出すだけの引数である。これが無かった間、Camera の
@@ -93,16 +94,16 @@ def _all_text(at: AppTest) -> str:
     return " ".join(parts)
 
 
-def test_a_recorded_session_offers_csv_and_json_with_its_provenance() -> None:
-    """FR-017 / FR-020: 版と config fingerprint を添えて 2 つだけ出す。"""
+def test_a_recorded_session_without_a_report_builder_offers_nothing() -> None:
+    """2026-08-16: CSV / JSON を撤回したので、builder が無ければ出すものが無い。
+
+    罠: 見出しだけを描く実装は、押せるものが 1 つも無い節をページへ残す。
+    """
     at = _run("recorded_bundle")
 
     assert not at.exception
-    labels = [element.label for element in at.download_button]
-    assert labels == ["CSV を保存", "JSON を保存"]
-    text = _all_text(at)
-    assert "セッションデータのエクスポート" in text
-    assert "symmetry-3d/test" in text, "FR-020: 指標の版を添える"
+    assert at.download_button == []
+    assert "セッションデータのエクスポート" not in _all_text(at)
 
 
 def test_the_notice_never_replaces_a_real_export() -> None:
@@ -179,27 +180,25 @@ def _run_report(*, uncheck: bool = False) -> AppTest:
     return at
 
 
-def test_a_report_builder_adds_a_third_button_without_removing_the_ledger() -> None:
-    """FR-042: CSV / JSON は据え置き、レポートが 3 つ目として増える。"""
+def test_the_report_is_the_only_thing_written_out() -> None:
+    """2026-08-16: 書き出せる成果物は HTML レポート 1 種類だけである。"""
     at = _run_report()
 
     assert not at.exception
     labels = [element.label for element in at.download_button]
-    assert "CSV を保存" in labels
-    assert "JSON を保存" in labels
-    assert len(labels) == 3
+    assert labels == ["レポート（HTML）を保存"]
+    text = _all_text(at)
+    assert "セッションデータのエクスポート" in text
+    assert "symmetry-3d/test" in text, "FR-020: 指標の版を添える"
 
 
 def test_the_report_button_writes_an_html_file() -> None:
     at = _run_report()
 
-    report = next(
-        element
-        for element in at.download_button
-        if element.label not in ("CSV を保存", "JSON を保存")
-    )
+    report = at.download_button[0]
+
     assert report.label.endswith("を保存")
-    assert "HTML" in report.label or "レポート" in report.label
+    assert "HTML" in report.label
 
 
 def test_the_figure_toggle_defaults_to_on() -> None:

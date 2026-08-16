@@ -1,13 +1,12 @@
-"""両方の入力モードが共有するダウンロードパネル（FR-017 / FR-042, §9）。
+"""両方の入力モードが共有するダウンロードパネル（FR-042, §9.6）。
 
 Camera と Image で異なるのは文言と widget のキー、そしてレポートの中身だけで
-ある。再現性の注記とダウンロードボタンはどちらでも同じ契約なので、2 箇所へ
-分かれて食い違わないよう、ここにまとめて置く。
+ある。提示条件（記録が 1 件以上あるときだけ出す）はどちらでも同じ契約なので、
+2 箇所へ分かれて食い違わないよう、ここにまとめて置く。
 
-FR-042 で 3 つ目のボタン（人が読む HTML レポート）が加わった。**CSV / JSON は
-1 列も変えていない**——台帳と読み物は目的が違うので併存させる（ADR-0009 (b)）。
-レポートの中身は入力モードごとに違うため、この module は組み立てを知らず、
-呼び出し側が渡す builder を呼ぶだけである。
+**書き出せるのは HTML レポート 1 種類だけである**（2026-08-16 に FR-017 の
+CSV / JSON を撤回した）。レポートの中身は入力モードごとに違うため、この module は
+組み立てを知らず、呼び出し側が渡す builder を呼ぶだけである。
 """
 
 from __future__ import annotations
@@ -16,11 +15,6 @@ from collections.abc import Callable
 
 import streamlit as st
 
-from face_symmetry_lab.adapters.export.session_exporter import (
-    csv_bytes,
-    export_filename,
-    json_bytes,
-)
 from face_symmetry_lab.domain.export import SessionExport
 from face_symmetry_lab.ui.report import REPORT_SHARING_NOTE, report_filename
 
@@ -48,9 +42,9 @@ def render_export_panel(
 ) -> None:
     """エクスポート節を描画する。データが無いときは download button を出さない。
 
-    FR-017 は結果が 1 件以上あるときにのみエクスポートを提示する。そのため空の
-    （あるいは存在しない）bundle では見出しもボタンも描かない。利用者が操作
-    できない節をページに出さないためである。
+    FR-042 は結果が 1 件以上あるときにのみエクスポートを提示する（FR-017 から
+    引き継いだ条件）。そのため空の（あるいは存在しない）bundle では見出しも
+    ボタンも描かない。利用者が操作できない節をページに出さないためである。
 
     ``empty_notice`` はその提示条件を緩めない。**ボタンの代わりに一行の説明を
     置くだけである。** これが無かった間、Camera の「エクスポート」タブは開始
@@ -62,41 +56,25 @@ def render_export_panel(
         if empty_notice:
             st.info(empty_notice)
         return
+    if report_builder is None:
+        return
 
     st.divider()
     st.subheader(heading)
-    st.warning(warning)
-    # FR-020: 指標の版と config fingerprint が、これらの数値が生成された条件を
-    # 正確に特定する。
+    if warning:
+        st.caption(warning)
+    # FR-020: 指標の版と config fingerprint が、この数値が生成された条件を特定する。
     revision = bundle.manifest.config_revisions[-1]
     count = f"{len(bundle.records)} 件 · " if show_record_count else ""
     st.caption(
         f"{count}metric {bundle.manifest.metric_version} · config {revision.fingerprint[:12]}…"
     )
-
-    if report_builder is not None:
-        _render_report_download(
-            bundle,
-            builder=report_builder,
-            key_prefix=key_prefix,
-            mode=report_mode,
-            has_figures=report_has_figures,
-        )
-
-    csv_column, json_column = st.columns(2)
-    csv_column.download_button(
-        "CSV を保存",
-        data=csv_bytes(bundle),
-        file_name=export_filename(bundle, "csv"),
-        mime="text/csv",
-        key=f"{key_prefix}_csv",
-    )
-    json_column.download_button(
-        "JSON を保存",
-        data=json_bytes(bundle),
-        file_name=export_filename(bundle, "json"),
-        mime="application/json",
-        key=f"{key_prefix}_json",
+    _render_report_download(
+        bundle,
+        builder=report_builder,
+        key_prefix=key_prefix,
+        mode=report_mode,
+        has_figures=report_has_figures,
     )
 
 
@@ -108,7 +86,7 @@ def _render_report_download(
     mode: str,
     has_figures: bool,
 ) -> None:
-    """FR-042: 人が読む HTML レポート。
+    """FR-042: 人が読む HTML レポート。**書き出せる唯一の成果物である。**
 
     ``has_figures`` が偽のモード（Camera）では、切り替えも注意も出さない。
     そのレポートは顔写真を持たないので、選ぶものも警告する対象も無い
