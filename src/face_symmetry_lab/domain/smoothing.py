@@ -15,17 +15,35 @@ from math import exp, isfinite, log
 DEFAULT_MAX_GAP_SECONDS: float = 2.0
 DEFAULT_TAU_SECONDS: float = 0.4
 
-#: §15.2 が定める `ema_tau_seconds` の値域。FR-040 で利用者が選べるようになった
-#: 今も、値域そのものは変わっていない。
+#: §15.2 が定める `ema_tau_seconds` の値域。上限は FR-040 の依頼（2026-08-16、
+#: 「読んでいる最中に数値が動かないようにしたい」）で 5.0 から 30.0 へ広げた。
 MIN_TAU_SECONDS: float = 0.05
-MAX_TAU_SECONDS: float = 5.0
+MAX_TAU_SECONDS: float = 30.0
 
 #: FR-040: 画面に出す離散の段。連続スライダーにしない理由は ADR-0007 (c) にある
 #: ——`tau` の効き方は対数的で、0.40 と 0.45 の差は画面上で判別できない。段に
 #: すれば、選び直すたびに見た目が実際に変わる。既定（`DEFAULT_TAU_SECONDS`）は
 #: この中に含まれていなければならない。含まれないと、起動直後の選択が「段の
 #: どれでもない」状態になる。
-TAU_CHOICES_SECONDS: tuple[float, ...] = (0.1, 0.2, 0.4, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0)
+#:
+#: 上限が 30 秒まであるのは、この設定の目的が「読んでいる最中に数値が動かない
+#: こと」だからである（2026-08-16 の依頼）。ただし `tau` を伸ばしても平滑値は
+#: 連続に動き続ける——動く *量* が小さくなるだけで、*頻度* は下がらない。
+#: 頻度のほうは `domain.display_hold`（FR-041）が受け持つ。
+TAU_CHOICES_SECONDS: tuple[float, ...] = (
+    0.1,
+    0.2,
+    0.4,
+    0.7,
+    1.0,
+    1.5,
+    2.0,
+    3.0,
+    5.0,
+    8.0,
+    15.0,
+    30.0,
+)
 
 #: FR-040 が UI へ出す 2 つの追従割合。`RESPONSE_FRACTION_63` は
 #: `1 - e⁻¹`（≒0.632）で、`response_time_seconds` へ渡すとちょうど `tau` を返す

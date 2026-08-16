@@ -13,9 +13,10 @@ from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.auto_tune_controller import (
     CADENCE_RETUNE_INTERVAL_SECONDS,
 )
-from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
+from face_symmetry_lab.application.realtime import PipelineSnapshot, RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.auto_tuning import recommend_age_interval_ms
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
+from face_symmetry_lab.domain.display_hold import DisplayHoldError
 from face_symmetry_lab.domain.frame_adjustments import (
     MAX_BRIGHTNESS_GAIN,
     BackgroundMode,
@@ -843,7 +844,7 @@ def test_setting_the_smoothing_time_leaves_zoom_cadence_and_demographics_alone()
     assert pipeline.analysis_interval_ms == interval_before
 
 
-@pytest.mark.parametrize("bad", [0.0, 5.5, float("nan")])
+@pytest.mark.parametrize("bad", [0.0, 30.5, float("nan")])
 def test_an_out_of_range_smoothing_time_is_refused_before_anything_changes(bad: float) -> None:
     """罠: clamp する実装は、範囲外の指定を黙って別の設定へ読み替える。"""
     analyzer = StubAnalyzer()
@@ -862,6 +863,129 @@ def test_a_pipeline_without_an_analyzer_reports_no_smoothing_time() -> None:
 
     assert pipeline.smoothing_tau_seconds is None
     assert pipeline.set_smoothing_tau_seconds(1.0) is False
+
+
+# --- FR-041: 表示の更新間隔 ---------------------------------------------------
+
+
+def _snapshot_with(analysis: object) -> PipelineSnapshot:
+    return PipelineSnapshot(analysis=analysis)  # type: ignore[arg-type]
+
+
+def _held_pipeline(clock: ManualClock, **kwargs: object) -> RealtimeLandmarkPipeline:
+    """手動時計で駆動する pipeline。`_pipeline` は自前の `StepClock` を固定する。"""
+    return RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(),
+        clock=clock,
+        analysis_interval_ms=0,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_the_display_hold_defaults_to_passing_everything_through() -> None:
+    """既定 0 秒。この機能を知らない利用者の画面は 1 ミリ秒も変わらない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    first, second = object(), object()
+
+    assert pipeline.display_hold_seconds == pytest.approx(0.0)
+    assert pipeline.hold_for_display(_snapshot_with(first), key=1).analysis is first
+    clock.advance(0.001)
+    assert pipeline.hold_for_display(_snapshot_with(second), key=1).analysis is second
+
+
+def test_a_held_display_keeps_showing_the_same_analysis() -> None:
+    """FR-041: 保持区間の内側では、画面に出る解析結果が入れ替わらない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    pipeline.set_display_hold_seconds(2.0)
+    first, second = object(), object()
+
+    pipeline.hold_for_display(_snapshot_with(first), key=1)
+    clock.advance(1.0)
+    held = pipeline.hold_for_display(_snapshot_with(second), key=1)
+    clock.advance(1.5)
+    fresh = pipeline.hold_for_display(_snapshot_with(second), key=1)
+
+    assert held.analysis is first
+    assert fresh.analysis is second
+
+
+def test_a_missing_measurement_breaks_the_hold_at_once() -> None:
+    """AC-HOLD-02: 顔を見失った瞬間に古い数値が画面へ残ってはならない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    pipeline.set_display_hold_seconds(5.0)
+    measuring = object()
+
+    pipeline.hold_for_display(_snapshot_with(measuring), key=("OK", True))
+    clock.advance(0.2)
+    lost = pipeline.hold_for_display(PipelineSnapshot(), key=("NO_FACE", False))
+
+    assert lost.analysis is None
+
+
+def test_the_hold_never_touches_the_recorder_or_the_analyzer() -> None:
+    """FR-041: 保持するのは表示だけ。記録は間引かれない（AC-HOLD-01）。"""
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+    pipeline.set_display_hold_seconds(5.0)
+
+    for _ in range(4):
+        pipeline.process(_rgb())
+
+    assert len(recorder.analysis_frames) + len(recorder.error_frames) == 4
+    assert recorder.reset_calls == 0
+    assert analyzer.tau_calls == []
+
+
+def test_setting_the_same_display_hold_again_changes_nothing() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    assert pipeline.set_display_hold_seconds(1.0) is True
+    assert pipeline.set_display_hold_seconds(1.0) is False
+    assert pipeline.display_hold_seconds == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("bad", [-1.0, 9.0, float("nan")])
+def test_an_out_of_range_display_hold_is_refused(bad: float) -> None:
+    """罠: clamp する実装は、範囲外の指定を黙って別の設定へ読み替える。"""
+    pipeline = _pipeline(FakeLandmarker())
+    pipeline.set_display_hold_seconds(2.0)
+
+    with pytest.raises(DisplayHoldError):
+        pipeline.set_display_hold_seconds(bad)
+
+    assert pipeline.display_hold_seconds == pytest.approx(2.0)
+
+
+def test_resetting_the_session_drops_whatever_the_display_was_holding() -> None:
+    """§4.4: リセットは表示中の値も一緒に捨てる（AC-HOLD-02）。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    pipeline.set_display_hold_seconds(5.0)
+    first, second = object(), object()
+    pipeline.hold_for_display(_snapshot_with(first), key=1)
+
+    pipeline.reset_analysis()
+    clock.advance(0.1)
+
+    assert pipeline.hold_for_display(_snapshot_with(second), key=1).analysis is second
+
+
+def test_changing_the_smoothing_time_drops_the_held_display() -> None:
+    """新しい時定数を選んだのに、古い時定数で作った値が最大 5 秒残ってはならない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock, analyzer=StubAnalyzer())
+    pipeline.set_display_hold_seconds(5.0)
+    first, second = object(), object()
+    pipeline.hold_for_display(_snapshot_with(first), key=1)
+
+    pipeline.set_smoothing_tau_seconds(2.0)
+    clock.advance(0.1)
+
+    assert pipeline.hold_for_display(_snapshot_with(second), key=1).analysis is second
 
 
 def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> None:

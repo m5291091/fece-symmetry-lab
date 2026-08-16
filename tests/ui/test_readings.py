@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import pytest
@@ -21,8 +22,10 @@ from face_symmetry_lab.ui.readings import (
     BASELINE_CAVEAT,
     GATE_COLORS,
     baseline_note,
+    display_signature,
     format_baseline_score,
     format_baseline_symmetry,
+    format_display_hold,
     format_distance,
     format_score,
     format_smoothing_window,
@@ -354,3 +357,76 @@ def test_the_smoothing_window_is_shown_with_its_unit() -> None:
 def test_an_unknown_smoothing_window_is_blank_rather_than_missing() -> None:
     """`—` は「あるはずの測定値が欠測」の記号（不変条件 11）。設定の不在は別物。"""
     assert format_smoothing_window(None) == ""
+
+
+# --- FR-041: 表示ラッチへ渡す鍵と、更新間隔の整形 ------------------------------
+
+
+def test_the_display_signature_ignores_the_values_themselves() -> None:
+    """罠: 値を鍵に含める実装は毎フレーム鍵が変わり、保持がまったく効かない。"""
+    first = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.010, eyes=0.020, nose=0.030, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.021,
+    )
+    second = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.011, eyes=0.022, nose=0.031, mouth=0.016, overall=0.019
+        ),
+        smooth_3d=0.024,
+    )
+
+    assert display_signature(first) == display_signature(second)
+
+
+def test_the_display_signature_changes_when_a_reading_goes_missing() -> None:
+    """AC-HOLD-02: 欠測への遷移は鍵の変化として必ず現れる。"""
+    measuring = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.010, eyes=0.020, nose=0.030, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.021,
+    )
+    partial = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=None, eyes=0.020, nose=0.030, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.021,
+    )
+
+    assert display_signature(measuring) != display_signature(partial)
+
+
+def test_the_display_signature_separates_no_analysis_from_a_measured_frame() -> None:
+    measured = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.010, eyes=0.020, nose=0.030, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.021,
+    )
+
+    assert display_signature(None) != display_signature(measured)
+
+
+def test_the_display_signature_follows_the_gate_status() -> None:
+    """品質ゲートが閉じた瞬間も、値の有無と同じく保持を打ち切る手掛かりになる。"""
+    outcome = _outcome_for_display(
+        symmetry_3d=_symmetry_3d_result(
+            contour=0.010, eyes=0.020, nose=0.030, mouth=0.015, overall=0.018
+        ),
+        smooth_3d=0.021,
+    )
+    holding = dataclasses.replace(outcome, state=AnalysisState(status=Status.HOLD))
+
+    assert display_signature(outcome) != display_signature(holding)
+
+
+def test_the_display_hold_is_shown_with_its_unit() -> None:
+    assert format_display_hold(2.0) == "更新 2.0 秒ごと"
+
+
+@pytest.mark.parametrize("value", [0.0, None])
+def test_updating_every_frame_is_not_announced(value: float | None) -> None:
+    """既定の挙動を書くと HUD に常時 1 行増えるだけで、何も伝わらない。"""
+    assert format_display_hold(value) == ""

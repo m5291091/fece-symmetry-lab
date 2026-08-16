@@ -34,6 +34,7 @@ from face_symmetry_lab.ui.readings import (
     GATE_LABELS,
     GENDER_LABELS,
     PART_LABELS,
+    format_display_hold,
     format_score,
     format_smoothing_window,
     format_symmetry,
@@ -759,3 +760,35 @@ def test_render_hud_payload_leaves_the_smoothing_blank_when_it_is_unknown() -> N
     payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
     assert payload["smoothing"] == ""
     assert payload["state"] == "待機中"
+
+
+def test_the_payload_carries_the_active_display_hold() -> None:
+    """FR-041: 「更新 2.0 秒ごと」を数値の隣で読めるようにする。"""
+    payload = _payload(hold=format_display_hold(2.0))
+
+    assert payload["hold"] == "更新 2.0 秒ごと"
+
+
+def test_updating_every_frame_leaves_the_hold_chip_blank() -> None:
+    """既定の挙動を書くと HUD に常時 1 行増えるだけである。"""
+    assert _payload()["hold"] == ""
+    assert _payload(hold=format_display_hold(0.0))["hold"] == ""
+
+
+def test_render_hud_payload_publishes_the_display_hold() -> None:
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "render_hud_payload(\n"
+        "    PipelineSnapshot(),\n"
+        "    show_demographics=False,\n"
+        "    display_hold_seconds=5.0,\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["hold"] == "更新 5.0 秒ごと"

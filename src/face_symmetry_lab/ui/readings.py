@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Final
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
 from face_symmetry_lab.domain.reference_baseline import BaselineReading
 from face_symmetry_lab.domain.score_scale import score_points
@@ -277,6 +278,40 @@ def gate_label(state: AnalysisState | None) -> str:
     if state is None:
         return _UNKNOWN_GATE_LABEL
     return GATE_LABELS.get(state.status, _UNKNOWN_GATE_LABEL)
+
+
+def display_signature(outcome: AnalysisOutcome | None) -> tuple[object, ...]:
+    """FR-041: 表示ラッチ（`domain.display_hold`）へ渡す「値が届いているかの型」。
+
+    **値そのものは含めない。** 含めると毎フレーム鍵が変わり、保持がまったく効か
+    なくなる（保持したいのは、まさにその値の細かい揺れである）。含めるのは
+    「品質ゲートの状態」と「画面に出る 6 つの数値が欠測かどうか」だけで、これが
+    変わった瞬間にラッチは保持を打ち切る——顔を見失った後に古い数値が残らない
+    のはこのためである（不変条件 11、AC-HOLD-02）。
+
+    有無の判定には、実際に画面へ出すのと**同じ解決関数**を使う。別の条件で判定
+    すると、「表示は `—` なのにラッチは値があると思っている」状態が生まれる。
+    """
+    if outcome is None:
+        return (None,)
+    return (
+        outcome.state.status,
+        resolve_overall_distance(outcome) is not None,
+        resolve_equal_weight_distance(outcome) is not None,
+        tuple(resolve_part_distance_3d(outcome, name) is not None for name in PART_NAMES),
+    )
+
+
+def format_display_hold(hold_seconds: float | None) -> str:
+    """FR-041: いま有効な表示の更新間隔を、HUD と設定 UI が共有する形で表示する。
+
+    **0 秒（毎回更新）は空文字にする。** 既定の挙動をわざわざ画面へ書くと、
+    HUD に常時 1 行増えるだけで何も伝わらない。`format_smoothing_window` と同じ
+    く、`—` は使わない（設定の不在は測定の欠測ではない）。
+    """
+    if hold_seconds is None or hold_seconds <= 0.0:
+        return ""
+    return f"更新 {hold_seconds:.1f} 秒ごと"
 
 
 def format_smoothing_window(tau_seconds: float | None) -> str:

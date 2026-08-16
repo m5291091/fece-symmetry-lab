@@ -50,6 +50,7 @@ from face_symmetry_lab.domain.auto_tuning import (
     recommend_age_interval_ms,
     recommend_history_capacity,
 )
+from face_symmetry_lab.domain.display_hold import DisplayHold, validate_hold_seconds
 from face_symmetry_lab.domain.export import SessionExport
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
@@ -186,6 +187,13 @@ class RealtimeLandmarkPipeline:
             enabled=auto_tune_enabled,
             started_at=self._started_at,
         )
+        #: FR-041: 画面へ出す解析結果を保持時間のあいだ差し替えないためのラッチ
+        #: （ADR-0008）。**触るのは Streamlit の script thread だけ**で、worker
+        #: thread の `_analyse` は一切通らない——記帳・エクスポート・`segment_id`
+        #: はラッチの手前にあり、この設定では何も変わらない（AC-HOLD-01）。
+        #: 既定 0 秒なので、設定しない限り素通しする。
+        self._display_hold: DisplayHold[AnalysisOutcome | None] = DisplayHold()
+        self._display_hold_lock = threading.Lock()
         self._frame_id = 0
         self._last_timestamp_ms = -1
         self._snapshot = PipelineSnapshot()
@@ -508,6 +516,10 @@ class RealtimeLandmarkPipeline:
         self._capture.clear()
         self._demographics.reset()
         self._cadence.reset()
+        # FR-041/§4.4: 表示が保持している値も一緒に捨てる。残すと、リセットした
+        # 直後に前の区間の数値が最大 5 秒間そのまま画面に出る。
+        with self._display_hold_lock:
+            self._display_hold.reset()
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
 
@@ -541,7 +553,58 @@ class RealtimeLandmarkPipeline:
         if self._recorder is not None:
             # §8.8: 新しい区間と config fingerprint（`ema_tau_seconds` を含む）。
             self._recorder.reset(tau_seconds=value)
+        # FR-041: 保持中の値は古い時定数で作られている。新しい設定を選んだのに
+        # それが最大 5 秒画面へ残ると、何を見ているのか分からなくなる。
+        with self._display_hold_lock:
+            self._display_hold.reset()
         return True
+
+    # --- FR-041 表示の更新間隔 ------------------------------------------------
+
+    @property
+    def display_hold_seconds(self) -> float:
+        """画面へ出す解析結果を差し替えない時間（FR-041）。既定 0 = 毎回更新。"""
+        return self._display_hold.hold_seconds
+
+    def set_display_hold_seconds(self, hold_seconds: float) -> bool:
+        """表示の更新間隔を差し替える。変更したときだけ `True` を返す。
+
+        `set_smoothing_tau_seconds` と同じく冪等である（5 Hz の再実行で毎回
+        同じ値が届く）。**保持中の値は捨てない**——捨てると、設定を選び直すたび
+        に表示が 1 度飛ぶ。値域の検証は `domain.display_hold` が持ち、範囲外は
+        clamp せず例外にする。
+
+        EMA・品質ゲート・解析周期・recorder のいずれにも触れない。この設定が
+        変えるのは「いつ画面を差し替えるか」だけである（AC-HOLD-01）。
+        """
+        value = validate_hold_seconds(hold_seconds)
+        with self._display_hold_lock:
+            if self._display_hold.hold_seconds == value:
+                return False
+            self._display_hold.set_hold_seconds(value)
+        return True
+
+    def hold_for_display(self, snapshot: PipelineSnapshot, *, key: object) -> PipelineSnapshot:
+        """FR-041: 表示用に、保持時間のあいだ同じ解析結果を返し続ける。
+
+        保持するのは `analysis`（1 フレーム分の結果）だけで、年齢・性別の推定・
+        フレーム統計・`segment_id` は素通しする。前者は既に独立した周期（最大
+        1Hz）で動いており、後者は診断値だからである。
+
+        ``key`` には「値が届いているかどうかの型」を渡す約束である（呼び出し側の
+        `ui.readings.display_signature`）。鍵が変われば `DisplayHold` が保持を
+        打ち切るので、顔を見失った瞬間に古い数値が画面へ残ることはない
+        （不変条件 11、AC-HOLD-02）。
+
+        保持していないとき（既定の 0 秒、または保持時間が過ぎたとき）は、渡された
+        snapshot をそのまま返す。新しいオブジェクトを作らないので、呼び出し側は
+        同一性で「差し替わったか」を判定できる。
+        """
+        with self._display_hold_lock:
+            held = self._display_hold.update(snapshot.analysis, at=self._clock(), key=key)
+        if held is snapshot.analysis:
+            return snapshot
+        return replace(snapshot, analysis=held)
 
     def apply_advanced_settings(
         self,

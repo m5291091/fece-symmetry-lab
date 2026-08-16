@@ -21,7 +21,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
 | 映像へ重ねる HUD の組み立てと配線 | `src/face_symmetry_lab/ui/hud.py` |
 | HUD がブラウザへ渡す CSS・実行時 JS | `src/face_symmetry_lab/ui/hud_assets.py` |
-| 表示平滑化時間（移動平均の間隔）を選ぶ UI（FR-040） | `src/face_symmetry_lab/ui/smoothing_panel.py` |
+| 表示の落ち着き（移動平均の間隔・更新間隔）を選ぶ UI（FR-040, FR-041） | `src/face_symmetry_lab/ui/smoothing_panel.py` |
+| 表示値を一定時間だけ差し替えないラッチ（FR-041） | `src/face_symmetry_lab/domain/display_hold.py` |
 | Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
 | 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
 | Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
@@ -95,7 +96,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
 | Display smoothing（時定数の値域・段・導出値を含む） | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, FR-040, §8.7, §8.8 |
-| 表示平滑化時間の選択 UI | `ui/smoothing_panel.py` | `tests/ui/test_smoothing_panel.py` | FR-040, §8.7, §15.1, AC-SMOOTH-01, AC-SMOOTH-02 |
+| 表示の落ち着きの選択 UI | `ui/smoothing_panel.py` | `tests/ui/test_smoothing_panel.py` | FR-040, FR-041, §8.7, §15.1, AC-SMOOTH-01, AC-HOLD-01 |
+| 表示ラッチ（更新間隔） | `domain/display_hold.py` | `tests/domain/test_display_hold.py` | FR-041, §15.1, AC-HOLD-01, AC-HOLD-02 |
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
@@ -155,7 +157,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `2760f73e2d7a869e08bcbfbbef9a84364881bfeb502ab8089c2507a4af8a75d2`_
+_File-list SHA-256: `65c40016c8f3dcece52da69864a2ccf55b043471f918942136dd2bc951214281`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -192,6 +194,7 @@ face-symmetry-lab/
     - `0005-age-gate-for-reference-age-display.md`
     - `0006-reference-baseline-alongside-user-readings.md`
     - `0007-user-adjustable-display-smoothing.md`
+    - `0008-display-hold-for-live-readings.md`
   - `model-cards/`
     - `age-gate-v1-evaluation.json`
     - `age-gate-v1.md`
@@ -242,7 +245,7 @@ face-symmetry-lab/
     - `application/`
       - … (18 files)
     - `domain/`
-      - … (23 files)
+      - … (24 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
@@ -286,6 +289,7 @@ face-symmetry-lab/
     - `test_age_gate.py`
     - `test_auto_tuning.py`
     - `test_demographics.py`
+    - `test_display_hold.py`
     - `test_export.py`
     - `test_frame_adjustments.py`
     - `test_geometry.py`

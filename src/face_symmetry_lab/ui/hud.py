@@ -48,6 +48,7 @@ from face_symmetry_lab.ui.readings import (
     baseline_note,
     format_baseline_score,
     format_baseline_symmetry,
+    format_display_hold,
     format_score,
     format_smoothing_window,
     format_symmetry,
@@ -174,6 +175,7 @@ def build_hud_payload(
     baseline: BaselineSummary | None = None,
     state: str = "",
     smoothing: str = "",
+    hold: str = "",
 ) -> dict[str, object]:
     """§14.3e の HUD が表示する値（H1 で内容を拡張し、H3 で映像隣の
     「ライブ解析」パネルを削除して表示をこの HUD へ一本化した）。
@@ -199,11 +201,14 @@ def build_hud_payload(
     後者では ``notice`` を渡さない（空文字のまま何も出さない）。
 
     ``state``（§5.2/§5.4）は品質ゲート状態のテキスト、``smoothing``（FR-040）は
-    いま有効な平滑化時間のテキストで、どちらも `ui.readings` の整形を通したもの
-    を受け取るだけである。**空文字が既定で、`—` ではない**——併記の不在は測定の
-    欠測ではないため（`demo` 行と同じ扱い）、CSS の `:empty` が行ごと畳む。
-    どちらも測定値の整形（``symmetry``/``score``/``parts``/``chart``）へは一切
-    混ざらない。
+    いま有効な平滑化時間、``hold``（FR-041）は表示の更新間隔のテキストで、いずれも
+    `ui.readings` の整形を通したものを受け取るだけである。**保持中であることを
+    画面から読めるようにするために `hold` を出す**——数値が止まって見えるのが設定
+    によるものか測定が止まったのかを、利用者が区別できる必要がある。
+
+    3 つとも**空文字が既定で、`—` ではない**——併記の不在は測定の欠測ではない
+    ため（`demo` 行と同じ扱い）、CSS の `:empty` が行ごと畳む。いずれも測定値の
+    整形（``symmetry``/``score``/``parts``/``chart``）へは一切混ざらない。
 
     ``baseline``（FR-039）は同じ参考年齢・参考性別の母集団の要約。**参考年齢・
     参考性別を表示していないときは渡してはならない**（§10.12-3）——母集団の年齢から
@@ -236,6 +241,7 @@ def build_hud_payload(
         "gate": gate,
         "state": state,
         "smoothing": smoothing,
+        "hold": hold,
         "gen": generation,
         "chart": chart,
         "baseline": build_baseline_payload(
@@ -261,6 +267,7 @@ def hud_html(
     baseline: BaselineSummary | None = None,
     state: str = "",
     smoothing: str = "",
+    hold: str = "",
 ) -> str:
     """payload を bridge が読む隠し要素へ直列化する。
 
@@ -283,6 +290,7 @@ def hud_html(
         baseline=baseline,
         state=state,
         smoothing=smoothing,
+        hold=hold,
     )
     encoded = json.dumps(payload, ensure_ascii=False)
     return f'<div id="{HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
@@ -293,6 +301,7 @@ def render_hud_payload(
     *,
     show_demographics: bool,
     smoothing_tau_seconds: float | None = None,
+    display_hold_seconds: float | None = None,
 ) -> None:
     """1 つの snapshot 分の HUD 値を publish する（5 Hz の見出し fragment から呼ぶ）。
 
@@ -362,6 +371,7 @@ def render_hud_payload(
             gate=gate_color(analysis.state if analysis is not None else None),
             state=gate_label(analysis.state if analysis is not None else None),
             smoothing=format_smoothing_window(smoothing_tau_seconds),
+            hold=format_display_hold(display_hold_seconds),
             position=st.session_state.get(HUD_POSITION_STATE_KEY, HUD_POSITION_OPTIONS[0]),
             generation=snapshot.segment_id or "",
         ),

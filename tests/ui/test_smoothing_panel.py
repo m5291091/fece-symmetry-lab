@@ -22,17 +22,27 @@ from face_symmetry_lab.domain.smoothing import (
     response_time_seconds,
 )
 from face_symmetry_lab.ui.smoothing_panel import (
+    HOLD_EFFECT_NOTE,
+    HOLD_MISSING_NOTE,
+    HOLD_STATE_KEY,
     SMOOTHING_RESET_NOTE,
     SMOOTHING_SCOPE_NOTE,
     SMOOTHING_STATE_KEY,
     SMOOTHING_TRADEOFF_NOTE,
+    nearest_hold_choice,
 )
 
 
-def _run(tau: float | None = DEFAULT_TAU_SECONDS, interval_ms: int = 125) -> AppTest:
+def _run(
+    tau: float | None = DEFAULT_TAU_SECONDS,
+    interval_ms: int = 125,
+    hold: float | None = None,
+) -> AppTest:
     at = AppTest.from_string(
         "from face_symmetry_lab.ui.smoothing_panel import render_smoothing_control\n"
-        f"render_smoothing_control(tau_seconds={tau!r}, analysis_interval_ms={interval_ms})\n"
+        "render_smoothing_control(\n"
+        f"    tau_seconds={tau!r}, analysis_interval_ms={interval_ms}, hold_seconds={hold!r}\n"
+        ")\n"
     )
     at.run()
     return at
@@ -47,14 +57,16 @@ def _all_text(at: AppTest) -> str:
     return " ".join(parts)
 
 
-def test_the_control_renders_a_single_step_selector_over_the_documented_ladder() -> None:
+def test_the_control_renders_one_step_selector_per_documented_ladder() -> None:
+    """FR-040 の「量」と FR-041 の「頻度」で 2 つ。どちらも段から選ぶ。"""
     at = _run()
 
     assert not at.exception
-    assert len(at.select_slider) == 1
+    assert len(at.select_slider) == 2
     assert tuple(at.select_slider[0].options) == tuple(
         f"{tau:.1f} 秒" for tau in TAU_CHOICES_SECONDS
     )
+    assert tuple(at.select_slider[1].options) == ("毎回", "0.5 秒", "1.0 秒", "2.0 秒", "5.0 秒")
 
 
 def test_the_selector_starts_at_the_value_the_pipeline_reports() -> None:
@@ -82,18 +94,20 @@ def test_the_control_survives_a_pipeline_without_smoothing() -> None:
     assert at.session_state[SMOOTHING_STATE_KEY] == f"{DEFAULT_TAU_SECONDS:.1f} 秒"
 
 
-def test_render_returns_the_selected_time_constant() -> None:
-    """呼び出し側（`ui.camera`）が pipeline へ適用できるよう、値を返す。"""
+def test_render_returns_both_selected_settings() -> None:
+    """呼び出し側（`ui.camera`）が pipeline へ適用できるよう、両方を返す。"""
     at = AppTest.from_string(
         "import streamlit as st\n"
         "from face_symmetry_lab.ui.smoothing_panel import render_smoothing_control\n"
-        "st.session_state['selected'] = render_smoothing_control("
-        "tau_seconds=1.0, analysis_interval_ms=125)\n"
+        "st.session_state['selected'] = render_smoothing_control(\n"
+        "    tau_seconds=1.0, analysis_interval_ms=125, hold_seconds=2.0\n"
+        ")\n"
     )
     at.run()
 
     assert not at.exception
-    assert at.session_state["selected"] == pytest.approx(1.0)
+    assert at.session_state["selected"].tau_seconds == pytest.approx(1.0)
+    assert at.session_state["selected"].hold_seconds == pytest.approx(2.0)
 
 
 def test_the_readouts_come_from_the_same_formulas_as_the_filter() -> None:
@@ -171,3 +185,66 @@ def test_the_panel_uses_no_progress_bar_or_gauge() -> None:
 
     assert "st.progress" not in source
     assert "st.slider(" not in source, "連続スライダーは ADR-0007 (c) で採らない"
+
+
+# --- FR-041: 数値を入れ替える間隔 ---------------------------------------------
+
+
+def test_the_hold_selector_starts_at_every_frame_by_default() -> None:
+    """既定は「毎回」。この機能を知らない利用者の画面は変わらない。"""
+    at = _run()
+
+    assert at.session_state[HOLD_STATE_KEY] == "毎回"
+
+
+def test_the_hold_selector_starts_at_the_value_the_pipeline_reports() -> None:
+    at = _run(hold=2.0)
+
+    assert at.session_state[HOLD_STATE_KEY] == "2.0 秒"
+
+
+def test_a_hold_off_the_ladder_snaps_to_the_nearest_step() -> None:
+    at = _run(hold=1.9)
+
+    assert not at.exception
+    assert at.session_state[HOLD_STATE_KEY] == "2.0 秒"
+
+
+def test_zero_seconds_reads_as_a_word_rather_than_a_duration() -> None:
+    """「0.0 秒ごとに更新」は意味が取れない。"""
+    assert nearest_hold_choice(0.0) == pytest.approx(0.0)
+    at = _run(hold=0.0)
+
+    assert "毎回" in tuple(at.select_slider[1].options)
+    assert at.session_state[HOLD_STATE_KEY] == "毎回"
+
+
+def test_the_copy_explains_why_a_longer_average_is_not_enough() -> None:
+    """この 1 文が無いと、2 つの設定が同じことをする 2 通りのやり方に見える。"""
+    text = _all_text(_run())
+
+    assert HOLD_EFFECT_NOTE in text
+    assert "動く回数は変わりません" in HOLD_EFFECT_NOTE
+
+
+def test_the_copy_promises_that_a_stale_number_never_survives_a_lost_face() -> None:
+    """AC-HOLD-02 は実装の約束であり、画面にも書く（止まった数値の有効性）。"""
+    text = _all_text(_run())
+
+    assert HOLD_MISSING_NOTE in text
+    assert "—" in HOLD_MISSING_NOTE
+
+
+def test_no_heading_repeats_a_widget_label() -> None:
+    """見出しと widget ラベルが同じだと、同じ文字列が 2 行続くだけになる。
+
+    実ブラウザで 2 度見つけた回帰なので、ここで固定する。1 度目は呼び出し側
+    （`ui.camera`）と `SMOOTHING_HEADING` の重複、2 度目はこの panel の中の
+    小見出しと更新間隔のラベルの重複だった。
+    """
+    at = _run()
+
+    headings = {str(element.value).lstrip("# ").strip() for element in at.markdown}
+    labels = {str(element.label).strip() for element in at.select_slider}
+
+    assert headings & labels == set()

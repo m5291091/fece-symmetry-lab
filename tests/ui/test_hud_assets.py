@@ -479,3 +479,12 @@ def test_the_area_stays_behind_the_lines() -> None:
     skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
 
     assert skeleton.index('id="fsl-chart-overall-area"') < skeleton.index('id="fsl-chart-overall"')
+
+
+def test_the_display_hold_has_its_own_chip_in_the_skeleton() -> None:
+    """FR-041: 数値が止まっているのが設定によるものだと画面から読めるようにする。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert 'id="fsl-hud-hold"' in skeleton
+    assert "setText('fsl-hud-hold', data.hold" in tick

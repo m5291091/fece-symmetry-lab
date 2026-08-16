@@ -45,6 +45,7 @@ from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
+    PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
@@ -71,6 +72,7 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_asset,
     segmenter_status,
 )
+from face_symmetry_lab.ui.readings import display_signature
 from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
@@ -259,6 +261,23 @@ def release_session_pipeline() -> None:
         pipeline.close()
 
 
+def _snapshot_for_display(pipeline: RealtimeLandmarkPipeline) -> PipelineSnapshot:
+    """FR-041: 表示用の snapshot を 1 か所で作る（ADR-0008 (c)）。
+
+    HUD の fragment と詳細結果の fragment はどちらもこれを通す。**ラッチは
+    pipeline に 1 つしか無い**ので、どちらが先に呼んでも同じ解析結果を受け取り、
+    §8.6.3 の計算過程と HUD の部位別が同じ値を出し続ける（AC-DISPLAY-04）。
+    2 つの fragment がそれぞれラッチを持つと、同じ画面の 2 つの区画が別々の
+    保持区間を刻むことになる。
+
+    鍵（保持を打ち切る手掛かり）は `ui.readings.display_signature` が作る。
+    値そのものではなく「値が届いているかどうかの型」なので、顔を見失った瞬間に
+    保持が切れて数値が `—` へ戻る（AC-HOLD-02）。
+    """
+    snapshot = pipeline.snapshot()
+    return pipeline.hold_for_display(snapshot, key=display_signature(snapshot.analysis))
+
+
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
 def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     """不変 snapshot を 5 Hz で読み、映像上の HUD へ payload を publish するだけ。
@@ -269,7 +288,7 @@ def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     が書く隠し要素をこれが 5 Hz で更新し続けないと、HUD の数値が動かなくなる
     ためである。
     """
-    snapshot = pipeline.snapshot()
+    snapshot = _snapshot_for_display(pipeline)
     render_hud_payload(
         snapshot,
         show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
@@ -277,6 +296,7 @@ def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
         # ごとにしか作り直されないため、そこ経由だと選び直してから次の解析まで
         # 古い秒数が HUD に残る。
         smoothing_tau_seconds=pipeline.smoothing_tau_seconds,
+        display_hold_seconds=pipeline.display_hold_seconds,
     )
 
 
@@ -286,8 +306,12 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
 
     項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示する
     ため、`render_score_details` へ `show_parts=False` を渡して重複を避ける。
+
+    FR-041: HUD と同じ `_snapshot_for_display` を通す。片方だけ生の snapshot を
+    読むと、保持中に「HUD の部位別」と「計算過程の部位別」が別の瞬間の値になり、
+    AC-DISPLAY-04 の文字列一致が保持区間の境界でだけ壊れる。
     """
-    snapshot = pipeline.snapshot()
+    snapshot = _snapshot_for_display(pipeline)
     with st.container(border=True):
         # §14.4: 回復導線。以前は映像隣の見出しパネルにあったが、パネルの削除
         # に伴いここへ移した。
@@ -530,11 +554,13 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
         # FR-040: panel は pipeline を知らない。選ばれた値をここで適用する。
         # `set_smoothing_tau_seconds` は同じ値なら何もしないので、5 Hz の再実行で
         # EMA が作り直されることはない（AC-SMOOTH-01）。
-        selected_tau = render_smoothing_control(
+        choice = render_smoothing_control(
             tau_seconds=pipeline.smoothing_tau_seconds,
             analysis_interval_ms=pipeline.analysis_interval_ms,
+            hold_seconds=pipeline.display_hold_seconds,
         )
-        pipeline.set_smoothing_tau_seconds(selected_tau)
+        pipeline.set_smoothing_tau_seconds(choice.tau_seconds)
+        pipeline.set_display_hold_seconds(choice.hold_seconds)
 
     with st.container(border=True):
         st.markdown("##### 自動調整の現在値")

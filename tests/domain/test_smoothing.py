@@ -105,7 +105,7 @@ def test_invalid_tau_is_refused(tau: float) -> None:
 
 def test_the_selectable_steps_stay_inside_the_documented_range() -> None:
     """§15.2 の値域（0.05〜5.0）の内側であること。段だけを別に決めない。"""
-    assert TAU_CHOICES_SECONDS == (0.1, 0.2, 0.4, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0)
+    assert TAU_CHOICES_SECONDS == (0.1, 0.2, 0.4, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0, 15.0, 30.0)
     assert all(MIN_TAU_SECONDS <= tau <= MAX_TAU_SECONDS for tau in TAU_CHOICES_SECONDS)
     assert list(TAU_CHOICES_SECONDS) == sorted(TAU_CHOICES_SECONDS)
 
@@ -121,7 +121,7 @@ def test_validate_returns_a_value_inside_the_range() -> None:
     assert validate_tau_seconds(MAX_TAU_SECONDS) == pytest.approx(MAX_TAU_SECONDS)
 
 
-@pytest.mark.parametrize("bad", [0.0, -0.4, 0.049, 5.001, math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize("bad", [0.0, -0.4, 0.049, 30.001, math.nan, math.inf, -math.inf])
 def test_validate_refuses_values_outside_the_range(bad: float) -> None:
     """罠: clamp する実装は、範囲外の指定を黙って別の設定へ読み替える。"""
     with pytest.raises(SmoothingError):
@@ -134,6 +134,7 @@ def test_the_nearest_step_is_used_for_a_time_constant_off_the_ladder() -> None:
     assert nearest_tau_choice(0.61) == pytest.approx(0.7)
     assert nearest_tau_choice(0.05) == pytest.approx(0.1)
     assert nearest_tau_choice(5.0) == pytest.approx(5.0)
+    assert nearest_tau_choice(100.0) == pytest.approx(30.0)
 
 
 @pytest.mark.parametrize("value", [None, math.nan, math.inf])

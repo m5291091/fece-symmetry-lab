@@ -594,6 +594,7 @@ def test_the_display_controls_offer_the_smoothing_selector_and_apply_it() -> Non
 
     assert "render_smoothing_control(" in source
     assert "pipeline.set_smoothing_tau_seconds(" in source
+    assert "pipeline.set_display_hold_seconds(" in source
     assert "pipeline.analysis_interval_ms" in source, "実効サンプル数は実周期から出す"
 
 
@@ -606,6 +607,7 @@ def test_the_hud_fragment_publishes_the_active_smoothing_window() -> None:
     source = inspect.getsource(camera._render_hud_fragment)
 
     assert "smoothing_tau_seconds=pipeline.smoothing_tau_seconds" in source
+    assert "display_hold_seconds=pipeline.display_hold_seconds" in source
 
 
 def test_the_settings_tab_groups_its_controls_into_titled_sections() -> None:
@@ -638,3 +640,35 @@ def test_the_tabs_keep_their_names_while_gaining_icons() -> None:
 
     for label in ("詳細結果", "左右対称との比較", "表示設定", "エクスポート"):
         assert label in source
+
+
+def test_both_live_fragments_read_the_same_held_snapshot() -> None:
+    """FR-041/AC-HOLD-01: 保持中に HUD と詳細結果が別々の瞬間の値を出さない。
+
+    罠: 片方だけ `pipeline.snapshot()` を直接読む実装だと、保持区間の境界で
+    「HUD の部位別」と「計算過程の部位別」が食い違い、AC-DISPLAY-04 の文字列
+    一致がそこでだけ壊れる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    for fragment in (camera._render_hud_fragment, camera._render_detail_fragment):
+        source = inspect.getsource(fragment)
+        assert "_snapshot_for_display(pipeline)" in source, fragment.__name__
+        assert "pipeline.snapshot()" not in source, fragment.__name__
+
+
+def test_the_display_snapshot_keys_the_latch_on_the_shared_signature() -> None:
+    """AC-HOLD-02: 鍵は `ui.readings.display_signature`（値の有無）から作る。
+
+    罠: 値そのものを鍵にすると毎フレーム鍵が変わり、保持がまったく効かない。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._snapshot_for_display)
+
+    assert "hold_for_display(" in source
+    assert "display_signature(snapshot.analysis)" in source

@@ -327,6 +327,7 @@ HUD_RUNTIME_JS: Final[str] = """
       '<div id="fsl-hud-chips">' +
         '<span class="fsl-hud-chip" id="fsl-hud-state"></span>' +
         '<span class="fsl-hud-chip" id="fsl-hud-smoothing"></span>' +
+        '<span class="fsl-hud-chip" id="fsl-hud-hold"></span>' +
       '</div>' +
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
@@ -570,6 +571,9 @@ HUD_RUNTIME_JS: Final[str] = """
     // `—` を入れない（設定や状態の不在は測定の欠測ではない）。
     setText('fsl-hud-state', data.state || '');
     setText('fsl-hud-smoothing', data.smoothing || '');
+    // FR-041: 数値が止まって見えるのが設定によるものか、測定が止まったのかを
+    // 利用者が区別できるようにする。0 秒（毎回更新）のときは空文字で畳まれる。
+    setText('fsl-hud-hold', data.hold || '');
 
     var baseline = data.baseline || {};
     var baselineParts = baseline.parts || {};

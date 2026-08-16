@@ -1,10 +1,19 @@
-"""FR-040: 表示平滑化時間（§8.7 の `tau`）を選ぶ UI。
+"""FR-040 / FR-041: リアルタイム表示の落ち着きを選ぶ UI。
 
-**この module は pipeline を知らない。** 受け取るのは「いま有効な `tau`」と
-「いまの解析周期」という 2 つの値だけで、選ばれた `tau` を返す。適用（EMA の
-差し替えと区間の切り替え）は呼び出し側（`ui.camera`）が
-`RealtimeLandmarkPipeline.set_smoothing_tau_seconds` で行う。こう分けておくと、
-この panel は Streamlit だけで単体検証でき、pipeline の生成を必要としない。
+設定は 2 つあり、**効くところが違う**。
+
+* 平均する時間（`tau`、§8.7）—— 数値が動く **量** を決める
+* 数値を入れ替える間隔（`display_hold_seconds`、ADR-0008）—— 動く **頻度** を決める
+
+`tau` を伸ばしても、平滑値は連続時間のフィルタなので新しいサンプルのたびに必ず
+動く。読んでいる最中に数字が止まっていてほしいという要求は前者だけでは満たせない
+ため、2 つを同じ区画に並べてある。
+
+**この module は pipeline を知らない。** 受け取るのは「いま有効な `tau`」「いまの
+解析周期」「いま有効な保持時間」だけで、選ばれた値を返す。適用（EMA の差し替え・
+区間の切り替え・ラッチの設定）は呼び出し側（`ui.camera`）が pipeline のメソッドで
+行う。こう分けておくと、この panel は Streamlit だけで単体検証でき、pipeline の
+生成を必要としない。
 
 **表示する導出値はすべて `domain.smoothing` から取る。** 追従時間と実効サンプル数
 はどちらも §8.7 の式の逆算であり、ここで近似式（`3 × tau` など）を書くと、画面の
@@ -15,10 +24,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from math import isfinite
 from typing import Final
 
 import streamlit as st
 
+from face_symmetry_lab.domain.display_hold import (
+    DEFAULT_DISPLAY_HOLD_SECONDS,
+    DISPLAY_HOLD_CHOICES_SECONDS,
+)
 from face_symmetry_lab.domain.smoothing import (
     RESPONSE_FRACTION_63,
     RESPONSE_FRACTION_95,
@@ -59,31 +74,94 @@ SMOOTHING_HELP: Final[str] = (
     "ここで選ぶのはその平均の時間の長さで、測定そのものの精度や計算式は変わりません。"
 )
 
+#: FR-041: 更新間隔の設定。平滑化（量）とは別に、数値が入れ替わる頻度を決める。
+HOLD_STATE_KEY: Final[str] = "camera_display_hold_seconds"
+
+#: 2 つ目の設定の widget ラベル。**見出しを別に立てない。** 立てると同じ文字列が
+#: 2 行続く（`SMOOTHING_HEADING` で一度やった失敗の繰り返し）。区切りは
+#: `st.divider()` が担う。
+HOLD_LABEL: Final[str] = "数値を入れ替える間隔"
+
+HOLD_HELP: Final[str] = (
+    "画面の数値を、選んだ時間のあいだ入れ替えずに置きます。"
+    "測定・記録・エクスポートはこの設定に関わらず今までどおり続きます。"
+)
+
+#: 「平滑化を伸ばしたのに数字が止まらない」という行き止まりを説明する。この 1 文が
+#: 無いと、2 つの設定が同じことをする 2 通りのやり方に見える。
+HOLD_EFFECT_NOTE: Final[str] = (
+    "平均する時間を伸ばすと数値の動く幅が小さくなりますが、動く回数は変わりません。"
+    "読んでいる間に数字を止めたいときは、こちらを長くします。"
+)
+
+#: AC-HOLD-02 の挙動を先に伝える。止まっている数値が「いつまで有効か」を利用者が
+#: 判断できるようにするための文である。
+HOLD_MISSING_NOTE: Final[str] = (
+    "顔が外れたときや計測条件を満たさなくなったときは、この間隔を待たずにすぐ「—」へ戻ります。"
+    "止まっている数値が、すでに測れていない状態のまま残ることはありません。"
+)
+
 #: `st.select_slider` の options は表示文字列そのものにする。`format_func` を
 #: 通さないことで、session state に入る値と画面のラベルが一致し、目盛りの読み
 #: 違いが起きない。
 _CHOICE_LABELS: Final[tuple[str, ...]] = tuple(f"{tau:.1f} 秒" for tau in TAU_CHOICES_SECONDS)
 _LABEL_TO_TAU: Final[dict[str, float]] = dict(zip(_CHOICE_LABELS, TAU_CHOICES_SECONDS, strict=True))
 
+#: 0 秒だけは「毎回」と言葉で書く。「0.0 秒ごとに更新」は意味が取れない。
+_HOLD_LABELS: Final[tuple[str, ...]] = tuple(
+    "毎回" if hold <= 0.0 else f"{hold:.1f} 秒" for hold in DISPLAY_HOLD_CHOICES_SECONDS
+)
+_LABEL_TO_HOLD: Final[dict[str, float]] = dict(
+    zip(_HOLD_LABELS, DISPLAY_HOLD_CHOICES_SECONDS, strict=True)
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StabilityChoice:
+    """この panel が返す 2 つの設定。呼び出し側が pipeline へ適用する。"""
+
+    tau_seconds: float
+    hold_seconds: float
+
 
 def _label_for(tau_seconds: float) -> str:
     return f"{tau_seconds:.1f} 秒"
+
+
+def _hold_label_for(hold_seconds: float) -> str:
+    return "毎回" if hold_seconds <= 0.0 else f"{hold_seconds:.1f} 秒"
+
+
+def nearest_hold_choice(hold_seconds: float | None) -> float:
+    """段の外の保持時間を、最も近い段へ寄せる（`nearest_tau_choice` と同じ役割）。"""
+    if hold_seconds is None or not isfinite(hold_seconds):
+        return DEFAULT_DISPLAY_HOLD_SECONDS
+    return min(DISPLAY_HOLD_CHOICES_SECONDS, key=lambda choice: abs(choice - hold_seconds))
 
 
 def render_smoothing_control(
     *,
     tau_seconds: float | None,
     analysis_interval_ms: int,
-) -> float:
-    """平滑化時間の選択とその意味を描画し、選ばれた `tau`（秒）を返す。
+    hold_seconds: float | None = None,
+) -> StabilityChoice:
+    """表示の落ち着きに関する 2 つの設定を描画し、選ばれた値を返す。
 
-    ``tau_seconds`` は pipeline がいま実際に使っている値（`None` は平滑化を持たない
-    pipeline）。初回だけこの値で選択を初期化し、以後は widget が持つ。段の外の値は
-    `nearest_tau_choice` で最も近い段へ寄せる——`st.select_slider` は options に無い
-    値を渡されると例外になるため、ここを通さないと過去の設定で画面が落ちる。
+    ``tau_seconds`` / ``hold_seconds`` は pipeline がいま実際に使っている値
+    （`tau_seconds=None` は平滑化を持たない pipeline）。初回だけこの値で選択を
+    初期化し、以後は widget が持つ。段の外の値は `nearest_tau_choice` /
+    `nearest_hold_choice` で最も近い段へ寄せる——`st.select_slider` は options に
+    無い値を渡されると例外になるため、ここを通さないと過去の設定で画面が落ちる。
+
+    **2 つを同じ区画に置くのは、両者が別々のことをするからである**（FR-040 /
+    FR-041、ADR-0008）。平滑化は数値が動く**量**を、更新間隔は動く**頻度**を
+    決める。片方だけを見せると、「落ち着かせたいのに落ち着かない」——`tau` を
+    伸ばしても 5Hz で小数が揺れ続ける——という行き止まりに利用者を置くことになる。
     """
     if SMOOTHING_STATE_KEY not in st.session_state:
         st.session_state[SMOOTHING_STATE_KEY] = _label_for(nearest_tau_choice(tau_seconds))
+    if HOLD_STATE_KEY not in st.session_state:
+        st.session_state[HOLD_STATE_KEY] = _hold_label_for(nearest_hold_choice(hold_seconds))
 
     st.markdown(SMOOTHING_HEADING)
     selected_label = st.select_slider(
@@ -118,6 +196,23 @@ def render_smoothing_control(
     )
 
     st.caption(SMOOTHING_TRADEOFF_NOTE)
+
+    # FR-041: ここからが「頻度」の設定。平滑化とは効き方が違うので区切りを入れる
+    # が、見出しは足さない——widget ラベルと同じ文字列が 2 行続くだけになる。
+    # 同じ `select_slider` の形にそろえてあるのは、どちらも「段から選ぶ」設定
+    # だからである。
+    st.divider()
+    selected_hold_label = st.select_slider(
+        HOLD_LABEL,
+        options=_HOLD_LABELS,
+        key=HOLD_STATE_KEY,
+        help=HOLD_HELP,
+    )
+    selected_hold = _LABEL_TO_HOLD[str(selected_hold_label)]
+    st.caption(HOLD_EFFECT_NOTE)
+    st.caption(HOLD_MISSING_NOTE)
+
+    st.divider()
     st.caption(SMOOTHING_SCOPE_NOTE)
     st.caption(SMOOTHING_RESET_NOTE)
-    return selected
+    return StabilityChoice(tau_seconds=selected, hold_seconds=selected_hold)

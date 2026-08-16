@@ -357,7 +357,7 @@ def test_a_longer_time_constant_makes_the_display_lag_more() -> None:
     assert _run(2.0) > _run(0.2)
 
 
-@pytest.mark.parametrize("bad", [0.0, 6.0, float("nan")])
+@pytest.mark.parametrize("bad", [0.0, 31.0, float("nan")])
 def test_an_out_of_range_time_constant_is_refused_and_keeps_the_previous_one(
     bad: float,
 ) -> None:
