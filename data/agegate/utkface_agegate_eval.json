@@ -1,0 +1,352 @@
+{
+  "gate_version": "age-gate/1.0.0",
+  "operating_point_revision": 2,
+  "revised_at": "2026-08-15",
+  "revised_by": "threshold re-selection (再学習はしていない。ONNX は同一)",
+  "onnx_sha256": "80bcfc05eec12243108e8502f88824e680d3d6f03e9ca6607a1dc711e86e02d3",
+  "feature_set": "ratio",
+  "feature_count": 41,
+  "split_counts": {
+    "train": 11416,
+    "validation": 3805,
+    "test": 3806
+  },
+  "baseline_always_in_range_accuracy": 0.7758801891749869,
+  "threshold_selection": {
+    "rule": "validation split で「12歳未満を範囲外と言えた率 >= 0.90」を満たすなかで、範囲内を最も多く残せる閾値",
+    "why_not_under18": "15〜17歳と18〜20歳は予測確率の分布がほぼ重なる（平均 0.688 vs 0.747）。under18 recall 0.95 を要求すると閾値が 0.895 まで上がり、成人の約半数が参考年齢を見られなくなる（accuracy 0.594 でベースライン 0.776 を下回る）。守るべきは幼児であって17歳ではない、と目標を定義し直した。",
+    "threshold": 0.6782,
+    "validation_under12_recall": 0.9012567324955116,
+    "validation_in_range_kept": 0.8545762711864406
+  },
+  "test": {
+    "threshold": 0.6782,
+    "count": 3806,
+    "accuracy": 0.8284287966368892,
+    "true_positive": 2504,
+    "false_negative": 449,
+    "true_negative": 649,
+    "false_positive": 204,
+    "in_range_kept": 0.8479512360311547,
+    "under12_recall": 0.9233576642335767,
+    "under15_recall": 0.8827361563517915,
+    "under18_recall": 0.8246110325318247,
+    "over75_recall": 0.4520547945205479
+  },
+  "tradeoff_by_threshold": [
+    {
+      "threshold": 0.3,
+      "count": 3806,
+      "accuracy": 0.8851812926957435,
+      "true_positive": 2878,
+      "false_negative": 75,
+      "true_negative": 491,
+      "false_positive": 362,
+      "in_range_kept": 0.9746020995597697,
+      "under12_recall": 0.8029197080291971,
+      "under15_recall": 0.745928338762215,
+      "under18_recall": 0.6605374823196606,
+      "over75_recall": 0.1643835616438356
+    },
+    {
+      "threshold": 0.4,
+      "count": 3806,
+      "accuracy": 0.8815028901734104,
+      "true_positive": 2830,
+      "false_negative": 123,
+      "true_negative": 525,
+      "false_positive": 328,
+      "in_range_kept": 0.9583474432780223,
+      "under12_recall": 0.8284671532846716,
+      "under15_recall": 0.7736156351791531,
+      "under18_recall": 0.693069306930693,
+      "over75_recall": 0.23972602739726026
+    },
+    {
+      "threshold": 0.5,
+      "count": 3806,
+      "accuracy": 0.8694167104571728,
+      "true_positive": 2745,
+      "false_negative": 208,
+      "true_negative": 564,
+      "false_positive": 289,
+      "in_range_kept": 0.929563156112428,
+      "under12_recall": 0.8631386861313869,
+      "under15_recall": 0.8127035830618893,
+      "under18_recall": 0.7340876944837341,
+      "over75_recall": 0.3082191780821918
+    },
+    {
+      "threshold": 0.6,
+      "count": 3806,
+      "accuracy": 0.8497109826589595,
+      "true_positive": 2625,
+      "false_negative": 328,
+      "true_negative": 609,
+      "false_positive": 244,
+      "in_range_kept": 0.8889265154080596,
+      "under12_recall": 0.8996350364963503,
+      "under15_recall": 0.8534201954397395,
+      "under18_recall": 0.7821782178217822,
+      "over75_recall": 0.3835616438356164
+    },
+    {
+      "threshold": 0.6782,
+      "count": 3806,
+      "accuracy": 0.8284287966368892,
+      "true_positive": 2504,
+      "false_negative": 449,
+      "true_negative": 649,
+      "false_positive": 204,
+      "in_range_kept": 0.8479512360311547,
+      "under12_recall": 0.9233576642335767,
+      "under15_recall": 0.8827361563517915,
+      "under18_recall": 0.8246110325318247,
+      "over75_recall": 0.4520547945205479
+    },
+    {
+      "threshold": 0.75,
+      "count": 3806,
+      "accuracy": 0.7905937992643195,
+      "true_positive": 2322,
+      "false_negative": 631,
+      "true_negative": 687,
+      "false_positive": 166,
+      "in_range_kept": 0.7863189976295293,
+      "under12_recall": 0.9507299270072993,
+      "under15_recall": 0.9153094462540716,
+      "under18_recall": 0.8628005657708628,
+      "over75_recall": 0.5273972602739726
+    },
+    {
+      "threshold": 0.8321,
+      "count": 3806,
+      "accuracy": 0.6999474513925381,
+      "true_positive": 1932,
+      "false_negative": 1021,
+      "true_negative": 732,
+      "false_positive": 121,
+      "in_range_kept": 0.6542499153403318,
+      "under12_recall": 0.9671532846715328,
+      "under15_recall": 0.9413680781758957,
+      "under18_recall": 0.8981612446958982,
+      "over75_recall": 0.6643835616438356
+    },
+    {
+      "threshold": 0.8953,
+      "count": 3806,
+      "accuracy": 0.5937992643194955,
+      "true_positive": 1483,
+      "false_negative": 1470,
+      "true_negative": 777,
+      "false_positive": 76,
+      "in_range_kept": 0.5022011513714866,
+      "under12_recall": 0.9872262773722628,
+      "under15_recall": 0.9690553745928339,
+      "under18_recall": 0.9391796322489392,
+      "over75_recall": 0.773972602739726
+    },
+    {
+      "threshold": 0.9597,
+      "count": 3806,
+      "accuracy": 0.3788754598003153,
+      "true_positive": 607,
+      "false_negative": 2346,
+      "true_negative": 835,
+      "false_positive": 18,
+      "in_range_kept": 0.20555367422959703,
+      "under12_recall": 1.0,
+      "under15_recall": 0.993485342019544,
+      "under18_recall": 0.9900990099009901,
+      "over75_recall": 0.9246575342465754
+    }
+  ],
+  "age_bin_report": [
+    {
+      "age_bin": "0-5",
+      "count": 409,
+      "truth": "out_of_range",
+      "correct_rate": 0.9877750611246944,
+      "mean_proba": 0.06741336447745937
+    },
+    {
+      "age_bin": "6-11",
+      "count": 139,
+      "truth": "out_of_range",
+      "correct_rate": 0.7338129496402878,
+      "mean_proba": 0.4222678596998771
+    },
+    {
+      "age_bin": "12-14",
+      "count": 66,
+      "truth": "out_of_range",
+      "correct_rate": 0.5454545454545454,
+      "mean_proba": 0.5706222806749345
+    },
+    {
+      "age_bin": "15-17",
+      "count": 93,
+      "truth": "out_of_range",
+      "correct_rate": 0.44086021505376344,
+      "mean_proba": 0.6875959954280494
+    },
+    {
+      "age_bin": "18-20",
+      "count": 100,
+      "truth": "in_range",
+      "correct_rate": 0.7,
+      "mean_proba": 0.7468202860430023
+    },
+    {
+      "age_bin": "21-30",
+      "count": 1111,
+      "truth": "in_range",
+      "correct_rate": 0.8343834383438344,
+      "mean_proba": 0.8255557938331509
+    },
+    {
+      "age_bin": "31-50",
+      "count": 1079,
+      "truth": "in_range",
+      "correct_rate": 0.871177015755329,
+      "mean_proba": 0.8461088701471465
+    },
+    {
+      "age_bin": "51-70",
+      "count": 594,
+      "truth": "in_range",
+      "correct_rate": 0.867003367003367,
+      "mean_proba": 0.8345812266317024
+    },
+    {
+      "age_bin": "71-75",
+      "count": 69,
+      "truth": "in_range",
+      "correct_rate": 0.7536231884057971,
+      "mean_proba": 0.7539240347261772
+    },
+    {
+      "age_bin": "76-85",
+      "count": 103,
+      "truth": "out_of_range",
+      "correct_rate": 0.3786407766990291,
+      "mean_proba": 0.6859237898509656
+    },
+    {
+      "age_bin": "86-120",
+      "count": 43,
+      "truth": "out_of_range",
+      "correct_rate": 0.627906976744186,
+      "mean_proba": 0.5285762223051609
+    }
+  ],
+  "group_error_report": [
+    {
+      "dimension": "race",
+      "group": "Asian",
+      "truth": "in_range",
+      "count": 322,
+      "error_rate": 0.16149068322981366
+    },
+    {
+      "dimension": "race",
+      "group": "Asian",
+      "truth": "out_of_range",
+      "count": 202,
+      "error_rate": 0.08415841584158416
+    },
+    {
+      "dimension": "race",
+      "group": "Black",
+      "truth": "in_range",
+      "count": 619,
+      "error_rate": 0.16478190630048464
+    },
+    {
+      "dimension": "race",
+      "group": "Black",
+      "truth": "out_of_range",
+      "count": 59,
+      "error_rate": 0.4406779661016949
+    },
+    {
+      "dimension": "race",
+      "group": "Indian",
+      "truth": "in_range",
+      "count": 518,
+      "error_rate": 0.1891891891891892
+    },
+    {
+      "dimension": "race",
+      "group": "Indian",
+      "truth": "out_of_range",
+      "count": 103,
+      "error_rate": 0.14563106796116504
+    },
+    {
+      "dimension": "race",
+      "group": "Others",
+      "truth": "in_range",
+      "count": 191,
+      "error_rate": 0.13089005235602094
+    },
+    {
+      "dimension": "race",
+      "group": "Others",
+      "truth": "out_of_range",
+      "count": 104,
+      "error_rate": 0.18269230769230768
+    },
+    {
+      "dimension": "race",
+      "group": "White",
+      "truth": "in_range",
+      "count": 1303,
+      "error_rate": 0.13200306983883345
+    },
+    {
+      "dimension": "race",
+      "group": "White",
+      "truth": "out_of_range",
+      "count": 385,
+      "error_rate": 0.32987012987012987
+    },
+    {
+      "dimension": "gender",
+      "group": "female",
+      "truth": "in_range",
+      "count": 1325,
+      "error_rate": 0.18415094339622642
+    },
+    {
+      "dimension": "gender",
+      "group": "female",
+      "truth": "out_of_range",
+      "count": 447,
+      "error_rate": 0.2505592841163311
+    },
+    {
+      "dimension": "gender",
+      "group": "male",
+      "truth": "in_range",
+      "count": 1628,
+      "error_rate": 0.12592137592137592
+    },
+    {
+      "dimension": "gender",
+      "group": "male",
+      "truth": "out_of_range",
+      "count": 406,
+      "error_rate": 0.22660098522167488
+    }
+  ],
+  "known_limitations": [
+    "76歳以上は判定できない。この閾値での再現率は 0.45 前後で、実質的に「範囲内」と答えてしまう。幾何特徴だけでは皮膚の質感を見られないためで、設計上の限界である。このモデルは実質的に「子ども側のゲート」であり、上限側のゲートとしては使えない。",
+    "15〜17歳と18〜20歳は原理的に分離できない。境界付近の誤りは前提である。",
+    "out_of_range 側の誤り率は群によって大きく違う（Black 0.441 / Asian 0.084）。ただし Black の out_of_range は n=59 と小さく、76歳以上が占める割合の違いを含む。",
+    "in_range 側の誤り率の群間差は 0.13〜0.19 に収まる（旧閾値では 0.44〜0.57 だった）。",
+    "UTKFace の年齢注釈自体の誤りは検証していない。天井精度は注釈ノイズで決まる。",
+    "UTKFace には個人 ID が無く、同一人物が split をまたぐ可能性を排除できていない。",
+    "姿勢ゲート（|yaw|<=15°, |pitch|<=15°, |roll|<=25°）を通ったフレームでしか評価していない。"
+  ]
+}

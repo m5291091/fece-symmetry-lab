@@ -1,0 +1,99 @@
+{
+  "schema_version": "utkface-age-gate/1.0.0",
+  "gate_version": "age-gate/1.0.0",
+  "status": "research_prototype_not_an_age_verification_system",
+  "generated_at": "2026-08-15T03:51:21.602669+00:00",
+  "purpose": "アプリが参考年齢を表示してよいかどうかだけを判定するゲート。年齢認証・本人確認・未成年判定・入場制限には使用できない。",
+  "dataset": {
+    "name": "UTKFace",
+    "variant": "Aligned & Cropped Faces",
+    "official_page": "https://susanqq.github.io/UTKFace/",
+    "download_mirror": "https://www.kaggle.com/datasets/moritzm00/utkface-cropped",
+    "download_mirror_handle": "moritzm00/utkface-cropped/versions/1",
+    "license_scope": "non-commercial research only",
+    "inventory_sha256_names_and_sizes": "561a2899851724676189e46898c81a0835913bd4e5c4ec63a6c00a76efaa6cb0",
+    "label_source": "filename annotation: age_gender_race_datetime.jpg",
+    "label_caveat": "年齢はUTKFaceの配布注釈であり、本notebookは推定しない。注釈自体の誤りは検証していない。"
+  },
+  "protocol": {
+    "in_range": [
+      18,
+      75
+    ],
+    "age_gate": "掛けない（範囲外の画像が負例）",
+    "max_abs_yaw_deg": 15.0,
+    "max_abs_pitch_deg": 15.0,
+    "max_abs_roll_deg": 25.0,
+    "random_seed": 20260810,
+    "split_ratios": [
+      0.6,
+      0.2,
+      0.2
+    ],
+    "stratification": "age_group × 10歳きざみの年齢"
+  },
+  "counts": {
+    "discovered_images": 23708,
+    "candidate_images": 23705,
+    "selected_images": 23705,
+    "valid_images": 19027,
+    "inventory_exclusions": {
+      "unparsable_filename": 3
+    },
+    "analysis_exclusions": {
+      "pose_outside_limits": 4376,
+      "no_face": 268,
+      "multiple_faces": 34
+    },
+    "age_group_totals": {
+      "in_range": 14754,
+      "under_18": 3533,
+      "over_75": 740
+    }
+  },
+  "reproducibility": {
+    "metric_version": "symmetry-3d/1.0.0",
+    "landmark_map_version": "mediapipe-478-mirror/1.0.0",
+    "feature_spec_version": "age-gate-features/1.0.0",
+    "landmark_model_version": "mediapipe-face-landmarker/float16-1",
+    "landmark_model_sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+    "landmark_delegate": "CPU",
+    "onnx_sha256": "80bcfc05eec12243108e8502f88824e680d3d6f03e9ca6607a1dc711e86e02d3",
+    "onnx_target_opset": 15,
+    "lgbm_params": {
+      "n_estimators": 400,
+      "learning_rate": 0.05,
+      "num_leaves": 31,
+      "min_child_samples": 40,
+      "subsample": 0.9,
+      "subsample_freq": 1,
+      "colsample_bytree": 0.8,
+      "reg_lambda": 1.0,
+      "class_weight": "balanced",
+      "random_state": 20260810,
+      "n_jobs": 2,
+      "verbose": -1
+    },
+    "python": "3.12.13",
+    "packages": {
+      "mediapipe": "0.10.35",
+      "numpy": "2.0.2",
+      "pandas": "2.2.2",
+      "pillow": "12.3.0",
+      "opencv-contrib-python": "5.0.0.93",
+      "lightgbm": "4.7.0",
+      "onnx": "1.22.0",
+      "onnxmltools": "1.16.0",
+      "onnxruntime": "1.25.0",
+      "scikit-learn": "1.6.1"
+    }
+  },
+  "privacy": {
+    "contains_images": false,
+    "contains_landmarks": false,
+    "contains_per_image_predictions": true,
+    "contains_filenames": true,
+    "note": "個票は後続分析のために保存する。画像・ランドマーク座標は保存しない。"
+  },
+  "warning": "このゲートは「参考年齢を表示してよいか」だけを判定する研究用プロトタイプである。年齢認証・本人確認・未成年判定・入場制限・その他の権利や機会に影響する判断へ使用してはならない。境界年齢（17/18歳、75/76歳）は原理的に分離できず、群ごとに誤り率が異なる。UTKFaceと固定した選別条件に限定した結果であり、他の撮影条件・他の集団へは外挿できない。"
+}
