@@ -22,9 +22,9 @@ take03 だけであり、同じ向きに外れている共変量が **pitch と�
 形が分からない。** セクション S はその空白を埋める。
 
     uv run python scripts/measure_pose_response.py --self-test
-    uv run python scripts/measure_pose_response.py --video take01.mov \
-        --video take02.mov --video take03.mov --max-frames 600
-    uv run python scripts/measure_pose_response.py --video take07.mov \
+    uv run python scripts/measure_pose_response.py --video data/takes/take01.mov \
+        --video data/takes/take02.mov --video data/takes/take03.mov --max-frames 600
+    uv run python scripts/measure_pose_response.py --video data/takes/take07.mov \
         --section S --max-frames 600
 
 検出とフレーム集合は `measure_session_variation.py` の `capture_take` をそのまま

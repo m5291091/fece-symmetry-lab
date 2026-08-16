@@ -21,9 +21,9 @@
 解き、**alpha が窓幅と相関するか**を主結論の材料として出す。生の `z` は頭部中心
 付近を原点とする相対量なので、1 点ずつ比べても意味がない。
 
-    uv run python scripts/measure_zoom_depth_scale.py --video take01.mov
-    uv run python scripts/measure_zoom_depth_scale.py --video take01.mov \
-        --video take02.mov --video take03.mov --max-frames 600
+    uv run python scripts/measure_zoom_depth_scale.py --video data/takes/take01.mov
+    uv run python scripts/measure_zoom_depth_scale.py --video data/takes/take01.mov \
+        --video data/takes/take02.mov --video data/takes/take03.mov --max-frames 600
     uv run python scripts/measure_zoom_depth_scale.py --self-test
 
 `measure_metric_noise.py`（A〜L）へは一切触れない。指標・表示式・正規化・3D 距離は

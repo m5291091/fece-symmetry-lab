@@ -11,7 +11,11 @@ import json
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from face_symmetry_lab.domain.models import GenderLabel
+from face_symmetry_lab.application.age_gate import AgeGateStatus
+from face_symmetry_lab.application.reference_baseline import BaselineSummary
+from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
+from face_symmetry_lab.domain.reference_stats import MetricSummary
+from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
 from face_symmetry_lab.ui.hud import (
     HUD_CHART_CAPACITY,
     HUD_CHART_WINDOW_SECONDS,
@@ -27,10 +31,14 @@ from face_symmetry_lab.ui.hud import (
     hud_html,
 )
 from face_symmetry_lab.ui.readings import (
+    GATE_LABELS,
     GENDER_LABELS,
     PART_LABELS,
+    format_display_hold,
     format_score,
+    format_smoothing_window,
     format_symmetry,
+    gate_label,
 )
 
 
@@ -190,6 +198,87 @@ def test_the_demographic_row_is_dropped_when_the_user_turned_it_off() -> None:
 
 def test_the_hud_carries_the_gate_colour() -> None:
     assert _payload(gate="#D9A21B")["gate"] == "#D9A21B"
+
+
+# --- FR-038: 年齢ゲートの通知 --------------------------------------------------
+
+
+def test_a_notice_replaces_the_demographic_row_when_demographics_are_hidden() -> None:
+    """FR-038: `show_demographics=False` のとき、`notice` が `demo` の代わりに入る。"""
+    payload = _payload(estimate=None, show_demographics=False, notice="この画像では…")
+
+    assert payload["demo"] == "この画像では…"
+
+
+def test_a_notice_is_ignored_while_demographics_are_shown() -> None:
+    """罠: `notice` を優先すると、通った判定の HUD にも余計な文言が混ざる。"""
+    payload = _payload(
+        estimate=_estimate(age=34.4), show_demographics=True, notice="出てはいけない"
+    )
+
+    assert "出てはいけない" not in payload["demo"]
+    assert "参考年齢 34 歳" in payload["demo"]
+
+
+def test_render_hud_payload_hides_demographics_and_shows_the_notice_when_the_gate_blocks() -> None:
+    """FR-038: 年齢ゲートが参考年齢を止めているとき、HUD は数値ではなく通知を出す。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "snapshot = PipelineSnapshot(\n"
+        "    analysis=outcome,\n"
+        "    age_gate_outcome=AgeGateOutcome(\n"
+        "        status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
+        "    ),\n"
+        ")\n"
+        "render_hud_payload(snapshot, show_demographics=True)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["demo"] == age_gate_notice(AgeGateStatus.OUT_OF_RANGE)
+    assert payload["demo"] != ""
+
+
+def test_render_hud_payload_ignores_a_gate_outcome_when_the_user_turned_demographics_off() -> None:
+    """トグルを切っているだけのときは、ゲート通知を出さず沈黙のままにする。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "snapshot = PipelineSnapshot(\n"
+        "    analysis=outcome,\n"
+        "    age_gate_outcome=AgeGateOutcome(\n"
+        "        status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
+        "    ),\n"
+        ")\n"
+        "render_hud_payload(snapshot, show_demographics=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["demo"] == ""
 
 
 def test_the_payload_carries_a_generation_identifier_that_changes_with_the_segment() -> None:
@@ -426,3 +515,280 @@ def test_the_chart_y_axis_is_a_fixed_window_not_zero_to_a_hundred_or_auto_scaled
     """
     assert HUD_CHART_Y_MIN == 95.0
     assert HUD_CHART_Y_MAX == 100.0
+
+
+# --- FR-039: 参照平均の併記 ----------------------------------------------------
+
+
+def _baseline(**means: float) -> BaselineSummary:
+    defaults = {
+        "score_points": 45.0,
+        "symmetry_percent_overall": 96.0,
+        "symmetry_percent_contour": 95.0,
+        "symmetry_percent_eyes": 96.5,
+        "symmetry_percent_nose": 97.0,
+        "symmetry_percent_mouth": 96.2,
+    }
+    defaults.update(means)
+    return BaselineSummary(
+        age=20,
+        gender=GenderLabel.MALE,
+        count=75,
+        metrics={name: MetricSummary(mean=value, sd=1.0) for name, value in defaults.items()},
+    )
+
+
+def test_the_baseline_is_compared_against_the_same_value_that_is_displayed() -> None:
+    """AC-BASELINE-01: 括弧の中の差は、画面に出ている数から作る。"""
+    payload = _payload(baseline=_baseline())
+
+    baseline = payload["baseline"]
+    assert payload["symmetry"] == "97.85%"
+    assert baseline["symmetry"] == "平均 96.00%（+1.85）"
+
+
+def test_the_baseline_score_is_compared_in_points_and_not_in_percent() -> None:
+    """§8.6.7: 点と % を混ぜない（罠: 対称度の目盛りで引き算する実装は 51.9 を出す）。"""
+    payload = _payload(baseline=_baseline())
+
+    assert payload["score"] == format_score(0.031)
+    assert payload["baseline"]["score"] == "平均 45.0 点（+2.5）"
+    assert "%" not in payload["baseline"]["score"]
+
+
+def test_every_part_carries_its_own_baseline() -> None:
+    payload = _payload(baseline=_baseline())
+
+    parts = payload["baseline"]["parts"]
+    assert set(parts) == set(PART_LABELS)
+    assert parts["contour"] == "平均 95.00%（+4.00）"
+    assert parts["nose"] == "平均 97.00%（+0.00）"
+
+
+def test_the_baseline_note_names_the_population() -> None:
+    """AC-BASELINE-04: 何と比べているのかを、併記と同じ吹き出しの中へ置く。"""
+    note = _payload(baseline=_baseline())["baseline"]["note"]
+
+    assert "20 歳" in note and "男性" in note and "75 件" in note
+    assert "人種で絞り込まず" in note
+
+
+def test_no_baseline_leaves_every_slot_empty() -> None:
+    """併記が無いときは空文字であり `—` ではない（`:empty` で行ごと畳む）。"""
+    baseline = _payload()["baseline"]
+
+    assert baseline["symmetry"] == ""
+    assert baseline["score"] == ""
+    assert baseline["note"] == ""
+    assert set(baseline["parts"]) == set(PART_LABELS)
+    assert all(text == "" for text in baseline["parts"].values())
+
+
+def test_the_baseline_never_changes_the_measured_readings() -> None:
+    """§10.12-7: 参照統計は表示の上乗せであり、測定値の表示を変えない。"""
+    without = _payload()
+    with_baseline = _payload(baseline=_baseline())
+
+    for key in ("symmetry", "score", "parts", "chart", "label", "gate"):
+        assert without[key] == with_baseline[key]
+
+
+def test_a_missing_reading_gets_the_mean_without_a_difference() -> None:
+    """不変条件 11: `—` の項目に `+0.00` を作らない。"""
+    payload = _payload(equal_weight=None, baseline=_baseline())
+
+    assert payload["score"] == "—"
+    assert payload["baseline"]["score"] == "平均 45.0 点"
+
+
+def test_render_hud_payload_resolves_the_baseline_for_the_shown_estimate() -> None:
+    """FR-039: 同梱の参照統計を通した、Camera 側の端から端までの配線。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from datetime import UTC, datetime\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "estimate = build_demographic_estimate(\n"
+        "    estimated_age_years=20.4,\n"
+        "    gender_probabilities=(0.2, 0.8),\n"
+        "    model_version='age-gender/test',\n"
+        "    model_sha256='a' * 64,\n"
+        "    observed_at=datetime(2026, 8, 16, tzinfo=UTC),\n"
+        ")\n"
+        "snapshot = PipelineSnapshot(analysis=outcome, demographic_estimate=estimate)\n"
+        "render_hud_payload(snapshot, show_demographics=True)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    payload = json.loads(at.markdown[0].value.split(">", 1)[1].rsplit("<", 1)[0])
+    assert "参考年齢 20 歳" in payload["demo"]
+    assert "20 歳・男性" in payload["baseline"]["note"]
+    assert "75 件" in payload["baseline"]["note"]
+    assert payload["baseline"]["symmetry"].startswith("平均 ")
+
+
+def test_render_hud_payload_drops_the_baseline_when_the_gate_hides_the_age() -> None:
+    """§10.12-3: 母集団の年齢からゲートの内部判断を復元させない。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from datetime import UTC, datetime\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "estimate = build_demographic_estimate(\n"
+        "    estimated_age_years=20.4,\n"
+        "    gender_probabilities=(0.2, 0.8),\n"
+        "    model_version='age-gender/test',\n"
+        "    model_sha256='a' * 64,\n"
+        "    observed_at=datetime(2026, 8, 16, tzinfo=UTC),\n"
+        ")\n"
+        "snapshot = PipelineSnapshot(\n"
+        "    analysis=outcome,\n"
+        "    demographic_estimate=estimate,\n"
+        "    age_gate_outcome=AgeGateOutcome(\n"
+        "        status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
+        "    ),\n"
+        ")\n"
+        "render_hud_payload(snapshot, show_demographics=True)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    payload = json.loads(at.markdown[0].value.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["baseline"]["note"] == ""
+    assert payload["baseline"]["symmetry"] == ""
+    assert "20" not in payload["baseline"]["note"]
+    # 左右差の表示は変わらない（不変条件 12）。
+    assert payload["symmetry"] == format_symmetry(0.021)
+
+
+# --- FR-040 / §5.4: 状態と平滑化時間のテキスト表示 ----------------------------
+
+
+def test_the_payload_carries_the_gate_state_as_text() -> None:
+    """§5.4: 枠色と同じ情報をテキストでも運ぶ。整形は `ui.readings` と共有する。"""
+    payload = _payload(state=gate_label(AnalysisState(status=Status.OK)))
+
+    assert payload["state"] == "計測中"
+    assert payload["state"] != payload["gate"], "色と文字は別の経路である"
+
+
+def test_the_payload_carries_the_active_smoothing_window() -> None:
+    """FR-040: いま何秒の平均を見ているかを、数値の隣で読めるようにする。"""
+    payload = _payload(smoothing=format_smoothing_window(0.4))
+
+    assert payload["smoothing"] == "平滑化 0.4 秒"
+
+
+def test_the_state_and_smoothing_default_to_blank_rather_than_a_dash() -> None:
+    """併記の不在は測定の欠測ではない（`—` を入れない、`:empty` で畳む）。"""
+    payload = _payload()
+
+    assert payload["state"] == ""
+    assert payload["smoothing"] == ""
+
+
+def test_the_state_and_smoothing_never_change_the_measured_readings() -> None:
+    """罠: 状態や設定の表示が測定値の整形へ混ざる実装はここで落ちる。"""
+    plain = _payload()
+    annotated = _payload(
+        state=gate_label(AnalysisState(status=Status.HOLD)),
+        smoothing=format_smoothing_window(2.0),
+    )
+
+    for key in ("symmetry", "score", "parts", "chart"):
+        assert annotated[key] == plain[key]
+
+
+def test_render_hud_payload_publishes_the_state_and_smoothing_window() -> None:
+    """FR-040: snapshot の解析状態と、pipeline が報告する時定数を配線する。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "outcome = _outcome_for_display(\n"
+        "    symmetry_3d=_symmetry_3d_result(\n"
+        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
+        "    ),\n"
+        "    smooth_3d=0.021,\n"
+        ")\n"
+        "render_hud_payload(\n"
+        "    PipelineSnapshot(analysis=outcome),\n"
+        "    show_demographics=False,\n"
+        "    smoothing_tau_seconds=2.0,\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["smoothing"] == "平滑化 2.0 秒"
+    assert payload["state"] in set(GATE_LABELS.values())
+
+
+def test_render_hud_payload_leaves_the_smoothing_blank_when_it_is_unknown() -> None:
+    """analyzer 未接続の pipeline（`smoothing_tau_seconds` が `None`）でも落ちない。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "render_hud_payload(PipelineSnapshot(), show_demographics=False)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["smoothing"] == ""
+    assert payload["state"] == "待機中"
+
+
+def test_the_payload_carries_the_active_display_hold() -> None:
+    """FR-041: 「更新 2.0 秒ごと」を数値の隣で読めるようにする。"""
+    payload = _payload(hold=format_display_hold(2.0))
+
+    assert payload["hold"] == "更新 2.0 秒ごと"
+
+
+def test_updating_every_frame_leaves_the_hold_chip_blank() -> None:
+    """既定の挙動を書くと HUD に常時 1 行増えるだけである。"""
+    assert _payload()["hold"] == ""
+    assert _payload(hold=format_display_hold(0.0))["hold"] == ""
+
+
+def test_render_hud_payload_publishes_the_display_hold() -> None:
+    at = AppTest.from_string(
+        "import json\n"
+        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
+        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
+        "render_hud_payload(\n"
+        "    PipelineSnapshot(),\n"
+        "    show_demographics=False,\n"
+        "    display_hold_seconds=5.0,\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    html = at.markdown[0].value
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["hold"] == "更新 5.0 秒ごと"

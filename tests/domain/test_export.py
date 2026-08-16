@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from face_symmetry_lab.domain.export import ExportRecord, InputMode
+from face_symmetry_lab.domain.export import AgeGateDecisionLabel, ExportRecord, InputMode
 from face_symmetry_lab.domain.models import ReasonCode, Status
 
 
@@ -167,3 +167,56 @@ def test_missing_values_are_null_not_zero_filled() -> None:
     assert record.distance3d_overall_smooth is None
     assert record.distance3d_parts_equal_raw is None
     assert record.reason_codes == (ReasonCode.OFF_AXIS_YAW,)
+
+
+# --- §9.2 / FR-038: 年齢ゲートの列（2026-08-16） -----------------------------
+
+
+def test_a_record_can_carry_the_gate_decision_and_its_version() -> None:
+    """§9.2: この列が無いと、`estimated_age_years` が null のとき「ゲートで
+    弾かれた」のか「モデル未配置」なのかを行から区別できない。"""
+    record = _record(
+        age_gate_decision=AgeGateDecisionLabel.OUT_OF_RANGE,
+        age_gate_version="age-gate/1.0.0",
+        age_gate_spec_revision=3,
+        age_gate_model_sha256="b" * 64,
+    )
+
+    assert record.age_gate_decision is AgeGateDecisionLabel.OUT_OF_RANGE
+    assert record.age_gate_spec_revision == 3
+
+
+def test_the_gate_columns_default_to_missing() -> None:
+    """ゲートを呼ばなかったフレーム（顔なし・姿勢ゲート閉）は 4 列とも欠測。"""
+    record = _record()
+
+    assert record.age_gate_decision is None
+    assert record.age_gate_version is None
+    assert record.age_gate_spec_revision is None
+    assert record.age_gate_model_sha256 is None
+
+
+def test_the_gate_label_has_no_name_for_a_frame_it_never_judged() -> None:
+    """罠: `not_evaluated` を列の値として持つと、行を読む側が「ゲートが何かを
+    決めた」と受け取る。呼ばなかったことは `None` で表す。"""
+    assert {label.value for label in AgeGateDecisionLabel} == {
+        "in_range",
+        "out_of_range",
+        "undetermined",
+    }
+
+
+def test_the_raw_gate_probability_has_no_column() -> None:
+    """§9.2: 確率を記録すると、凍結閾値以外での再判定や順位付けが可能になる。"""
+    assert not any("probab" in name for name in ExportRecord.model_fields)
+
+
+@pytest.mark.parametrize("bad", ["", "zz" * 32, "a" * 63])
+def test_a_malformed_gate_model_hash_is_refused(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        _record(age_gate_model_sha256=bad)
+
+
+def test_a_non_positive_spec_revision_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        _record(age_gate_spec_revision=0)

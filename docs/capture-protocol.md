@@ -105,7 +105,7 @@ take01 と take02 だけなら 0.031pt だった差が、3 本目を入れると
 撮ったテイクが 4.1〜4.2 を満たしているかは、測定スクリプトで確かめる。
 
 ```bash
-uv run python scripts/measure_session_variation.py --video take04.mov --section P --max-frames 600
+uv run python scripts/measure_session_variation.py --video data/takes/take04.mov --section P --max-frames 600
 ```
 
 出力の「共変量」表を、次の目安と突き合わせる。**この目安は §3 の実測ばらつきから引いた作業用の値であって、検証済みの受け入れ基準ではない。**
@@ -132,13 +132,15 @@ uv run python scripts/measure_session_variation.py --video take04.mov --section 
 
 **顔の映像・座標をリポジトリへ入れない**（`CLAUDE.md` §5 のプライバシー不変条件）。
 
-| 種別 | 名前 | 扱い |
+| 種別 | 置き場と名前 | 扱い |
 |---|---|---|
-| 映像 | `takeNN.mov` | `.gitignore` の `*.mov` が除外する。リポジトリ直下に置いてよいが commit しない |
-| 測定 JSON | `take` で始まり `.json` で終わる名前（例 `take04-06_session.json`） | `.gitignore` の `take*.json` が除外する |
+| 映像 | `data/takes/takeNN.mov` | `.gitignore` の `data/*` が `data/` を丸ごと除外する（例外は `data/README.md` だけ） |
+| 測定 JSON | `data/takes/take` で始まり `.json` で終わる名前（例 `data/takes/take04-06_session.json`） | 同じく `data/*` が除外する |
 | 測定の要約 | `docs/symmetry-metric-measurements.md` | **統計量だけ。** 画像・座標・個人が特定できる情報は書かない |
 
-測定スクリプトは JSON へ統計量しか書かない（画像も landmark 座標も書かない）。それでも出力先の名前は上の pattern に収めること。pattern から外れた名前は `.gitignore` に掛からない。
+**映像と測定出力は `data/takes/` の中へ置くこと**（`data/README.md`）。`data/` を丸ごと非追跡にしてあるので、置き場さえ守れば名前の付け方で `.gitignore` から漏れることがない。`data/` の外へ出した場合の受け皿として `*.mov` と `take*.json` の pattern も残してあるが、そちらは名前が pattern から外れた時点で掛からなくなる。
+
+測定スクリプトは JSON へ統計量しか書かない（画像も landmark 座標も書かない）。
 
 ---
 

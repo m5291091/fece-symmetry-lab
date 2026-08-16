@@ -41,6 +41,11 @@ from face_symmetry_lab.adapters.io.metric_config import (
     load_metric_config,
 )
 from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, file_sha256
+from face_symmetry_lab.application.age_gate import (
+    AgeGateOutcome,
+    AgeGateService,
+    evaluate_age_gate_for_frame,
+)
 from face_symmetry_lab.application.image_input import (
     ImageInputError,
     decode_uploaded_image,
@@ -52,15 +57,18 @@ from face_symmetry_lab.application.still_image import (
     StillImageAnalysis,
     analyze_still_image,
 )
-from face_symmetry_lab.application.symmetrization import symmetrize_frame
+from face_symmetry_lab.application.symmetrization import SymmetrizationView, symmetrize_frame
 from face_symmetry_lab.domain.export import InputMode
 from face_symmetry_lab.domain.landmarks import TrackingStatus
 from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, MetricConfigError
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
+from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.model_setup import (
+    build_age_gate_service,
     landmark_asset,
     resolve_ready_demographic,
     resolve_ready_landmarker,
@@ -71,6 +79,8 @@ from face_symmetry_lab.ui.readings import (
     resolve_overall_distance,
     resolve_part_distance_3d,
 )
+from face_symmetry_lab.ui.report import build_image_report
+from face_symmetry_lab.ui.report_figures import build_report_figures
 from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
@@ -96,6 +106,9 @@ IMAGE_RECORDED_INPUT_KEY = "image_recorded_input"
 IMAGE_DEMOGRAPHIC_INPUT_KEY = "image_demographic_input"
 #: H2: 直近の推定試行が失敗した理由。`RESULT_STATE_KEY` と排他的に持つ。
 DEMOGRAPHIC_ERROR_KEY = "image_demographic_error"
+#: FR-038: セッション中 1 度だけ構築する年齢ゲートの use case（ONNX セッションの
+#: 再生成を避ける、`ESTIMATOR_STATE_KEY` と同じ理由）。
+AGE_GATE_SERVICE_STATE_KEY = "image_age_gate_service"
 
 _IMAGE_STATUS_MESSAGES: Final[dict[TrackingStatus, str]] = {
     TrackingStatus.NO_FACE: (
@@ -185,6 +198,41 @@ def _session_image_recorder(
         )
         st.session_state[IMAGE_RECORDER_STATE_KEY] = recorder
     return recorder
+
+
+def _session_age_gate_service() -> AgeGateService:
+    """FR-038: セッション中 1 度だけ構築する（ONNX セッションの再生成を避ける）。
+
+    `build_age_gate_service` はモデル・spec が欠けても例外を投げず、
+    `classifier=None` の service へ静かに倒れる（AC-AGEGATE-03）。
+    """
+    service = st.session_state.get(AGE_GATE_SERVICE_STATE_KEY)
+    if not isinstance(service, AgeGateService):
+        service = build_age_gate_service()
+        st.session_state[AGE_GATE_SERVICE_STATE_KEY] = service
+    return service
+
+
+def _evaluate_image_age_gate(analysis: StillImageAnalysis | None) -> AgeGateOutcome | None:
+    """FR-038: この写真について、参考年齢を表示してよいかを判定する。
+
+    左右差の解析結果（`analysis`）は読むだけで一切変えない（不変条件 12）。
+    ゲート自体の失敗（spec 読み込み・正規化）は `UNDETERMINED` へ倒れて
+    参考年齢を隠す側（安全側）へ働くため、ここでは呼び出しの前提
+    （`analysis is not None`）だけを見る。
+    """
+    if analysis is None:
+        return None
+    try:
+        config_3d = load_metric_config(SYMMETRY_3D_METRIC_CONFIG_PATH)
+    except MetricConfigError:
+        return None
+    return evaluate_age_gate_for_frame(
+        _session_age_gate_service(),
+        frame=analysis.landmarks.frame,
+        outcome=analysis.outcome,
+        config_3d=config_3d,
+    )
 
 
 # --- 分析 ---------------------------------------------------------------------
@@ -280,26 +328,66 @@ def _maybe_estimate_image_demographics(
 # --- タブの中身 ---------------------------------------------------------------
 
 
-def _render_image_export(recorder: SessionRecorder) -> None:
+def _render_image_export(
+    recorder: SessionRecorder,
+    *,
+    analysis: StillImageAnalysis | None = None,
+    view: SymmetrizationView | None = None,
+    gate_outcome: AgeGateOutcome | None = None,
+) -> None:
+    """FR-017 の台帳と、FR-042 の読み物を同じ場所へ置く。
+
+    §9.6.2 の内容は「画面に出ているもの」と同じでなければならない。そこで
+    参考年齢・参考性別は、**吹き出しへ実際に渡したのと同じ解決**を通す——
+    `_resolve_shown_estimate` を共有することで、年齢ゲートが隠した判断が
+    レポートの母集団から復元されることを防ぐ（§10.12-3）。
+    """
+    bundle = recorder.export_bundle()
+    builder = None
+    if analysis is not None:
+        estimate = _resolve_shown_estimate(gate_outcome)
+        notice = "" if gate_outcome is None else age_gate_notice(gate_outcome.status)
+
+        def builder(include_figures: bool) -> str:
+            return build_image_report(
+                outcome=analysis.outcome,
+                bundle=bundle,
+                figures=build_report_figures(
+                    include_figures=include_figures,
+                    preview=analysis.landmarks.preview,
+                    view=view,
+                ),
+                baseline=resolve_baseline(estimate),
+                estimate=estimate,
+                show_demographics=estimate is not None,
+                notice=notice,
+            )
+
     render_export_panel(
-        recorder.export_bundle(),
+        bundle,
         heading="この画像の分析データをエクスポート",
-        warning=(
-            "姿勢・左右差・肌表面参考値・参考年齢・参考性別などの顔由来データを含みます。"
-            "共有先と利用目的を確認してから保存してください。"
-        ),
+        warning="姿勢・左右差・参考年齢などの顔由来データを含みます。",
         # 1 枚の写真は常にちょうど 1 件の記録になるので、件数を出しても
         # 情報が増えない。
         key_prefix="download_image",
+        report_builder=builder,
+        report_mode="image",
     )
 
 
-def _render_image_symmetrization(rgb: np.ndarray, analysis: StillImageAnalysis) -> None:
+def _render_image_symmetrization(
+    rgb: np.ndarray, analysis: StillImageAnalysis
+) -> SymmetrizationView | None:
     """FR-034: Camera と同じ一発の折り返しを、アップロードされた写真へ適用する。
 
     アップロードはすでに静止したフレームなので取り込む対象が無く、画面上の
     写真からそのまま表示を計算する（§14.3g）。それ以外——並び・文言・変形の
     任意指定——は `ui.symmetrization_panel` が Camera と共有する。
+
+    FR-042: 作ったビューを**返す**。`st.tabs` はどのタブが表示されていても毎回
+    すべての中身を構築するため、この計算は既に毎回走っている。レポート用に
+    もう一度折りたたむのは同じ費用を 2 度払うだけであり、しかも 2 つの図が
+    別々の計算から出ることになる。失敗したときは `None`。
     """
     st.markdown(SYMMETRIZATION_HEADING)
     # §8.6.4 は全画素を作り直し、このパネルは再実行のたびに描き直される。
@@ -314,7 +402,7 @@ def _render_image_symmetrization(rgb: np.ndarray, analysis: StillImageAnalysis) 
         )
     except SymmetrizationError as error:
         st.info(str(error))
-        return
+        return None
 
     st.caption(
         "写真の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
@@ -322,17 +410,30 @@ def _render_image_symmetrization(rgb: np.ndarray, analysis: StillImageAnalysis) 
         "どちらが正しい・望ましいという意味はありません。"
     )
     render_symmetrization_view(view, warp_requested=warp)
+    return view
 
 
-def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
+def _render_image_demographic_detail(
+    age_input: np.ndarray | None,
+    gate_outcome: AgeGateOutcome | None = None,
+) -> None:
     """年齢・性別の参考値パネル全体。常に下側へ画面幅いっぱいで表示する（§5.1）。
 
     FR-024 はこれを左右差側から独立させている。推定は `_maybe_estimate_image_demographics`
     がこの関数より先に済ませているため、ここでは結果を読んで表示するだけである。
     黙って消えるのではなく、常に何が起きているかを説明する（顔が検出できない・
     モデルが未配置・推定が成功した・推定が失敗した、のいずれの状態でも）。
+
+    FR-038: `gate_outcome` が参考年齢の表示を許さない場合は、推定の成否に
+    関わらず `ui.age_gate_notice` の固定文言だけを出す（§10.11-2、内部判断を
+    属性として提示しない）。
     """
     st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
+    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
+        notice = age_gate_notice(gate_outcome.status)
+        if notice:
+            st.info(notice)
+            return
     if age_input is None:
         st.info("単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。")
         return
@@ -353,7 +454,25 @@ def _render_image_demographic_detail(age_input: np.ndarray | None) -> None:
 # --- セクション全体 -----------------------------------------------------------
 
 
-def _render_preview_with_overlay(analysis: StillImageAnalysis) -> None:
+def _resolve_shown_estimate(gate_outcome: AgeGateOutcome | None) -> DemographicEstimate | None:
+    """**実際に画面へ出す**参考年齢・参考性別を 1 か所で決める。
+
+    吹き出し（FR-039 の母集団もここから解決される）と FR-042 のレポートが同じ
+    関数を通る。片方が session state の推定をそのまま読むと、**年齢ゲートが
+    隠した判断が母集団の年齢から復元されてしまう**（§10.12-3）。ゲートが表示を
+    許さないときは、推定が成功していても `None` を返す。
+    """
+    session_estimate = st.session_state.get(RESULT_STATE_KEY)
+    estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
+    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
+        return None
+    return estimate
+
+
+def _render_preview_with_overlay(
+    analysis: StillImageAnalysis,
+    gate_outcome: AgeGateOutcome | None = None,
+) -> None:
     """§5.1/§14.3e（2026-08-12）: 画像に隣接して数値を出すのは吹き出しだけ。
 
     隣の見出し結果は持たない。Camera が項目 26（H3）で解消したのと同じ「同じ
@@ -364,9 +483,17 @@ def _render_preview_with_overlay(analysis: StillImageAnalysis) -> None:
     `symmetry-3d/1.0.0` から HUD と同じ解決（平滑値優先）を通す。静止画は平滑値
     を持たない（`analyze_still_image` が明示的に欠測へ落とす）ため、自然に生値へ
     落ちる。全体のスコアはもともと生値のみである（§8.6.5・§8.7）。
+
+    FR-038: `gate_outcome.may_show_reference_age` が偽のときは推定値を吹き出し
+    へ渡さず、代わりに `ui.age_gate_notice` の固定文言を出す。左右差（対称度・
+    全体のスコア・部位別）の描画は変えない（不変条件 12）。
+
+    FR-039: 参照平均は `estimate`——実際に吹き出しへ出す推定——からだけ解決する。
+    ゲートが参考年齢を隠した後の `None` をそのまま渡すので、隠した判断が母集団の
+    年齢から復元されることがない（§10.12-3）。
     """
-    session_estimate = st.session_state.get(RESULT_STATE_KEY)
-    estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
+    estimate = _resolve_shown_estimate(gate_outcome)
+    notice = "" if gate_outcome is None else age_gate_notice(gate_outcome.status)
     render_image_with_overlay(
         analysis.landmarks.preview,
         caption="検出したランドマーク",
@@ -375,7 +502,9 @@ def _render_preview_with_overlay(analysis: StillImageAnalysis) -> None:
         parts={name: resolve_part_distance_3d(analysis.outcome, name) for name in PART_NAMES},
         estimate=estimate,
         show_demographics=estimate is not None,
+        notice=notice,
         gate=gate_color(analysis.outcome.state),
+        baseline=resolve_baseline(estimate),
     )
     render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
 
@@ -439,11 +568,14 @@ def render_image_section() -> None:
         input_fingerprint=input_fingerprint,
         recorder=recorder,
     )
+    # FR-038: 表示直前にゲートを評価する。既存の推定処理・worker 構造は変えず、
+    # 表示可否だけをここで決める（判断の詳細は実装後レポートに明記）。
+    age_gate_outcome = _evaluate_image_age_gate(analysis)
 
     if analysis is None:
         st.info("ランドマークを表示できません。")
     else:
-        _render_preview_with_overlay(analysis)
+        _render_preview_with_overlay(analysis, age_gate_outcome)
 
     # §5.1, AC-LAYOUT-01: 画像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
     # 上の画像がスクロールで手の届かない位置へ行かないようにする。**Camera と
@@ -463,15 +595,21 @@ def render_image_section() -> None:
             )
             # 静止画は状態を持たないため、生の値をそのまま表示する（§8.7）。
             render_score_details(analysis.outcome, show_smoothed=False)
+    symmetrization_view: SymmetrizationView | None = None
     with symmetry_tab:
         if analysis is None:
             st.info("ランドマークが取れていないため、比較を作成できません。")
         else:
-            _render_image_symmetrization(rgb, analysis)
+            symmetrization_view = _render_image_symmetrization(rgb, analysis)
     with demographic_tab:
-        _render_image_demographic_detail(age_input)
+        _render_image_demographic_detail(age_input, age_gate_outcome)
     with export_tab:
         if recorder is None:
             st.info("エクスポートできる分析結果がまだありません。")
         else:
-            _render_image_export(recorder)
+            _render_image_export(
+                recorder,
+                analysis=analysis,
+                view=symmetrization_view,
+                gate_outcome=age_gate_outcome,
+            )

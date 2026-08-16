@@ -13,9 +13,22 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Test traceability | `testbox.md` |
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
+| 参照統計ブラウザ（人種・性別・年齢での絞り込み閲覧、FR-037） | `src/face_symmetry_lab/ui/reference_page.py` |
+| 参照統計の凍結セルテーブル（§9.5、アプリが読む唯一の参照データ） | `configs/reference/utkface_symmetry3d_cells_v1.csv` |
+| 吹き出し・HUD へ併記する参照平均の解決（FR-039） | `src/face_symmetry_lab/ui/baseline.py` |
+| 参照統計セルテーブルの生成 (dev-only、アプリからは呼ばない) | `scripts/build_reference_dataset.py` |
+| 参照統計の生成元 notebook（再現性の正本。`src/` からは参照しない） | `research/utkface-symmetry/utkface_symmetry_lab.ipynb` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
 | 映像へ重ねる HUD の組み立てと配線 | `src/face_symmetry_lab/ui/hud.py` |
 | HUD がブラウザへ渡す CSS・実行時 JS | `src/face_symmetry_lab/ui/hud_assets.py` |
+| 表示の落ち着き（移動平均の間隔・更新間隔）を選ぶ UI（FR-040, FR-041） | `src/face_symmetry_lab/ui/smoothing_panel.py` |
+| 表示値を一定時間だけ差し替えないラッチ（FR-041） | `src/face_symmetry_lab/domain/display_hold.py` |
+| セッション要約の記述統計（FR-021） | `src/face_symmetry_lab/domain/session_summary.py` |
+| 表示できた参考年齢・参考性別の観測（FR-039、レポートの母集団） | `src/face_symmetry_lab/application/demographic_observations.py` |
+| セッション要約の描画（FR-021） | `src/face_symmetry_lab/ui/summary_panel.py` |
+| 結果レポート（HTML）の組み立て（FR-042） | `src/face_symmetry_lab/ui/report.py` |
+| レポートへ入れる図の組み立て（FR-042） | `src/face_symmetry_lab/ui/report_figures.py` |
+| 図の縮小と data URI 符号化（FR-042） | `src/face_symmetry_lab/adapters/imaging/image_encoding.py` |
 | Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
 | 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
 | Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
@@ -29,7 +42,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 自動調整の判断ロジック | `src/face_symmetry_lab/application/auto_tune_controller.py` |
 | Realtime age/gender worker | `src/face_symmetry_lab/application/demographic_worker.py` |
 | Session history / export records | `src/face_symmetry_lab/application/session.py` |
-| CSV / JSON export adapter | `src/face_symmetry_lab/adapters/export/session_exporter.py` |
 | Still-image landmarks | `src/face_symmetry_lab/application/still_image.py` |
 | Runtime ports | `src/face_symmetry_lab/application/ports.py` |
 | Pinned model manifest | `configs/model-manifest.json` |
@@ -88,7 +100,14 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
-| Display smoothing | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, §8.7 |
+| Display smoothing（時定数の値域・段・導出値を含む） | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, FR-040, §8.7, §8.8 |
+| 表示の落ち着きの選択 UI | `ui/smoothing_panel.py` | `tests/ui/test_smoothing_panel.py` | FR-040, FR-041, §8.7, §15.1, AC-SMOOTH-01, AC-HOLD-01 |
+| 表示ラッチ（更新間隔） | `domain/display_hold.py` | `tests/domain/test_display_hold.py` | FR-041, §15.1, AC-HOLD-01, AC-HOLD-02 |
+| セッション要約（記述統計） | `domain/session_summary.py` | `tests/domain/test_session_summary.py` | FR-021, §10.7, §14.4, AC-SUMMARY-01, AC-SUMMARY-02 |
+| セッション要約の描画 | `ui/summary_panel.py` | `tests/ui/test_summary_panel.py` | FR-021, §5.2, §5.3, §10.7, AC-SUMMARY-01, AC-SUMMARY-02 |
+| 結果レポート（HTML） | `ui/report.py` | `tests/ui/test_report.py` | FR-042, §9.6, §10.7, AC-REPORT-01, AC-REPORT-02 |
+| レポートの図の組み立て | `ui/report_figures.py` | `tests/ui/test_report_figures.py` | FR-042, FR-034, FR-035, AC-REPORT-03 |
+| 図の縮小と data URI 符号化 | `adapters/imaging/image_encoding.py` | `tests/adapters/test_image_encoding.py` | FR-042, §10.4, AC-REPORT-02 |
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
@@ -111,12 +130,11 @@ Read this file once at the start of a task. After locating the relevant module, 
 | MediaPipe segmentation adapter | `adapters/inference/mediapipe_segmenter.py` | `tests/adapters/test_mediapipe_segmenter.py` | FR-027, AC-DISPLAY-01 |
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
-| CSV / JSON session export | `adapters/export/session_exporter.py` | `tests/adapters/test_session_exporter.py` | FR-017, AC-EXPORT-01 |
 | 詳細結果の描画と §5.3 の文言 | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3, §8.6.3 |
 | 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
 | Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
 | Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
-| CSV / JSON ダウンロードパネル（Camera・Image共用） | `ui/export_panel.py` | UI / E2E tests は未整備 | FR-017, FR-020 |
+| ダウンロードパネル（CSV / JSON / レポート、Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020, FR-042 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
@@ -130,6 +148,15 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Analyze ページの骨格（同意・入力選択） | `ui/app.py` | `tests/ui/test_app.py` | FR-001, FR-004, AC-FLOW-01, AC-A11Y-01 |
 | About page | `ui/about_page.py` | `tests/ui/test_about_page.py` | §4.1, FR-014, §10.7 |
+| 参照統計セルの絞り込みと合併（Chan の並列分散） | `domain/reference_stats.py` | `tests/domain/test_reference_stats.py` | FR-037, §9.5, AC-REFERENCE-01, AC-REFERENCE-02 |
+| 参照統計の use case・入力検証・失敗分離 | `application/reference_browser.py` | `tests/application/test_reference_browser.py` | FR-037, AC-REFERENCE-02, AC-REFERENCE-03 |
+| 凍結参照アセットの読み込みと sha256 検証 | `adapters/io/reference_dataset.py` | `tests/adapters/test_reference_dataset.py` | FR-037, §9.5, §10.9, AC-REFERENCE-03 |
+| 参照統計ページの描画と注意書き | `ui/reference_page.py` | `tests/ui/test_reference_page.py` | FR-037, §10.7, AC-REFERENCE-02〜04 |
+| 参照平均の併記（母集団の選択と差） | `domain/reference_baseline.py` | `tests/domain/test_reference_baseline.py` | FR-039, §10.12, AC-BASELINE-01, AC-BASELINE-02 |
+| 参照平均の use case（失敗分離・memo 化・セッション単位） | `application/reference_baseline.py` | `tests/application/test_reference_baseline.py` | FR-039, §9.6.1, §10.12, AC-BASELINE-01, AC-BASELINE-03, AC-BASELINE-05 |
+| 表示できた判定の観測 | `application/demographic_observations.py` | `tests/application/test_demographic_observations.py` | FR-039, FR-042, §10.12, AC-BASELINE-05 |
+| 参照平均の画面側の解決 | `ui/baseline.py` | `tests/ui/test_baseline.py` | FR-039, §10.12, AC-BASELINE-01 |
+| 個票 → セルテーブルの生成と自己検証 (dev-only) | `scripts/build_reference_dataset.py` | `tests/repository/test_build_reference_dataset.py` | FR-037, §9.5, §10.9 |
 
 ## Maintenance
 
@@ -140,7 +167,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `d46387adad07548734fb598a5bbd1ec10a2db2f08e15726f82fcab93cce7855e`_
+_File-list SHA-256: `39aa549841fcf6d611170312a5988adcd84782b4dcbbf1933a7f1f23fa3692a4`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -161,13 +188,27 @@ face-symmetry-lab/
   - `metrics/`
     - `symmetry-2d-v1.json`
     - `symmetry-3d-v1.json`
+  - `reference/`
+    - `utkface_symmetry3d_cells_v1.csv`
+    - `utkface_symmetry3d_cells_v1.meta.json`
+  - `age-gate-v1.json`
   - `model-manifest.json`
+- `data/`
+  - `README.md`
 - `docs/`
   - `adr/`
     - `0001-age-estimation-runtime.md`
     - `0002-head-pose-coordinate-signs.md`
     - `0003-age-gender-and-skin-correction.md`
+    - `0004-reference-statistics-browser-data.md`
+    - `0005-age-gate-for-reference-age-display.md`
+    - `0006-reference-baseline-alongside-user-readings.md`
+    - `0007-user-adjustable-display-smoothing.md`
+    - `0008-display-hold-for-live-readings.md`
+    - `0009-report-export-with-embedded-images.md`
   - `model-cards/`
+    - `age-gate-v1-evaluation.json`
+    - `age-gate-v1.md`
     - `mediapipe-face-landmarker-v1.md`
     - `mediapipe-selfie-segmenter.md`
     - `openvino-age-gender-retail-0013.md`
@@ -180,9 +221,14 @@ face-symmetry-lab/
   - `symmetry-metric-analysis.md`
   - `symmetry-metric-level3.md`
   - `symmetry-metric-measurements.md`
+- `research/`
+  - `utkface-symmetry/`
+    - `utkface_age_gate_lab.ipynb`
+    - `utkface_symmetry_lab.ipynb`
 - `scripts/`
   - `__init__.py`
   - `bootstrap_models.py`
+  - `build_reference_dataset.py`
   - `convert_demographic_model.py`
   - `derive_landmark_map.py`
   - `generate_structure.py`
@@ -199,39 +245,45 @@ face-symmetry-lab/
   - `face_symmetry_lab/`
     - `adapters/`
       - `export/`
-        - … (2 files)
+        - … (1 files)
       - `imaging/`
-        - … (2 files)
-      - `inference/`
-        - … (6 files)
-      - `io/`
         - … (3 files)
+      - `inference/`
+        - … (7 files)
+      - `io/`
+        - … (4 files)
       - … (1 files)
     - `application/`
-      - … (15 files)
+      - … (19 files)
     - `domain/`
-      - … (20 files)
+      - … (25 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (14 files)
+      - … (21 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
   - `adapters/`
+    - `test_image_encoding.py`
     - `test_mediapipe_landmarker.py`
     - `test_mediapipe_segmenter.py`
     - `test_metric_config.py`
     - `test_model_store.py`
+    - `test_onnx_age_gate.py`
     - `test_opencv_demographic_estimator.py`
     - `test_piecewise_warp.py`
+    - `test_reference_dataset.py`
     - `test_runtime_errors.py`
-    - `test_session_exporter.py`
     - `test_tracking_zoom_landmarker.py`
   - `application/`
+    - `__init__.py`
+    - `test_age_gate.py`
+    - `test_age_gate_wiring.py`
     - `test_analysis_cadence.py`
     - `test_analyzer.py`
     - `test_auto_tune_controller.py`
+    - `test_demographic_observations.py`
     - `test_demographic_relay.py`
     - `test_demographic_worker.py`
     - `test_frame_capture.py`
@@ -239,13 +291,17 @@ face-symmetry-lab/
     - `test_preview_compositor.py`
     - `test_quality.py`
     - `test_realtime.py`
+    - `test_reference_baseline.py`
+    - `test_reference_browser.py`
     - `test_session.py`
     - `test_still_image.py`
     - `test_symmetrization.py`
   - `domain/`
     - `__init__.py`
+    - `test_age_gate.py`
     - `test_auto_tuning.py`
     - `test_demographics.py`
+    - `test_display_hold.py`
     - `test_export.py`
     - `test_frame_adjustments.py`
     - `test_geometry.py`
@@ -254,8 +310,11 @@ face-symmetry-lab/
     - `test_models.py`
     - `test_overlay.py`
     - `test_pose.py`
+    - `test_reference_baseline.py`
+    - `test_reference_stats.py`
     - `test_score_explanation.py`
     - `test_score_scale.py`
+    - `test_session_summary.py`
     - `test_skin_quality.py`
     - `test_smoothing.py`
     - `test_symmetrization.py`
@@ -263,8 +322,11 @@ face-symmetry-lab/
     - `test_symmetry_3d.py`
     - `test_tracking_zoom.py`
     - `test_warp_mesh.py`
+  - `fixtures/`
+    - `age_gate_contract_fixture.json`
   - `model/`
     - `conftest.py`
+    - `test_age_gate_contract.py`
     - `test_demographic_conversion.py`
     - `test_onnx_runtime_agreement.py`
     - `test_openvino_parity.py`
@@ -272,6 +334,7 @@ face-symmetry-lab/
     - `test_real_landmarker.py`
     - `test_real_segmenter.py`
   - `repository/`
+    - `test_build_reference_dataset.py`
     - `test_generate_structure.py`
     - `test_testbox_documentation.py`
   - `runtime/`
@@ -281,16 +344,24 @@ face-symmetry-lab/
     - `__init__.py`
     - `conftest.py`
     - `test_about_page.py`
+    - `test_age_gate_notice.py`
     - `test_app.py`
+    - `test_baseline.py`
     - `test_camera.py`
+    - `test_export_panel.py`
     - `test_guidance.py`
     - `test_hud.py`
     - `test_hud_assets.py`
     - `test_image_section.py`
     - `test_model_setup.py`
     - `test_readings.py`
+    - `test_reference_page.py`
+    - `test_report.py`
+    - `test_report_figures.py`
     - `test_scores.py`
+    - `test_smoothing_panel.py`
     - `test_still_overlay.py`
+    - `test_summary_panel.py`
     - `test_symmetrization_panel.py`
   - `__init__.py`
   - `test_cli.py`

@@ -27,6 +27,20 @@ from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 SCHEMA_VERSION: Final = "4.0.0"
 
 
+class AgeGateDecisionLabel(StrEnum):
+    """§9.2 の `age_gate_decision` 列。
+
+    `application.age_gate.AgeGateStatus` の 4 値のうち、記録へ残すのは「呼んだ
+    結果」の 3 つだけである。`NOT_EVALUATED`（顔なし・姿勢ゲート閉で呼ばなかった）
+    は列としては `None` になる——呼んでいない判定に名前を与えると、行を読む側が
+    「ゲートが何かを決めた」と受け取る。
+    """
+
+    IN_RANGE = "in_range"
+    OUT_OF_RANGE = "out_of_range"
+    UNDETERMINED = "undetermined"
+
+
 class InputMode(StrEnum):
     CAMERA = "camera"
     IMAGE = "image"
@@ -89,6 +103,18 @@ class ExportRecord(BaseModel):
     gender_prob_male: float | None = Field(default=None, ge=0, le=1)
     demographic_observed_elapsed_ms: int | None = Field(default=None, ge=0)
     demographic_is_cached: bool | None = None
+    #: §9.2/FR-038: ゲートの判定と、その動作点の版。**生の確率は持たない**
+    #: （記録すると凍結閾値以外での再判定・順位付け・「どれだけ若く見えるか」と
+    #: いう読み替えを可能にしてしまう）。判定・版・凍結閾値の 3 つから当時の
+    #: 挙動は一意に辿れる。
+    #:
+    #: **この列が無いと、`estimated_age_years` が `null` のとき「ゲートで弾かれた」
+    #: のか「モデル未配置」なのかを行から区別できない。** ゲートを呼ばなかった
+    #: フレーム（顔なし・姿勢ゲート閉）は `None` である。
+    age_gate_decision: AgeGateDecisionLabel | None = None
+    age_gate_version: str | None = None
+    age_gate_spec_revision: int | None = Field(default=None, ge=1)
+    age_gate_model_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     demographic_model_version: str | None = None
     demographic_model_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     landmark_model_version: str = Field(min_length=1)

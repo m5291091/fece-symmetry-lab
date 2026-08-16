@@ -100,6 +100,64 @@ def test_the_hud_shell_caps_its_size_for_small_or_fullscreen_viewports() -> None
     assert "overflow-y: auto" in hud_rule
 
 
+def _rule_body(selector: str) -> str:
+    """CSS 規則 ``selector { ... }`` の中身だけを取り出す。"""
+    start = HUD_STYLESHEET.index(selector)
+    return HUD_STYLESHEET[start : HUD_STYLESHEET.index("}", start)]
+
+
+def test_the_hud_box_scales_with_the_viewport_instead_of_a_fixed_width() -> None:
+    """§5.1: 画面が小さいほど HUD も小さくなる。
+
+    **HUD は `pointer-events: none` である。** 内容が箱からあふれても利用者は
+    スクロールできず、あふれた数値は読む手段が無いまま消える。したがって
+    「あふれたらスクロールさせる」ではなく「どの画面幅でも収まる」で解く。
+    罠: `max-width: min(360px, 92vw)` だけに戻すと、狭い画面では箱が
+    ビューポートのほぼ全幅を占めたまま中身の文字だけが固定サイズで残る。
+    """
+    hud_rule = _rule_body("#fsl-hud {")
+
+    assert "clamp(" in hud_rule, "幅を viewport へ追従させること"
+    assert "vw" in hud_rule
+
+
+def test_every_hud_reading_uses_a_fluid_type_size() -> None:
+    """画面に出る数値はすべて画面幅へ追従する（§5.1・§5.4）。
+
+    罠: `font-size: 3.2rem` のような固定値へ戻した実装は、狭い画面で
+    「98.42%」の末尾が箱の外へ出る。
+    """
+    for selector in (
+        "#fsl-hud-value {",
+        "#fsl-hud-label {",
+        "#fsl-hud-score-row {",
+        "#fsl-hud-parts {",
+        "#fsl-hud-demo {",
+    ):
+        body = _rule_body(selector)
+        assert "font-size: clamp(" in body, selector
+
+
+def test_the_hud_type_also_answers_to_a_short_window() -> None:
+    """§5.1: 足りないほうの寸法に合わせる。
+
+    HUD の高さ上限は `90vh` である。横に広く縦に短い窓（ノート PC の分割表示
+    など）では、幅だけを見て決めた文字サイズだと中身が縦にあふれ、
+    `pointer-events: none` の箱では読む手段が無くなる。幅と高さの小さいほうへ
+    合わせる。罠: `vh` の項を落とすと、この assertion が落ちる。
+    """
+    body = _rule_body("#fsl-hud-value {")
+
+    assert "vh" in body
+    assert "min(" in body
+
+
+def test_long_readings_wrap_rather_than_disappear() -> None:
+    """あふれるくらいなら折り返す。`pointer-events: none` の箱では、はみ出した
+    分を利用者が引き寄せる手段が無いためである。"""
+    assert "overflow-wrap" in _rule_body("#fsl-hud {")
+
+
 def test_the_exit_control_shrinks_to_its_button() -> None:
     """Streamlit の縦ブロックは width:100% なので、`right` で固定したコンテナは
     ビューポート全体へ広がり、ボタンを左端の外（実測 x=-24）へ落としていた。"""
@@ -270,3 +328,163 @@ def test_the_control_row_is_centred_without_a_transform() -> None:
     assert "translateX" not in rule
     assert "transform: none;" in rule
     assert "margin-left: auto;" in rule and "margin-right: auto;" in rule
+
+
+# --- FR-039: 参照平均の併記 ----------------------------------------------------
+
+
+def test_the_baseline_rows_scale_with_the_hud() -> None:
+    """§5.1: 併記も箱と一緒に縮む（固定 px へ戻すと狭い画面で外へ出る）。"""
+    rule = HUD_STYLESHEET[HUD_STYLESHEET.index(".fsl-hud-baseline {") :]
+    rule = rule[: rule.index("}")]
+
+    assert "font-size: clamp(" in rule
+    assert "min(" in rule  # 幅と高さの足りないほうへ合わせる
+
+
+def test_an_absent_baseline_collapses_instead_of_leaving_a_blank_row() -> None:
+    """FR-024 と同じ理由: 空行は「動いていて失敗している」と読まれる。"""
+    assert ".fsl-hud-baseline:empty { display: none; }" in HUD_STYLESHEET
+    assert "#fsl-hud-baseline-note:empty { display: none; }" in HUD_STYLESHEET
+
+
+def test_the_baseline_is_quieter_than_the_reading_it_annotates() -> None:
+    """§5.2: 差を達成度として演出しない。比べる相手であって主役ではない。"""
+    rule = HUD_STYLESHEET[HUD_STYLESHEET.index(".fsl-hud-baseline {") :]
+    rule = rule[: rule.index("}")]
+
+    assert "opacity: .66;" in rule
+    # 色・矢印・ゲージで大小を演出しない。
+    for banned in ("color:", "background", "::before", "transform"):
+        assert banned not in rule
+
+
+def test_each_part_keeps_its_own_baseline_beneath_it() -> None:
+    """4 部位 × 2 値が 1 行に混ざると、どの平均がどの部位のものか読めない。"""
+    assert ".fsl-hud-part { display: flex; flex-direction: column; }" in HUD_STYLESHEET
+    for part in ("contour", "eyes", "nose", "mouth"):
+        assert f'id="fsl-hud-baseline-{part}"' in HUD_RUNTIME_JS
+
+
+def test_the_baseline_skeleton_is_built_once_with_the_rest_of_the_hud() -> None:
+    """5 Hz の tick は骨格を作り直さない（§5.2）。"""
+    for element_id in (
+        "fsl-hud-baseline-symmetry",
+        "fsl-hud-baseline-score",
+        "fsl-hud-baseline-note",
+    ):
+        assert f'id="{element_id}"' in HUD_RUNTIME_JS
+        assert f"setText('{element_id}'" in HUD_RUNTIME_JS
+
+
+def test_the_tick_reads_the_baseline_from_the_payload() -> None:
+    """罠: HUD 側で平均を組み立て直す実装は、吹き出しと 2 つ目の表示規則へ分岐する。"""
+    assert "var baseline = data.baseline || {};" in HUD_RUNTIME_JS
+    assert "baseline.symmetry" in HUD_RUNTIME_JS
+    assert "baseline.score" in HUD_RUNTIME_JS
+    assert "baseline.note" in HUD_RUNTIME_JS
+    # 併記の不在に `—` を入れない（測定の欠測ではない）。
+    assert "baseline.symmetry || ''" in HUD_RUNTIME_JS
+
+
+def test_the_note_never_pushes_the_drag_grip_out_of_the_hud() -> None:
+    """HUD も `pointer-events: none` + `max-height` である（吹き出しと同じ理由）。"""
+    assert HUD_RUNTIME_JS.index("fsl-hud-grip") < HUD_RUNTIME_JS.index('id="fsl-hud-baseline-note"')
+
+
+def test_the_hud_footprint_includes_its_padding_and_border() -> None:
+    """`width: clamp(210px, 26vw, 360px)` を**見た目の実寸**にする。
+
+    吹き出し（`ui.still_overlay`）と同じ理由である。既定の `content-box` では
+    padding（左右 13〜22px）と border 2px×2 が宣言幅の外側へ足され、実測
+    （headless Chrome、ビューポート 800px）で 210px 指定に対して 240px あった。
+    箱の幅は映像を覆う面積そのものなので、宣言値と実寸をそろえる。
+    """
+    rule = HUD_STYLESHEET[
+        HUD_STYLESHEET.index("#fsl-hud {") : HUD_STYLESHEET.index("#fsl-hud[hidden]")
+    ]
+
+    assert "box-sizing: border-box;" in rule
+    assert "width: clamp(210px, 26vw, 360px);" in rule
+
+
+# --- FR-040 / §5.4: 状態と平滑化時間のチップ ----------------------------------
+
+
+def test_the_state_and_smoothing_chips_are_part_of_the_skeleton() -> None:
+    """骨格は bridge が 1 度だけ作る。5Hz の tick で作り直さない（§5.2）。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+
+    assert 'id="fsl-hud-chips"' in skeleton
+    assert 'id="fsl-hud-state"' in skeleton
+    assert 'id="fsl-hud-smoothing"' in skeleton
+
+
+def test_the_tick_only_writes_the_chip_text() -> None:
+    """罠: tick で innerHTML を組み直す実装は、毎秒 5 回の style 再計算を招く。"""
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert "setText('fsl-hud-state', data.state" in tick
+    assert "setText('fsl-hud-smoothing', data.smoothing" in tick
+    assert "fsl-hud-chips'" not in tick, "チップの器そのものは tick で触らない"
+
+
+def test_an_empty_chip_collapses_instead_of_leaving_a_blank_pill() -> None:
+    """設定や状態が無いときに、空の丸だけが映像の上へ残らないようにする。"""
+    assert ".fsl-hud-chip:empty { display: none; }" in HUD_STYLESHEET
+    assert "#fsl-hud-chips:empty" in HUD_STYLESHEET
+
+
+def test_the_chips_scale_with_the_hud_like_every_other_reading() -> None:
+    """狭い画面で箱だけが縮み、文字が元の大きさで残ることがないようにする。"""
+    block = HUD_STYLESHEET.split(".fsl-hud-chip {")[1].split("}")[0]
+
+    assert "font-size: clamp(" in block
+
+
+def test_the_chips_never_repaint_themselves_with_the_gate_colour() -> None:
+    """§5.4: 状態を色で二重に語らない。枠色は箱の border が既に担っている。
+
+    罠: チップの背景を `data.gate` で塗る実装は、色を落とすと情報が消える
+    （テキストだけを手掛かりにしている利用者に何も残らない）。
+    """
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert "fsl-hud-state').style" not in tick
+    assert "stateEl.style" not in tick
+
+
+# --- H5: 折れ線グラフの面 -----------------------------------------------------
+
+
+def test_the_overall_series_carries_a_filled_area_built_once() -> None:
+    """全体の線だけを面で塗り、5 本のうちどれが総合値かを一目で分かるようにする。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+
+    assert 'id="fsl-chart-overall-area"' in skeleton
+    assert "<polygon" in skeleton
+    assert ".fsl-chart-area" in HUD_STYLESHEET
+
+
+def test_the_area_is_redrawn_from_the_same_buffer_as_the_line() -> None:
+    """罠: 面だけ別の系列・別の変換で描く実装は、線と面がずれる。"""
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert "fsl-chart-overall-area" in tick
+    assert "areaPointsFor(" in tick
+
+
+def test_the_area_stays_behind_the_lines() -> None:
+    """SVG は文書順で重なる。面が線より後に来ると、線を覆い隠す。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+
+    assert skeleton.index('id="fsl-chart-overall-area"') < skeleton.index('id="fsl-chart-overall"')
+
+
+def test_the_display_hold_has_its_own_chip_in_the_skeleton() -> None:
+    """FR-041: 数値が止まっているのが設定によるものだと画面から読めるようにする。"""
+    skeleton = HUD_RUNTIME_JS.split("document.body.appendChild(hud);")[0]
+    tick = HUD_RUNTIME_JS.split("var sync = function ()")[1]
+
+    assert 'id="fsl-hud-hold"' in skeleton
+    assert "setText('fsl-hud-hold', data.hold" in tick

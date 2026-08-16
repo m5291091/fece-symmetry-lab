@@ -337,6 +337,22 @@ def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
         assert forbidden not in source
 
 
+def test_the_export_tab_explains_itself_before_the_first_record() -> None:
+    """開始直後の「エクスポート」タブを真っ白にしない（FR-017 の提示条件は不変）。
+
+    `render_export_panel` は記録が無いと節ごと何も描かないため、タブの中身が
+    空白になっていた。**罠: `empty_notice` を渡さない実装は、利用者から見て
+    「壊れている」と「まだ何も無い」を区別できないままにする。**
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "empty_notice=" in source
+
+
 # --- §5.1 レイアウト: 映像を最上部に保つ --------------------------------------
 
 
@@ -559,3 +575,196 @@ def test_the_video_attributes_reach_the_component() -> None:
     from face_symmetry_lab.ui import camera
 
     assert "video_html_attrs=VIDEO_HTML_ATTRS" in inspect.getsource(camera.render_camera_section)
+
+
+# --- FR-040: 表示平滑化時間の配線 ---------------------------------------------
+
+
+def test_the_display_controls_offer_the_smoothing_selector_and_apply_it() -> None:
+    """FR-040: 選んだ時定数が、その場で pipeline へ届く。
+
+    罠: `render_smoothing_control` を描くだけで `set_smoothing_tau_seconds` を
+    呼ばない実装は、UI だけが動いて平滑化が既定のまま残る。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_display_controls)
+
+    assert "render_smoothing_control(" in source
+    assert "pipeline.set_smoothing_tau_seconds(" in source
+    assert "pipeline.set_display_hold_seconds(" in source
+    assert "pipeline.analysis_interval_ms" in source, "実効サンプル数は実周期から出す"
+
+
+def test_the_hud_fragment_publishes_the_active_smoothing_window() -> None:
+    """FR-040/§5.4: 全画面中でも「何秒の平均か」を映像の上で読めるようにする。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_hud_fragment)
+
+    assert "smoothing_tau_seconds=pipeline.smoothing_tau_seconds" in source
+    assert "display_hold_seconds=pipeline.display_hold_seconds" in source
+
+
+def test_the_settings_tab_groups_its_controls_into_titled_sections() -> None:
+    """§5.1: 設定が平らな 1 列に並ぶと、どれが何のための操作か読み取れない。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+    from face_symmetry_lab.ui.smoothing_panel import SMOOTHING_HEADING
+
+    source = inspect.getsource(camera._render_display_controls)
+
+    assert source.count("st.container(border=True)") >= 3
+    for heading in ("映像の見え方", "自動調整の現在値"):
+        assert heading in source
+    # 平滑化区画の見出しは panel 自身が持つ。**ここで重ねて出さない**（罠: 両方が
+    # 出すと同じ囲みの中に見出しが 2 行並ぶ。実ブラウザで見つけた回帰）。
+    assert 'st.markdown("##### 数値の落ち着き' not in source
+    assert SMOOTHING_HEADING.startswith("##### 数値の落ち着き")
+    # HUD の位置は別の関数が持つが、同じ作法で囲う。
+    assert "映像上のHUD" in inspect.getsource(camera._render_hud_position_control)
+
+
+def test_the_tabs_keep_their_names_while_gaining_icons() -> None:
+    """アイコンは見分けの手掛かりであって、文言の置き換えではない（§5.4）。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+
+    for label in ("詳細結果", "左右対称との比較", "表示設定", "エクスポート"):
+        assert label in source
+
+
+def test_both_live_fragments_read_the_same_held_snapshot() -> None:
+    """FR-041/AC-HOLD-01: 保持中に HUD と詳細結果が別々の瞬間の値を出さない。
+
+    罠: 片方だけ `pipeline.snapshot()` を直接読む実装だと、保持区間の境界で
+    「HUD の部位別」と「計算過程の部位別」が食い違い、AC-DISPLAY-04 の文字列
+    一致がそこでだけ壊れる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    for fragment in (camera._render_hud_fragment, camera._render_detail_fragment):
+        source = inspect.getsource(fragment)
+        assert "_snapshot_for_display(pipeline)" in source, fragment.__name__
+        assert "pipeline.snapshot()" not in source, fragment.__name__
+
+
+def test_the_display_snapshot_keys_the_latch_on_the_shared_signature() -> None:
+    """AC-HOLD-02: 鍵は `ui.readings.display_signature`（値の有無）から作る。
+
+    罠: 値そのものを鍵にすると毎フレーム鍵が変わり、保持がまったく効かない。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._snapshot_for_display)
+
+    assert "hold_for_display(" in source
+    assert "display_signature(snapshot.analysis)" in source
+
+
+# --- FR-021: セッション要約の配線 ---------------------------------------------
+
+
+def test_the_export_tab_summarises_the_session_before_the_download_buttons() -> None:
+    """FR-021: 要約はセッション単位の成果物なので、エクスポートと同じ場所へ置く。
+
+    罠: 5Hz の詳細 fragment へ入れる実装は、最大3,000行の要約を毎秒5回計算する。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "summarize_session(" in source
+    assert "render_session_summary(" in source
+    # 関数名 `_render_export_panel` 自身に一致しないよう、呼び出し行を探す。
+    assert source.index("render_session_summary(") < source.index("\n    render_export_panel(")
+
+
+def test_the_session_summary_is_not_recomputed_by_the_five_hertz_fragment() -> None:
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    for fragment in (camera._render_hud_fragment, camera._render_detail_fragment):
+        assert "summarize_session" not in inspect.getsource(fragment), fragment.__name__
+
+
+def test_the_export_tab_is_named_for_both_of_its_contents() -> None:
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+
+    assert "まとめ・エクスポート" in source
+
+
+def test_the_camera_report_carries_no_photo_at_all() -> None:
+    """2026-08-16: リアルタイムのレポートに顔写真は載せない。
+
+    図を持たないので、Camera 側は不変条件 1 の限定解除を必要としない——顔写真が
+    ディスクへ出る経路は Image だけに閉じる。罠: 取り込み済みビューを埋める旧
+    実装や、直近フレームから作る実装はここで落ちる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "build_camera_report(" in source
+    assert "trend_series(" in source
+    assert "build_report_figures" not in source
+    assert "report_has_figures=False" in source
+
+
+def test_the_summary_and_export_survive_stopping_the_camera() -> None:
+    """FR-042/§5.1: 要約は 1 セッションが終わってから読むものである。
+
+    罠: `context.state.playing` が偽のときに即 return する旧実装では、STOP を
+    押した瞬間にまとめごと到達できなくなる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera.render_camera_section)
+    stopped = source.split("if not context.state.playing:")[1].split("return")[0]
+
+    assert "_render_export_panel(pipeline)" in stopped
+    assert "まとめ・エクスポート" in stopped
+    # 止まっている間、ライブ表示に依存するものは出さない。
+    assert "_render_detail_panel(" not in stopped
+    assert "_render_symmetrization_panel(" not in stopped
+
+
+def test_the_camera_report_takes_its_population_from_the_shown_estimates() -> None:
+    """AC-BASELINE-05: 記録ではなく pipeline の観測から母集団を決める。
+
+    罠: `bundle.records` の `estimated_age_years` から作る実装は、年齢ゲートが
+    表示を止めたフレームの年齢も混ぜる——§9.2 の `age_gate_decision` 列が未実装
+    なので記録側では区別も付かず、ゲートが隠した判断が母集団の年齢から復元できて
+    しまう（§10.12-3）。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    assert "resolve_session_baseline(pipeline.demographic_observations)" in source
+    assert "estimated_age_years" not in source

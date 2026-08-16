@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.5.0",
+  "manifest_version": "1.6.0",
   "models": [
     {
       "name": "face_landmarker",
@@ -44,6 +44,24 @@
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "input_contract": "RGB uint8 image; single-channel foreground confidence mask same size as input; CPU delegate"
+    }
+  ],
+  "bundled_models": [
+    {
+      "name": "age_gate",
+      "version": "age-gate/1.0.0",
+      "filename": "age_gate_model.onnx",
+      "source": "bundled",
+      "size_bytes": 917477,
+      "sha256": "80bcfc05eec12243108e8502f88824e680d3d6f03e9ca6607a1dc711e86e02d3",
+      "license": "non-commercial research only (trained on UTKFace)",
+      "license_url": "https://susanqq.github.io/UTKFace/",
+      "input_contract": "float32 [N, 41]; feature order is configs/age-gate-v1.json feature_names; read probabilities[:, 1], ignore label",
+      "feature_spec": "configs/age-gate-v1.json",
+      "model_card": "docs/model-cards/age-gate-v1.md",
+      "evaluation_report": "docs/model-cards/age-gate-v1-evaluation.json",
+      "runtime": "onnxruntime (CPUExecutionProvider); cv2.dnn cannot read ai.onnx.ml TreeEnsembleClassifier",
+      "note": "取得元 URL を持たない自作資産。リポジトリへ同梱し、model_store は取得を行わず hash 検証だけを実行する（requirement.md §22.5）。"
     }
   ],
   "derived_models": [

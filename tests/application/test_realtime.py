@@ -8,13 +8,15 @@ from face_symmetry_lab.adapters.inference.mediapipe_landmarker import (
     FrameOrderError,
     LandmarkDetectionError,
 )
+from face_symmetry_lab.application.age_gate import AgeGateService, AgeGateStatus
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
 from face_symmetry_lab.application.auto_tune_controller import (
     CADENCE_RETUNE_INTERVAL_SECONDS,
 )
-from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
+from face_symmetry_lab.application.realtime import PipelineSnapshot, RealtimeLandmarkPipeline
 from face_symmetry_lab.domain.auto_tuning import recommend_age_interval_ms
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
+from face_symmetry_lab.domain.display_hold import DisplayHoldError
 from face_symmetry_lab.domain.frame_adjustments import (
     MAX_BRIGHTNESS_GAIN,
     BackgroundMode,
@@ -26,6 +28,7 @@ from face_symmetry_lab.domain.landmarks import (
     build_landmark_frame,
 )
 from face_symmetry_lab.domain.models import AnalysisState, DemographicEstimate, Status
+from face_symmetry_lab.domain.smoothing import SmoothingError
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 
 #: `extract_face_crop` が退化しない bbox を導けるよう広げた点。
@@ -154,7 +157,12 @@ class StubAnalyzer:
     def __init__(self) -> None:
         self.reset_calls = 0
         self.update_calls: list[tuple[object, float, object]] = []
+        self.tau_calls: list[float] = []
         self.config = object()
+        #: FR-038: `RealtimeLandmarkPipeline._analyse` は `age_gate` が設定され
+        #: ているとき `analyzer.config_3d` を読む。ここでは実際に触れられる場面
+        #: が無い限り値そのものは意味を持たないダミーでよい。
+        self.config_3d = object()
 
     def analyze(
         self,
@@ -179,6 +187,20 @@ class StubAnalyzer:
 
     def update(self, *, thresholds: object, tau_seconds: float) -> None:
         self.update_calls.append((thresholds, tau_seconds))
+        self._tau_seconds = tau_seconds
+
+    #: FR-040: 実物の `FrameAnalyzer` と同じく「現在の時定数を読み戻せる」契約を
+    #: 持たせる。pipeline 側の冪等判定がこれを読むため、書き込みだけの spy に
+    #: すると「同じ値が届いたときに何もしない」という検証が成立しない。
+    _tau_seconds: float = 0.4
+
+    @property
+    def tau_seconds(self) -> float:
+        return self._tau_seconds
+
+    def set_tau_seconds(self, tau_seconds: float) -> None:
+        self.tau_calls.append(tau_seconds)
+        self._tau_seconds = tau_seconds
 
 
 class RecorderSpy:
@@ -187,6 +209,7 @@ class RecorderSpy:
         self.error_frames: list[int] = []
         self.reset_calls = 0
         self.reset_kwargs: list[dict[str, object]] = []
+        self.age_gate_provenance: list[object] = []
         self.demographic_attachments: list[tuple[DemographicEstimate, int]] = []
         self.resize_calls: list[int] = []
         #: §14.3e (H1): HUD の折れ線グラフが読む世代識別子（`PipelineSnapshot.
@@ -196,6 +219,8 @@ class RecorderSpy:
 
     def append_analysis(self, frame: LandmarkFrame, outcome: AnalysisOutcome, **kwargs) -> None:
         self.analysis_frames.append(frame.frame_id)
+        # §9.2: ゲートの来歴が記録経路まで届いているか（届かないフレームは None）。
+        self.age_gate_provenance.append(kwargs.get("age_gate"))
 
     def append_error(self, *, frame_id: int, **kwargs) -> None:
         self.error_frames.append(frame_id)
@@ -545,6 +570,71 @@ def test_snapshot_segment_id_is_none_without_a_recorder() -> None:
     assert pipeline.snapshot().segment_id is None
 
 
+# --- FR-038: 年齢ゲート ---------------------------------------------------
+
+
+def test_age_gate_outcome_is_none_without_an_age_gate() -> None:
+    """既存 pipeline との後方互換: `age_gate` 未接続なら snapshot も触らない。"""
+    pipeline = _pipeline(FakeLandmarker(face_count=1), analyzer=StubAnalyzer())
+
+    pipeline.process(_rgb())
+
+    assert pipeline.snapshot().age_gate_outcome is None
+
+
+def test_age_gate_outcome_is_populated_when_configured() -> None:
+    """FR-038: `age_gate` を渡すと、既存の worker/relay を変えずに判定を追加する。
+
+    `FakeLandmarker` は姿勢を返さないため `NOT_EVALUATED` になるが、それでも
+    `None`（未接続）とは区別できる——配線が実際に呼ばれている証拠である。
+    """
+
+    class _UnreachableClassifier:
+        def predict(self, vector: tuple[float, ...]) -> float:
+            raise AssertionError("姿勢ゲートが閉じているのに呼ばれてはならない")
+
+    service = AgeGateService(
+        _UnreachableClassifier(), threshold=0.20, spec_version="age-gate/1.0.0"
+    )
+    pipeline = _pipeline(FakeLandmarker(face_count=1), analyzer=StubAnalyzer(), age_gate=service)
+
+    pipeline.process(_rgb())
+
+    outcome = pipeline.snapshot().age_gate_outcome
+    assert outcome is not None
+    assert outcome.status is AgeGateStatus.NOT_EVALUATED
+    assert outcome.may_show_reference_age is False
+
+
+def test_a_failing_age_gate_does_not_break_the_pipeline() -> None:
+    """不変条件 12: ゲートの失敗が左右差の解析・表示を止めない。"""
+
+    class _ExplodingClassifier:
+        def predict(self, vector: tuple[float, ...]) -> float:
+            raise RuntimeError("boom")
+
+    service = AgeGateService(_ExplodingClassifier(), threshold=0.20, spec_version="age-gate/1.0.0")
+
+    class _ExplodingAnalyzer(StubAnalyzer):
+        @property
+        def config_3d(self) -> object:  # type: ignore[override]
+            raise RuntimeError("config_3d を読めない")
+
+        @config_3d.setter
+        def config_3d(self, value: object) -> None:
+            pass
+
+    pipeline = _pipeline(
+        FakeLandmarker(face_count=1), analyzer=_ExplodingAnalyzer(), age_gate=service
+    )
+
+    painted = pipeline.process(_rgb())
+
+    assert painted is not None
+    assert pipeline.snapshot().age_gate_outcome is None
+    assert pipeline.snapshot().status is TrackingStatus.SINGLE_FACE
+
+
 def test_close_releases_the_landmarker_and_stops_processing() -> None:
     landmarker = FakeLandmarker()
     pipeline = _pipeline(landmarker)
@@ -707,6 +797,198 @@ def test_set_background_mode_updates_the_running_pipeline() -> None:
 
     assert np.all(before == 10)  # 既定は OFF: 無変更
     assert np.all(after == 0)  # BLACK: 置き換わる
+
+
+def test_setting_the_smoothing_time_reaches_the_analyzer_and_starts_a_new_segment() -> None:
+    """FR-040/§8.8: 利用者が選んだ時定数が EMA へ届き、区間が切り替わる。"""
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+
+    changed = pipeline.set_smoothing_tau_seconds(1.5)
+
+    assert changed is True
+    assert analyzer.tau_calls == [1.5]
+    assert recorder.reset_kwargs[-1] == {"tau_seconds": 1.5}
+    assert pipeline.smoothing_tau_seconds == pytest.approx(1.5)
+
+
+def test_setting_the_same_smoothing_time_again_changes_nothing() -> None:
+    """FR-040: 5 Hz の再実行で毎回同じ値が届く。
+
+    罠: 冪等にしない実装は EMA を毎回作り直すため、**平滑化が事実上無効になった
+    まま「平滑化している」と表示し続ける**。壊れ方が静かなので、ここで固定する。
+    区間 (`segment_id`) も動かないことを併せて見る——動くと HUD の折れ線グラフが
+    毎 tick 空になる。
+    """
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+    pipeline.set_smoothing_tau_seconds(1.5)
+    resets_after_first = recorder.reset_calls
+
+    changed = pipeline.set_smoothing_tau_seconds(1.5)
+
+    assert changed is False
+    assert analyzer.tau_calls == [1.5]
+    assert recorder.reset_calls == resets_after_first
+
+
+def test_setting_the_smoothing_time_leaves_zoom_cadence_and_demographics_alone() -> None:
+    """FR-040: 触れてよいのは EMA と区間だけ。自動調整の結果を巻き戻さない。"""
+    landmarker = FakeLandmarker()
+    analyzer = StubAnalyzer()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, recorder=RecorderSpy())
+    interval_before = pipeline.analysis_interval_ms
+
+    pipeline.set_smoothing_tau_seconds(3.0)
+
+    assert landmarker.policy_updates == []
+    assert pipeline.analysis_interval_ms == interval_before
+
+
+@pytest.mark.parametrize("bad", [0.0, 30.5, float("nan")])
+def test_an_out_of_range_smoothing_time_is_refused_before_anything_changes(bad: float) -> None:
+    """罠: clamp する実装は、範囲外の指定を黙って別の設定へ読み替える。"""
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+
+    with pytest.raises(SmoothingError):
+        pipeline.set_smoothing_tau_seconds(bad)
+
+    assert analyzer.tau_calls == []
+    assert recorder.reset_calls == 0
+
+
+def test_a_pipeline_without_an_analyzer_reports_no_smoothing_time() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    assert pipeline.smoothing_tau_seconds is None
+    assert pipeline.set_smoothing_tau_seconds(1.0) is False
+
+
+# --- FR-041: 表示の更新間隔 ---------------------------------------------------
+
+
+def _snapshot_with(analysis: object) -> PipelineSnapshot:
+    return PipelineSnapshot(analysis=analysis)  # type: ignore[arg-type]
+
+
+def _held_pipeline(clock: ManualClock, **kwargs: object) -> RealtimeLandmarkPipeline:
+    """手動時計で駆動する pipeline。`_pipeline` は自前の `StepClock` を固定する。"""
+    return RealtimeLandmarkPipeline(
+        landmarker=FakeLandmarker(),
+        clock=clock,
+        analysis_interval_ms=0,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_the_display_hold_defaults_to_passing_everything_through() -> None:
+    """既定 0 秒。この機能を知らない利用者の画面は 1 ミリ秒も変わらない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    first, second = object(), object()
+
+    assert pipeline.display_hold_seconds == pytest.approx(0.0)
+    assert pipeline.hold_for_display(_snapshot_with(first), key=1).analysis is first
+    clock.advance(0.001)
+    assert pipeline.hold_for_display(_snapshot_with(second), key=1).analysis is second
+
+
+def test_a_held_display_keeps_showing_the_same_analysis() -> None:
+    """FR-041: 保持区間の内側では、画面に出る解析結果が入れ替わらない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    pipeline.set_display_hold_seconds(2.0)
+    first, second = object(), object()
+
+    pipeline.hold_for_display(_snapshot_with(first), key=1)
+    clock.advance(1.0)
+    held = pipeline.hold_for_display(_snapshot_with(second), key=1)
+    clock.advance(1.5)
+    fresh = pipeline.hold_for_display(_snapshot_with(second), key=1)
+
+    assert held.analysis is first
+    assert fresh.analysis is second
+
+
+def test_a_missing_measurement_breaks_the_hold_at_once() -> None:
+    """AC-HOLD-02: 顔を見失った瞬間に古い数値が画面へ残ってはならない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    pipeline.set_display_hold_seconds(5.0)
+    measuring = object()
+
+    pipeline.hold_for_display(_snapshot_with(measuring), key=("OK", True))
+    clock.advance(0.2)
+    lost = pipeline.hold_for_display(PipelineSnapshot(), key=("NO_FACE", False))
+
+    assert lost.analysis is None
+
+
+def test_the_hold_never_touches_the_recorder_or_the_analyzer() -> None:
+    """FR-041: 保持するのは表示だけ。記録は間引かれない（AC-HOLD-01）。"""
+    analyzer = StubAnalyzer()
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=analyzer, recorder=recorder)
+    pipeline.set_display_hold_seconds(5.0)
+
+    for _ in range(4):
+        pipeline.process(_rgb())
+
+    assert len(recorder.analysis_frames) + len(recorder.error_frames) == 4
+    assert recorder.reset_calls == 0
+    assert analyzer.tau_calls == []
+
+
+def test_setting_the_same_display_hold_again_changes_nothing() -> None:
+    pipeline = _pipeline(FakeLandmarker())
+
+    assert pipeline.set_display_hold_seconds(1.0) is True
+    assert pipeline.set_display_hold_seconds(1.0) is False
+    assert pipeline.display_hold_seconds == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("bad", [-1.0, 9.0, float("nan")])
+def test_an_out_of_range_display_hold_is_refused(bad: float) -> None:
+    """罠: clamp する実装は、範囲外の指定を黙って別の設定へ読み替える。"""
+    pipeline = _pipeline(FakeLandmarker())
+    pipeline.set_display_hold_seconds(2.0)
+
+    with pytest.raises(DisplayHoldError):
+        pipeline.set_display_hold_seconds(bad)
+
+    assert pipeline.display_hold_seconds == pytest.approx(2.0)
+
+
+def test_resetting_the_session_drops_whatever_the_display_was_holding() -> None:
+    """§4.4: リセットは表示中の値も一緒に捨てる（AC-HOLD-02）。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock)
+    pipeline.set_display_hold_seconds(5.0)
+    first, second = object(), object()
+    pipeline.hold_for_display(_snapshot_with(first), key=1)
+
+    pipeline.reset_analysis()
+    clock.advance(0.1)
+
+    assert pipeline.hold_for_display(_snapshot_with(second), key=1).analysis is second
+
+
+def test_changing_the_smoothing_time_drops_the_held_display() -> None:
+    """新しい時定数を選んだのに、古い時定数で作った値が最大 5 秒残ってはならない。"""
+    clock = ManualClock()
+    pipeline = _held_pipeline(clock, analyzer=StubAnalyzer())
+    pipeline.set_display_hold_seconds(5.0)
+    first, second = object(), object()
+    pipeline.hold_for_display(_snapshot_with(first), key=1)
+
+    pipeline.set_smoothing_tau_seconds(2.0)
+    clock.advance(0.1)
+
+    assert pipeline.hold_for_display(_snapshot_with(second), key=1).analysis is second
 
 
 def test_apply_advanced_settings_updates_analyzer_landmarker_and_recorder() -> None:
@@ -1531,3 +1813,77 @@ def test_closing_the_pipeline_releases_the_capture() -> None:
     pipeline.close()
 
     assert pipeline.take_capture() is None
+
+
+# --- §9.2 / FR-038: ゲート判定の記録（2026-08-16） ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (AgeGateStatus.IN_RANGE, "in_range"),
+        (AgeGateStatus.OUT_OF_RANGE, "out_of_range"),
+        (AgeGateStatus.UNDETERMINED, "undetermined"),
+    ],
+)
+def test_a_judged_frame_carries_its_decision_and_version(status, expected: str) -> None:
+    """§9.2: 「ゲートで弾かれた」のか「モデル未配置」なのかを行から区別できる。"""
+    from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService
+    from face_symmetry_lab.application.session import age_gate_provenance
+
+    service = AgeGateService(
+        None,
+        threshold=0.2,
+        spec_version="age-gate/1.0.0",
+        spec_revision=3,
+        model_sha256="b" * 64,
+    )
+
+    provenance = age_gate_provenance(
+        AgeGateOutcome(status=status, decision=None, reason=None), service=service
+    )
+
+    assert provenance is not None
+    assert provenance.decision.value == expected
+    assert provenance.version == "age-gate/1.0.0"
+    assert provenance.spec_revision == 3
+    assert provenance.model_sha256 == "b" * 64
+
+
+def test_a_frame_the_gate_never_judged_carries_nothing() -> None:
+    """罠: `not_evaluated` を列へ書く実装は、呼んでいない判定に名前を与える。"""
+    from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateService
+    from face_symmetry_lab.application.session import age_gate_provenance
+
+    service = AgeGateService(None, threshold=0.2, spec_version="age-gate/1.0.0")
+    outcome = AgeGateOutcome(status=AgeGateStatus.NOT_EVALUATED, decision=None, reason=None)
+
+    assert age_gate_provenance(outcome, service=service) is None
+    assert age_gate_provenance(outcome, service=None) is None
+    assert age_gate_provenance(None, service=service) is None
+
+
+def test_the_gate_provenance_reaches_the_recorder() -> None:
+    """配線の検証。姿勢を返さない landmarker ではゲートが呼ばれず `None` が届く。"""
+    from face_symmetry_lab.application.age_gate import AgeGateService
+
+    recorder = RecorderSpy()
+    pipeline = _pipeline(
+        FakeLandmarker(face_count=1),
+        analyzer=StubAnalyzer(),
+        recorder=recorder,
+        age_gate=AgeGateService(None, threshold=0.2, spec_version="age-gate/1.0.0"),
+    )
+
+    pipeline.process(_rgb())
+
+    assert recorder.age_gate_provenance == [None]
+
+
+def test_a_pipeline_without_a_gate_records_nothing() -> None:
+    recorder = RecorderSpy()
+    pipeline = _pipeline(FakeLandmarker(), analyzer=StubAnalyzer(), recorder=recorder)
+
+    pipeline.process(_rgb())
+
+    assert recorder.age_gate_provenance == [None]

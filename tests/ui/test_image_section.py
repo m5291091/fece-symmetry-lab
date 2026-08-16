@@ -313,6 +313,185 @@ def test_a_missing_demographic_model_explains_itself_without_calling_the_estimat
 # --- §5.1 ページ構成との境界 -------------------------------------------------
 
 
+# --- FR-038: 参考年齢の表示ゲート ---------------------------------------------
+
+
+def test_gate_blocking_hides_the_demographic_detail_and_shows_the_notice(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """FR-038/AC-AGEGATE-02: ゲートが範囲外と判定したら、成功した推定でも隠す。"""
+    onnx_path = tmp_path / "fake.onnx"
+    onnx_path.write_bytes(b"fake onnx bytes")
+    monkeypatch.setattr(
+        image_section, "resolve_ready_demographic", lambda: (onnx_path, "test-demographic/1.0.0")
+    )
+
+    class _FakeEstimator:
+        def __init__(self, *, onnx_path: Path, model_version: str) -> None:
+            del onnx_path, model_version
+
+        def estimate(self, rgb_image):
+            del rgb_image
+            return _fake_demographic_estimate()
+
+    monkeypatch.setattr(image_section, "OpenCvDemographicEstimator", _FakeEstimator)
+
+    at = AppTest.from_string(
+        "import numpy as np\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.ui.image_section import (\n"
+        "    _maybe_estimate_image_demographics,\n"
+        "    _render_image_demographic_detail,\n"
+        ")\n"
+        "age_input = np.zeros((62, 62, 3), dtype=np.uint8)\n"
+        "_maybe_estimate_image_demographics(\n"
+        "    age_input, input_fingerprint='fp-1', recorder=None,\n"
+        ")\n"
+        "gate_outcome = AgeGateOutcome(\n"
+        "    status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
+        ")\n"
+        "_render_image_demographic_detail(age_input, gate_outcome)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    assert not at.metric  # 推定は成功しているが、参考年齢・参考性別を出さない
+    assert any("参考年齢" in element.value for element in at.info)
+
+
+def test_gate_blocking_hides_the_bubble_estimate() -> None:
+    """FR-038: 吹き出しにも数値を出さず、ゲートの固定文言だけを出す。"""
+    at = AppTest.from_string(
+        "import numpy as np\n"
+        "import streamlit as st\n"
+        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+        "from face_symmetry_lab.application.analyzer import AnalysisOutcome\n"
+        "from face_symmetry_lab.application.still_image import (\n"
+        "    StillImageAnalysis,\n"
+        "    StillImageLandmarks,\n"
+        ")\n"
+        "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
+        "from face_symmetry_lab.domain.landmarks import build_landmark_frame\n"
+        "from face_symmetry_lab.domain.models import AnalysisState, Status\n"
+        "from face_symmetry_lab.ui.image_section import (\n"
+        "    RESULT_STATE_KEY,\n"
+        "    _render_preview_with_overlay,\n"
+        ")\n"
+        "from datetime import UTC, datetime\n"
+        "st.session_state[RESULT_STATE_KEY] = build_demographic_estimate(\n"
+        "    estimated_age_years=30.0, gender_probabilities=(0.3, 0.7),\n"
+        "    model_version='test/1.0.0', model_sha256='a' * 64,\n"
+        "    observed_at=datetime(2026, 8, 11, tzinfo=UTC),\n"
+        ")\n"
+        "rgb = np.zeros((20, 20, 3), dtype=np.uint8)\n"
+        "frame = build_landmark_frame(frame_id=1, face_count=1, width=20, height=20)\n"
+        "analysis = StillImageAnalysis(\n"
+        "    landmarks=StillImageLandmarks(frame=frame, preview=rgb),\n"
+        "    outcome=AnalysisOutcome(\n"
+        "        frame_id=1,\n"
+        "        state=AnalysisState(status=Status.OK),\n"
+        "        symmetry=None,\n"
+        "        overall_distance_smooth=None,\n"
+        "        pose=None,\n"
+        "        face_area_ratio=None,\n"
+        "        metric_version='metric/test',\n"
+        "        landmark_map_version='map/test',\n"
+        "    ),\n"
+        ")\n"
+        "gate_outcome = AgeGateOutcome(\n"
+        "    status=AgeGateStatus.UNDETERMINED, decision=None, reason=None\n"
+        ")\n"
+        "_render_preview_with_overlay(analysis, gate_outcome)\n"
+    )
+    at.run()
+
+    assert not at.exception
+    markup = " ".join(element.value for element in at.markdown)
+    assert "参考年齢 30 歳" not in markup
+    assert "参考年齢・参考性別を表示できません" in markup
+
+
+# --- FR-039: 参照平均の併記 ----------------------------------------------------
+
+
+_BUBBLE_SETUP = (
+    "import numpy as np\n"
+    "import streamlit as st\n"
+    "from datetime import UTC, datetime\n"
+    "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
+    "from face_symmetry_lab.application.analyzer import AnalysisOutcome\n"
+    "from face_symmetry_lab.application.still_image import (\n"
+    "    StillImageAnalysis,\n"
+    "    StillImageLandmarks,\n"
+    ")\n"
+    "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
+    "from face_symmetry_lab.domain.landmarks import build_landmark_frame\n"
+    "from face_symmetry_lab.domain.models import AnalysisState, Status\n"
+    "from face_symmetry_lab.ui.image_section import (\n"
+    "    RESULT_STATE_KEY,\n"
+    "    _render_preview_with_overlay,\n"
+    ")\n"
+    "st.session_state[RESULT_STATE_KEY] = build_demographic_estimate(\n"
+    "    estimated_age_years=30.0, gender_probabilities=(0.3, 0.7),\n"
+    "    model_version='test/1.0.0', model_sha256='a' * 64,\n"
+    "    observed_at=datetime(2026, 8, 11, tzinfo=UTC),\n"
+    ")\n"
+    "rgb = np.zeros((20, 20, 3), dtype=np.uint8)\n"
+    "frame = build_landmark_frame(frame_id=1, face_count=1, width=20, height=20)\n"
+    "analysis = StillImageAnalysis(\n"
+    "    landmarks=StillImageLandmarks(frame=frame, preview=rgb),\n"
+    "    outcome=AnalysisOutcome(\n"
+    "        frame_id=1,\n"
+    "        state=AnalysisState(status=Status.OK),\n"
+    "        symmetry=None,\n"
+    "        overall_distance_smooth=None,\n"
+    "        pose=None,\n"
+    "        face_area_ratio=None,\n"
+    "        metric_version='metric/test',\n"
+    "        landmark_map_version='map/test',\n"
+    "    ),\n"
+    ")\n"
+)
+
+
+def test_the_bubble_carries_the_baseline_for_the_shown_estimate() -> None:
+    """FR-039/AC-BASELINE-01: 同梱の参照統計を通した、Image 側の端から端までの配線。
+
+    30 歳・男性は `configs/reference/` の全人種を合わせて 283 件である。
+    """
+    at = AppTest.from_string(_BUBBLE_SETUP + "_render_preview_with_overlay(analysis, None)\n")
+    at.run()
+
+    assert not at.exception
+    markup = " ".join(element.value for element in at.markdown)
+    assert "参考年齢 30 歳" in markup
+    assert "30 歳・男性" in markup
+    assert "283 件" in markup
+    assert "人種で絞り込まず" in markup
+
+
+def test_the_bubble_drops_the_baseline_when_the_gate_hides_the_age() -> None:
+    """§10.12-3: 母集団の年齢から、ゲートが隠した判断を復元させない。
+
+    罠: 吹き出しへ渡す推定とは別に session state から母集団を引く実装は、
+    参考年齢を隠したまま「30 歳・男性の平均」を出してしまう。
+    """
+    at = AppTest.from_string(
+        _BUBBLE_SETUP + "_render_preview_with_overlay(\n"
+        "    analysis,\n"
+        "    AgeGateOutcome(status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None),\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    markup = " ".join(element.value for element in at.markdown)
+    assert "平均 " not in markup
+    assert "30 歳" not in markup
+    assert "参考年齢・参考性別を表示できません" in markup
+
+
 def test_the_page_module_no_longer_owns_the_image_mode() -> None:
     """H4: `ui.app` はページの骨格だけを持ち、Image モードの中身は持たない。
 
@@ -327,3 +506,64 @@ def test_the_page_module_no_longer_owns_the_image_mode() -> None:
     for moved in ("file_uploader", "analyze_still_image", "OpenCvDemographicEstimator"):
         assert moved not in source
     assert "render_image_section" in source
+
+
+def test_the_image_mode_never_renders_a_session_summary() -> None:
+    """FR-021: 静止画は 1 行しか持たず、分布が存在しない。
+
+    罠: Camera と同じ配線をそのまま持ち込む実装は、1 件だけの「中央値」と
+    「変動幅」を出す——どちらもその 1 枚の値そのものであって、要約ではない。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    source = inspect.getsource(image_section)
+
+    assert "summarize_session" not in source
+    assert "render_session_summary" not in source
+
+
+# --- FR-042: 結果レポートの配線 -----------------------------------------------
+
+
+def test_the_image_export_offers_a_report_built_from_the_shown_estimate() -> None:
+    """§10.12-3: レポートの母集団は、吹き出しへ実際に出した推定からだけ決まる。
+
+    罠: session state の推定を直接読む実装は、年齢ゲートが隠した判断を
+    レポートの母集団の年齢から復元させる。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    source = inspect.getsource(image_section._render_image_export)
+
+    assert "build_image_report(" in source
+    assert "_resolve_shown_estimate(" in source
+    assert 'report_mode="image"' in source
+
+
+def test_the_bubble_and_the_report_resolve_the_estimate_the_same_way() -> None:
+    """罠: 2 か所で別々に解決すると、片方だけがゲートの判断を漏らす。"""
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    for function in (
+        image_section._render_preview_with_overlay,
+        image_section._render_image_export,
+    ):
+        assert "_resolve_shown_estimate(" in inspect.getsource(function)
+
+
+def test_the_symmetrisation_view_is_reused_rather_than_recomputed() -> None:
+    """FR-042: 同じ折りたたみを 2 度計算しない（費用と、図の食い違いの両方）。"""
+    import inspect
+
+    from face_symmetry_lab.ui import image_section
+
+    section = inspect.getsource(image_section.render_image_section)
+
+    assert "symmetrization_view = _render_image_symmetrization(" in section
+    assert "view=symmetrization_view" in section

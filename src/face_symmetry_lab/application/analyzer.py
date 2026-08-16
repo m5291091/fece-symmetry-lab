@@ -28,7 +28,11 @@ from face_symmetry_lab.domain.skin_quality import (
     SkinQualityResult,
     compute_skin_quality,
 )
-from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS, TimeBasedEma
+from face_symmetry_lab.domain.smoothing import (
+    DEFAULT_TAU_SECONDS,
+    TimeBasedEma,
+    validate_tau_seconds,
+)
 from face_symmetry_lab.domain.symmetry import (
     SymmetryError,
     SymmetryResult,
@@ -104,11 +108,9 @@ class FrameAnalyzer:
         self._config = config
         self._config_3d = config_3d
         self._gate = QualityGate(thresholds)
-        self._ema = TimeBasedEma(tau_seconds=tau_seconds)
-        self._ema_3d = TimeBasedEma(tau_seconds=tau_seconds)
         # §8.7 改訂（H1）: 部位ごとに独立したインスタンス。`d_3d` 用の `_ema_3d`
-        # とも値を共有しない。
-        self._ema_3d_parts = _new_part_emas(tau_seconds)
+        # とも値を共有しない（`_replace_emas` が 3 種類をまとめて作る）。
+        self._replace_emas(tau_seconds)
         self._lost_since: float | None = None
         self._skin_pairs = skin_pairs
 
@@ -143,10 +145,35 @@ class FrameAnalyzer:
         セッションの生存期間中は固定である。
         """
         self._gate = QualityGate(thresholds)
+        self._replace_emas(tau_seconds)
+        self._lost_since = None
+
+    def set_tau_seconds(self, tau_seconds: float) -> None:
+        """FR-040: 平滑化の時定数だけを差し替える（§8.7、ADR-0007 (b)）。
+
+        `update()` との違いは、**品質ゲートに触れないこと**である。`tau` は表示の
+        時間応答だけを決め、採点条件を動かさない。`update()` を流用して
+        `QualityGate` ごと作り直すと、平滑化時間を選び直すたびに `Status` が
+        `HOLD` へ戻り、`valid_frames_to_ok` 分のフレームのあいだ数値が `—` になる
+        ——値を選び比べるという操作そのものが成立しなくなる。
+
+        EMA は §8.8 のとおり作り直す。古い時定数で均した `ema_(t-1)` は新しい
+        `tau` の定義（直近 `tau` 秒あたりの平均）を満たさないため、区間をまたい
+        で持ち越さない。値域の検証は `domain.smoothing` が持ち、範囲外は clamp
+        せず例外にする（呼び出し側が直前の設定を保つ）。
+        """
+        self._replace_emas(validate_tau_seconds(tau_seconds))
+
+    def _replace_emas(self, tau_seconds: float) -> None:
+        """全体・3D 総合・部位別の EMA を、同じ `tau` で作り直す。
+
+        3 種類すべてを 1 か所で作る。`__init__`・`update()`・`set_tau_seconds()`
+        の 3 経路が別々に列挙していると、EMA を 1 本足したときに更新漏れが起き、
+        その 1 本だけ古い時定数のまま動き続ける。
+        """
         self._ema = TimeBasedEma(tau_seconds=tau_seconds)
         self._ema_3d = TimeBasedEma(tau_seconds=tau_seconds)
         self._ema_3d_parts = _new_part_emas(tau_seconds)
-        self._lost_since = None
 
     def reset(self) -> None:
         """履歴・平滑化・ヒステリシスを破棄する（§4.4, §8.8）。"""

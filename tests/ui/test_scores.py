@@ -132,26 +132,22 @@ def test_the_detail_panel_states_the_deviation_beside_the_symmetry() -> None:
     assert "対称度との和は 100%" in captions
 
 
-def test_the_detail_panel_carries_the_score_help_that_the_headline_used_to_hold() -> None:
-    """§8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は必ず画面に出す。
+def test_the_score_help_is_reachable_from_the_walkthrough() -> None:
+    """§8.6.3: 「採点ではない」「順位ではない」「アンカー 2 点」は残す。
 
-    見出し結果の削除（2026-08-12）で `help=` の置き場が無くなったため、計算過程の
-    節がこの説明の唯一の受け皿になる。罠: 見出しと一緒に説明ごと消した実装は、
-    引き伸ばした点数だけが何の断りもなく残ってここで落ちる。
+    §5.3.1（2026-08-16）で常時表示からは外したが、**内容は削らず** step 3 の
+    `help` へまとめた。罠: 定数ごと消した実装は、引き伸ばした点数だけが何の
+    断りもなく残る。
     """
-    at = _render_details(
-        body=(
-            "outcome = _outcome_for_display(\n"
-            "    symmetry_3d=_symmetry_3d_result(\n"
-            "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-            "    ),\n"
-            "    smooth_3d=0.018,\n"
-            ")\n"
-            "render_score_details(outcome, show_smoothed=False)\n"
-        )
-    )
+    import inspect
 
-    assert PART_EQUAL_WEIGHT_HELP in [element.value for element in at.caption]
+    from face_symmetry_lab.ui import scores
+
+    source = inspect.getsource(scores._render_score_calculation_detail)
+
+    assert "PART_EQUAL_WEIGHT_HELP" in source
+    assert "help=" in source
+    assert "採点" in PART_EQUAL_WEIGHT_HELP
 
 
 def test_the_part_equal_weight_headline_label_uses_the_user_specified_wording() -> None:
@@ -161,24 +157,30 @@ def test_the_part_equal_weight_headline_label_uses_the_user_specified_wording() 
 
 
 def test_the_symmetry_heading_and_caption_avoid_a_value_judgement() -> None:
-    """§5.2/§5.3: reorienting the number must not turn it into a grade.
+    """§5.3.1（2026-08-16）: 常時表示は 1 行。根拠は `help` と About が持つ。"""
+    from face_symmetry_lab.ui.scores import DISTANCE_UNIT_HELP
 
-    Checked against the strings the user actually reads as a verdict — the
-    heading and the unit caption — rather than the whole module, so an
-    explicit disclaimer ("良し悪しを表しません") cannot fail this.
-    """
-    for forbidden in ("スコア", "得点", "評価", "優秀", "理想", "完璧"):
-        assert forbidden not in SCORE_HEADING
-        assert forbidden not in DISTANCE_UNIT_CAPTION
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
+    )
+    combined = " ".join(str(element.value) for element in at.caption)
 
-    # 注記は 100% が何であるかを述べ続けなければならない。さもないと、向きを
-    # 変えただけのものが、利用者の目指す目標へ黙って変わってしまう。
-    assert "上限" in DISTANCE_UNIT_CAPTION
+    assert "試験中の指標です" in combined
+    assert DISTANCE_UNIT_CAPTION in combined
     assert "目標値ではありません" in DISTANCE_UNIT_CAPTION
-
-    for forbidden in ("スコア", "得点", "評価", "優秀", "理想", "完璧"):
-        assert forbidden not in PART_LEVEL_VARIATION_CAPTION
-        assert forbidden not in PART_EQUAL_WEIGHT_HELP
+    # 長い説明は `help` へ移した（常時は見えないが、その場で読める）。
+    assert "狭い範囲に集まりやすく" in DISTANCE_UNIT_HELP
+    assert "狭い範囲に集まりやすく" not in combined
+    for banned in ("良い", "悪い", "美しい", "理想"):
+        assert banned not in combined
 
 
 def test_the_part_equal_weight_help_explains_the_term_is_not_a_calibrated_score() -> None:
@@ -324,9 +326,13 @@ def test_show_parts_false_hides_the_part_metrics_but_keeps_the_required_notices(
         assert part not in labels
 
     captions = " ".join(element.value for element in at.caption)
-    assert PART_LEVEL_VARIATION_CAPTION in captions
+    # §5.3.1（2026-08-16）: 部位別の揺れ幅は `help` へ移した。部位別を出さない
+    # ときは、その注記も要らない。
+    assert PART_LEVEL_VARIATION_CAPTION not in captions
     assert SCORE_HEADING in [element.value for element in at.subheader]
-    assert any("試験中の指標" in element.value for element in at.info)
+    # §5.3.1: `st.info` の 2 文から `st.caption` の 1 行へ。「試験中の指標」で
+    # あること（不変条件 8）は残す。
+    assert any("試験中の指標" in element.value for element in at.caption)
     # 計算過程は残り続ける（部位別 4 つの値も、その中には出る）。
     walkthrough = _code_text(at)
     for deviation in ("2.11", "1.44", "0.62", "1.83"):
@@ -611,34 +617,24 @@ def test_the_walkthrough_shows_no_numbers_when_a_part_is_missing() -> None:
     assert "当てはめられません" in notices
 
 
-def test_the_walkthrough_keeps_the_caveats_after_the_steps_rather_than_inside_them() -> None:
+def test_the_walkthrough_keeps_its_one_caveat_after_the_steps() -> None:
     """H4: 手順と、手順の読み方に対する留保は別のものである。
 
-    4 つの注記（重みの違い・目盛りを広げた理由・実測レンジ・help）は 3 つの
-    ステップがすべて終わったあとに置く。罠: ステップの間へ挟む実装は、手順を
-    追っている途中で読者を注意書きへ迷い込ませる。
+    §5.3.1（2026-08-16）で 5 本あった注記を 1 本へ畳んだが、置く位置は変えない
+    ——3 つのステップがすべて終わったあとである。罠: ステップの間へ挟む実装は、
+    手順を追っている途中で読者を注意書きへ迷い込ませる。
     """
-    from face_symmetry_lab.ui.scores import (
-        SCORE_CALCULATION_HIGH_VALUE_NOTE,
-        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
-        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
-    )
+    from face_symmetry_lab.ui.scores import SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION
 
     at = _render_details(body=_STEP_SAMPLE)
 
     captions = [element.value for element in at.caption]
-    markdown = [element.value for element in at.markdown]
     last_step_caption_index = captions.index(
         next(caption for caption in captions if "1ポイント" in caption)
     )
-    for note in (
-        PART_EQUAL_WEIGHT_HELP,
-        SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION,
-        SCORE_CALCULATION_HIGH_VALUE_NOTE,
-        SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
-    ):
-        assert captions.index(note) > last_step_caption_index
-    assert f"**{SCORE_STEP_TITLES[2]}**" in markdown
+
+    assert captions.index(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION) > last_step_caption_index
+    assert f"**{SCORE_STEP_TITLES[2]}**" in [element.value for element in at.markdown]
 
 
 def test_the_walkthrough_uses_no_progress_bar_or_gauge() -> None:
@@ -734,10 +730,66 @@ def test_the_score_scale_caption_warns_that_a_reshoot_moves_the_points() -> None
         assert forbidden not in SCORE_SCALE_CAPTION
 
 
-def test_the_score_scale_caption_is_rendered_outside_the_expander() -> None:
-    """§8.6.7: 注記は定数として存在するだけでなく、畳まれていない位置に出る。"""
-    from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION
+def test_the_score_scale_caption_states_how_much_it_moves() -> None:
+    """§5.3.1: 1 行へ縮めたが、**撮り直しで動く量だけは残す**。
+
+    数字が動かないものだと読まれると、引き伸ばした目盛りは誤解の元になる。
+    根拠（アンカーの由来・被写体 1 名）は `help` と About が持つ。
+    """
+    from face_symmetry_lab.ui.scores import SCORE_SCALE_CAPTION, SCORE_SCALE_HELP
+
+    assert "6.8" in SCORE_SCALE_CAPTION
+    assert len(SCORE_SCALE_CAPTION) < 60
+    assert "被写体 1 名" in SCORE_SCALE_HELP
+
+
+def test_the_closing_limits_are_a_single_line() -> None:
+    """§5.3.1（2026-08-16）: 見出し付きの箱に 3 本の長文を並べない。
+
+    罠: 以前の版はここに 3 本、その上にさらに 2 本の caption があり、灰色の壁だった。
+    **読まれない注意文は、書いていないのと同じである。**
+    """
+    from face_symmetry_lab.ui.scores import READING_LIMITS
+
+    at = _render_details(
+        body=(
+            "outcome = _outcome_for_display(\n"
+            "    symmetry_3d=_symmetry_3d_result(\n"
+            "        contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018\n"
+            "    ),\n"
+            "    smooth_3d=0.018,\n"
+            ")\n"
+            "render_score_details(outcome, show_smoothed=False)\n"
+        )
+    )
+    captions = [str(element.value) for element in at.caption]
+
+    assert len(READING_LIMITS) == 1
+    assert len(READING_LIMITS[0]) < 100
+    assert any(READING_LIMITS[0] in caption for caption in captions)
+
+
+def test_the_closing_limit_still_states_what_it_cannot_be_used_for() -> None:
+    """減らしたのは分量であって、禁止そのものではない（§5.3.1）。"""
+    from face_symmetry_lab.ui.scores import READING_LIMITS
+
+    text = " ".join(READING_LIMITS)
+
+    assert "他人との比較" in text
+    assert "医学的評価" in text
+    for banned in ("良い", "悪い", "美しい", "理想", "偏差値", "順位"):
+        assert banned not in text
+
+
+def test_the_metric_versions_stay_separate_from_the_caveats() -> None:
+    """版と対応表は来歴であって留保ではない。同じ箱へ混ぜない（FR-020）。"""
+    from face_symmetry_lab.ui.scores import READING_LIMITS
 
     at = _render_details(body=_STEP_SAMPLE)
 
-    assert SCORE_SCALE_CAPTION in [element.value for element in at.caption]
+    version_caption = next(
+        element.value for element in at.caption if "landmark map" in element.value
+    )
+
+    assert "symmetry-3d/test" in version_caption
+    assert all(limit not in version_caption for limit in READING_LIMITS)

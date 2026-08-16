@@ -17,8 +17,9 @@ P が要るのは、V で見えた差が「その日の顔の違い」なのか�
 出さない。** テイクは 3 本しかなく、n=3 の相関には意味がないためである。出すのは
 数字を並べた表と、テイク間の全幅だけである。
 
-    uv run python scripts/measure_session_variation.py --video take01.mov \
-        --video take02.mov --video take03.mov --max-frames 600 --gain-frames 5
+    uv run python scripts/measure_session_variation.py --video data/takes/take01.mov \
+        --video data/takes/take02.mov --video data/takes/take03.mov \
+        --max-frames 600 --gain-frames 5
     uv run python scripts/measure_session_variation.py --self-test
 
 `measure_metric_noise.py`（A〜L）と `measure_zoom_depth_scale.py`（W / R）へは一切

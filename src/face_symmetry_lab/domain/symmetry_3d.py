@@ -93,8 +93,24 @@ class Symmetry3DResult:
         return self.splits.get(name)
 
     def distance(self, name: str) -> float | None:
+        """**部位別 `d_3d,p` だけを引く。** `"overall"` は部位名ではない。
+
+        総合距離は `overall_distance` から読む。名前空間を混ぜないのは、
+        `distance("overall")` が黙って `None` を返すことに読み手が気付けない
+        ためである（実障害: `domain.age_gate.build_features` がその形で総合距離
+        を読もうとし、特徴量が常に欠測になって年齢ゲートが毎回沈黙した）。
+        """
         split = self.splits.get(name)
         return None if split is None else split.distance
+
+    @property
+    def overall_distance(self) -> float | None:
+        """§8.5.1 の総合距離 `d_3d`。重ね合わせが成立しなければ欠測。
+
+        `overall.distance` へ直接手を伸ばさずに済む入口である。読み手（表示・
+        FR-038 の特徴量）は `AxisSplit` の内訳を必要としない。
+        """
+        return None if self.overall is None else self.overall.distance
 
     @property
     def is_complete(self) -> bool:

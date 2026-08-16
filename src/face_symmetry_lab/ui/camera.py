@@ -45,14 +45,17 @@ from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
+    PipelineSnapshot,
     RealtimeLandmarkPipeline,
 )
 from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
+from face_symmetry_lab.ui.baseline import resolve_session_baseline
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.hud import (
     HUD_POSITION_OPTIONS,
@@ -61,6 +64,7 @@ from face_symmetry_lab.ui.hud import (
     render_hud_payload,
 )
 from face_symmetry_lab.ui.model_setup import (
+    build_age_gate_service,
     configured_demographic_path,
     configured_segmenter_path,
     demographic_asset,
@@ -70,10 +74,14 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_asset,
     segmenter_status,
 )
+from face_symmetry_lab.ui.readings import display_signature
+from face_symmetry_lab.ui.report import build_camera_report
 from face_symmetry_lab.ui.scores import (
     render_demographic_estimate,
     render_score_details,
 )
+from face_symmetry_lab.ui.smoothing_panel import render_smoothing_control
+from face_symmetry_lab.ui.summary_panel import render_session_summary
 from face_symmetry_lab.ui.symmetrization_panel import (
     SYMMETRIZATION_HEADING,
     render_symmetrization_view,
@@ -226,6 +234,10 @@ def _build_pipeline(model_path: Path) -> RealtimeLandmarkPipeline:
         recorder=recorder,
         segmenter=_build_segmenter(),
         demographic_worker=_build_demographic_worker(),
+        # FR-038: 既存の worker/relay 構造（推論の independent cadence）は変えず、
+        # 判定だけを追加する。モデル・spec が欠けても `build_age_gate_service` は
+        # 例外を投げず `classifier=None` の service へ倒れる（AC-AGEGATE-03）。
+        age_gate=build_age_gate_service(),
         analysis_interval_ms=DEFAULT_ANALYSIS_INTERVAL_MS,
         midline_indices=config.midline_indices,
         # §15.2: Advanced 設定に手動 UI は無い。明るさ・ズーム・cadence は無条件
@@ -253,6 +265,23 @@ def release_session_pipeline() -> None:
         pipeline.close()
 
 
+def _snapshot_for_display(pipeline: RealtimeLandmarkPipeline) -> PipelineSnapshot:
+    """FR-041: 表示用の snapshot を 1 か所で作る（ADR-0008 (c)）。
+
+    HUD の fragment と詳細結果の fragment はどちらもこれを通す。**ラッチは
+    pipeline に 1 つしか無い**ので、どちらが先に呼んでも同じ解析結果を受け取り、
+    §8.6.3 の計算過程と HUD の部位別が同じ値を出し続ける（AC-DISPLAY-04）。
+    2 つの fragment がそれぞれラッチを持つと、同じ画面の 2 つの区画が別々の
+    保持区間を刻むことになる。
+
+    鍵（保持を打ち切る手掛かり）は `ui.readings.display_signature` が作る。
+    値そのものではなく「値が届いているかどうかの型」なので、顔を見失った瞬間に
+    保持が切れて数値が `—` へ戻る（AC-HOLD-02）。
+    """
+    snapshot = pipeline.snapshot()
+    return pipeline.hold_for_display(snapshot, key=display_signature(snapshot.analysis))
+
+
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
 def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     """不変 snapshot を 5 Hz で読み、映像上の HUD へ payload を publish するだけ。
@@ -263,10 +292,15 @@ def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     が書く隠し要素をこれが 5 Hz で更新し続けないと、HUD の数値が動かなくなる
     ためである。
     """
-    snapshot = pipeline.snapshot()
+    snapshot = _snapshot_for_display(pipeline)
     render_hud_payload(
         snapshot,
         show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
+        # FR-040: snapshot ではなく pipeline から直接読む。snapshot は解析フレーム
+        # ごとにしか作り直されないため、そこ経由だと選び直してから次の解析まで
+        # 古い秒数が HUD に残る。
+        smoothing_tau_seconds=pipeline.smoothing_tau_seconds,
+        display_hold_seconds=pipeline.display_hold_seconds,
     )
 
 
@@ -276,8 +310,12 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
 
     項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示する
     ため、`render_score_details` へ `show_parts=False` を渡して重複を避ける。
+
+    FR-041: HUD と同じ `_snapshot_for_display` を通す。片方だけ生の snapshot を
+    読むと、保持中に「HUD の部位別」と「計算過程の部位別」が別の瞬間の値になり、
+    AC-DISPLAY-04 の文字列一致が保持区間の境界でだけ壊れる。
     """
-    snapshot = pipeline.snapshot()
+    snapshot = _snapshot_for_display(pipeline)
     with st.container(border=True):
         # §14.4: 回復導線。以前は映像隣の見出しパネルにあったが、パネルの削除
         # に伴いここへ移した。
@@ -374,8 +412,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     """
     st.markdown(SYMMETRIZATION_HEADING)
     st.caption(
-        "この瞬間の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
-        "実測点と重ねて表示します。ズレの大きさを形で見るための表示で、"
+        "この瞬間の顔を正中線で折りたたみ、そろえた位置と重ねて表示します。"
         "どちらが正しい・望ましいという意味はありません。"
     )
 
@@ -402,21 +439,57 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         return
 
     render_symmetrization_view(view, warp_requested=warp)
-    st.caption("取り込んだ映像はこのブラウザセッションのメモリだけに残り、保存も送信もしません。")
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    """FR-021 の要約と FR-017 のダウンロードを、同じタブへ順に置く。
+
+    **bundle は 1 度だけ作る。** `export_bundle()` は lock の内側で記録を複製
+    するので、要約用とダウンロード用に 2 度呼ぶと、その間に届いたフレームの分だけ
+    両者がずれる（要約が語るセッションと、保存されるセッションが別物になる）。
+
+    要約を 5 Hz の fragment ではなくここへ置く理由は `ui.summary_panel` にある
+    ——最大 3,000 行の要約を毎秒 5 回計算する必要はない。
+    """
+    bundle = pipeline.export_bundle()
+    records = bundle.records if bundle is not None else ()
+    summary = summarize_session(records)
+    render_session_summary(summary)
+
+    def _report(include_figures: bool) -> str:
+        # 2026-08-16: リアルタイムのレポートに顔写真は載せない。`include_figures`
+        # は Image だけが使う——Camera 側は不変条件 1 の限定解除を必要としない。
+        del include_figures
+        # FR-039/§9.6.1: 母集団は **pipeline が溜めた「表示を許した推定」** から
+        # 決める。`bundle.records` から作ると、年齢ゲートが隠した判断が母集団の
+        # 年齢から復元できてしまう（§10.12-3、AC-BASELINE-05）。
+        return build_camera_report(
+            summary=summary,
+            bundle=bundle,
+            series=trend_series(records),
+            baseline=resolve_session_baseline(pipeline.demographic_observations),
+        )
+
     render_export_panel(
-        pipeline.export_bundle(),
+        bundle,
         heading="セッションデータのエクスポート",
-        warning=(
-            "姿勢・左右差などの顔由来の派生データを含みます。"
-            "共有先と利用目的を確認してから保存してください。"
-        ),
+        warning="姿勢・左右差などの顔由来の派生データを含みます。",
         key_prefix="download_session",
         # ライブセッションは記録を積み上げるため、件数を示してこの
         # ダウンロードが実際にどこまでを含むかを伝える。
         show_record_count=True,
+        # FR-017 は記録が 1 件以上あるときにだけエクスポートを提示する。その
+        # ためこのタブは開始直後に何も描かず、中身が真っ白になっていた。提示
+        # 条件は変えずに、空白を「まだ何も無い」という説明へ置き換える。
+        empty_notice=(
+            "まだ書き出せる記録がありません。"
+            "カメラを開始し、品質ゲートを満たすフレームが得られると記録が貯まります。"
+        ),
+        report_builder=_report,
+        report_mode="session",
+        # 2026-08-16: リアルタイムのレポートは顔写真を持たない。切り替えも注意も
+        # 出す対象が無い。
+        report_has_figures=False,
     )
 
 
@@ -429,63 +502,60 @@ def _render_auto_tune_status(pipeline: RealtimeLandmarkPipeline) -> None:
     """
     zoom_policy = pipeline.zoom_policy
     zoom_caption = f" · ズーム目標 {zoom_policy.target_px}px" if zoom_policy is not None else ""
+    # §5.3.1: 現在値だけを 1 行で出し、何をどう調整しているかの説明は `help` へ。
     st.caption(
-        "Advanced設定はAIが自動調整します（明るさ・追跡ズーム・"
-        "history_capacity・age_interval_ms・analysis_interval_ms）。"
-        f"現在値: 検出用の明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
-        f"analysis_interval_ms={pipeline.analysis_interval_ms}。"
-        "明るさ補正はlandmark検出にだけ使い、表示される映像の明るさは変えません。"
-        "品質ゲート閾値は固定既定値です。左右差の計算には調整可能な係数が無いため、"
-        "自動調整が数値を動かすことはありません。"
+        f"明るさ補正 ×{pipeline.brightness_gain:.2f}{zoom_caption} · "
+        f"解析周期 {pipeline.analysis_interval_ms} ms",
+        help=(
+            "明るさ・追跡ズーム・cadence は AI が自動調整します（FR-029, FR-030）。"
+            "明るさ補正は landmark 検出にだけ使い、表示される映像は変わりません。"
+            "品質ゲート閾値は固定既定値で、左右差の計算には調整できる係数がないため、"
+            "自動調整が数値を動かすことはありません。"
+        ),
     )
 
 
 def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
-    """§15.1 の表示専用の設定を、そのまま pipeline へ書き込む。
+    """§15.1 の利用者向け設定を、そのまま pipeline へ書き込む。
 
-    どれもスコアを変えない（FR-027, FR-028）。正中線と背景は解析の後に描かれ、
-    年齢・性別のトグルは元から左右差とは独立したパネルの表示可否を切り替える
-    だけである（FR-024）。ここで読み、1 箇所で書き込むことで、その主張を
-    検証可能な形に保つ。
+    どれもスコアを変えない。正中線と背景は解析の後に描かれ、年齢・性別のトグルは
+    元から左右差とは独立したパネルの表示可否を切り替えるだけで（FR-024）、
+    平滑化時間（FR-040）が変えるのは表示の時間応答だけである（§8.7）。ここで
+    読み、1 箇所で書き込むことで、その主張を検証可能な形に保つ。
+
+    §5.1: 設定を平らな 1 列に並べず、「何のための操作か」で囲った区画へ分ける。
+    この画面の設定は性格が 3 つに分かれる——映像の見え方、数値の落ち着き、
+    HUD の置き場所——ので、そこで切る。
     """
-    midline_column, demographic_column = st.columns(2)
-    with midline_column:
-        show_midline = st.toggle(
-            "顔の中心線を表示",
-            value=True,
-            key="camera_midline_enabled",
-            help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
-        )
-    with demographic_column:
-        # この pipeline が実際に保持している worker を条件にする。worker が無いのに
-        # 機能が動いていると示すことがないようにするためである。
-        show_demographics = st.toggle(
-            "年齢・性別の参考値を表示",
-            value=True,
-            key=DEMOGRAPHIC_ENABLED_STATE_KEY,
-            disabled=not pipeline.has_demographic_worker,
-            help=(
-                "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
-                "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
-            ),
-        )
-        if not pipeline.has_demographic_worker:
-            st.caption("年齢・性別モデルが未配置のため使用できません。")
-    pipeline.set_midline_enabled(show_midline)
-    pipeline.set_demographic_enabled(show_demographics)
+    with st.container(border=True):
+        st.markdown("##### 映像の見え方")
+        st.caption("どれも表示だけを変えます。")
+        midline_column, demographic_column = st.columns(2)
+        with midline_column:
+            show_midline = st.toggle(
+                "顔の中心線を表示",
+                value=True,
+                key="camera_midline_enabled",
+                help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+            )
+        with demographic_column:
+            # この pipeline が実際に保持している worker を条件にする。worker が
+            # 無いのに機能が動いていると示すことがないようにするためである。
+            show_demographics = st.toggle(
+                "年齢・性別の参考値を表示",
+                value=True,
+                key=DEMOGRAPHIC_ENABLED_STATE_KEY,
+                disabled=not pipeline.has_demographic_worker,
+                help=(
+                    "18〜75歳向けモデル推定の参考年齢・参考性別を最大1Hzで独立推論します。"
+                    "左右差の計算とは分離しており、失敗してもカメラ映像は止まりません。"
+                ),
+            )
+            if not pipeline.has_demographic_worker:
+                st.caption("年齢・性別モデルが未配置のため使用できません。")
+        pipeline.set_midline_enabled(show_midline)
+        pipeline.set_demographic_enabled(show_demographics)
 
-    # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。色以外の手掛かりは、
-    # ゲートが閉じている間は詳細結果タブの状態文言と理由、ゲートが閉じると
-    # HUD・詳細結果の数値が「—」へ変わること（値の有無）の 2 つで保つ（項目26）。
-    st.caption(
-        "映像の枠色と HUD の枠線は品質ゲートの状態を示します。"
-        "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものではありません。"
-        "同じ状態は、条件を満たしていない間は詳細結果タブの文言と理由でも確認でき、"
-        "満たすと HUD・詳細結果の数値が「—」から実際の値へ変わることでも分かります。"
-    )
-
-    background_column, status_column = st.columns(2)
-    with background_column:
         segmenter_path = configured_segmenter_path()
         if segmenter_status(segmenter_path) is InstallStatus.READY:
             background_mode = st.radio(
@@ -499,7 +569,35 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
             pipeline.set_background_mode(background_mode)
         else:
             st.caption("背景置換モデルが未配置のため、この機能は使用できません。")
-    with status_column:
+
+        # §5.4/§14.3e: 枠の色は状態の識別子であって評価ではない。色以外の手掛かり
+        # は HUD 自身が出す状態のテキストが担うので（FR-040 と同じ行）、ここは
+        # §5.3.1 に従って 1 行に留め、残りは `help` へ置く。
+        st.caption(
+            "映像の枠色は品質ゲートの状態です。",
+            help=(
+                "緑は「計測条件を満たしている」という意味で、顔の良し悪しを表すものでは"
+                "ありません。同じ状態は HUD の状態表示でも読め、満たしていない間は詳細結果"
+                "タブに理由が出ます。"
+            ),
+        )
+
+    with st.container(border=True):
+        # 見出しは `render_smoothing_control` が自分で出す（`SMOOTHING_HEADING`）。
+        # ここでもう 1 行足すと、同じ囲みの中に見出しが 2 つ並ぶ。
+        # FR-040: panel は pipeline を知らない。選ばれた値をここで適用する。
+        # `set_smoothing_tau_seconds` は同じ値なら何もしないので、5 Hz の再実行で
+        # EMA が作り直されることはない（AC-SMOOTH-01）。
+        choice = render_smoothing_control(
+            tau_seconds=pipeline.smoothing_tau_seconds,
+            analysis_interval_ms=pipeline.analysis_interval_ms,
+            hold_seconds=pipeline.display_hold_seconds,
+        )
+        pipeline.set_smoothing_tau_seconds(choice.tau_seconds)
+        pipeline.set_display_hold_seconds(choice.hold_seconds)
+
+    with st.container(border=True):
+        st.markdown("##### 自動調整の現在値")
         _render_auto_tune_status(pipeline)
 
 
@@ -511,17 +609,20 @@ def _render_hud_position_control() -> None:
     見出しパネルとその配置プリセット（右・左・下）を削除したため、ここで
     描く radio は映像上 HUD の位置だけになる。
     """
-    st.radio(
-        "映像上の HUD の位置",
-        options=HUD_POSITION_OPTIONS,
-        key=HUD_POSITION_STATE_KEY,
-        horizontal=True,
-        help=(
-            "映像へ重ねる HUD の吹き出し"
-            "（全体の対称度・全体のスコア・部位別4つ・参考年齢・参考性別・折れ線グラフ）"
-            "の位置です。映像自体は加工しません。"
-        ),
-    )
+    with st.container(border=True):
+        st.markdown("##### 映像上のHUD")
+        st.radio(
+            "映像上の HUD の位置",
+            options=HUD_POSITION_OPTIONS,
+            key=HUD_POSITION_STATE_KEY,
+            horizontal=True,
+            help=(
+                "映像へ重ねる HUD の吹き出し"
+                "（状態・平滑化時間・全体の対称度・全体のスコア・部位別4つ・"
+                "参考年齢・参考性別・折れ線グラフ）の位置です。映像自体は加工しません。"
+            ),
+        )
+        st.caption("HUD は掴んで動かせます。プリセットを選び直すと元の角へ戻ります。")
 
 
 def _exit_fullscreen() -> None:
@@ -537,7 +638,7 @@ def _exit_fullscreen() -> None:
 
 def _render_session_controls(pipeline: RealtimeLandmarkPipeline) -> None:
     """停止・リセットの操作子。メイン画面から到達できる位置に置く（§5.1）。"""
-    st.caption("カメラ映像は映像上の `STOP` で停止します。")
+    st.caption("カメラ映像は、映像の下にある STOP ボタンで停止します。")
     controls = st.columns(2)
     if controls[0].button("結果・履歴・平滑化をリセット", key="reset_analysis"):
         pipeline.reset_analysis()
@@ -559,13 +660,12 @@ def render_camera_section() -> None:
     切り替えは表示専用で、測定値を変えず WebRTC の通信も中断しない
     （AC-LAYOUT-01）。
     """
+    # §5.1: 映像より上の行数は、そのまま映像が画面外へ押し出される量になる。
+    # ここで述べるのはプライバシー境界（毎回読めることに意味がある）と、数値
+    # がどこに出るかの 1 文だけに絞る。算出方法と制約は About ページにある。
     st.subheader("リアルタイム ランドマーク表示")
-    st.caption(
-        "映像は端末内のメモリだけで処理され、保存も外部送信もしません。"
-        "映像にはランドマークと中心線だけを重ね、主要な数値は映像へ重ねる"
-        "HUD（吹き出し）に表示します。設定と詳しい数値は映像の下のタブに"
-        "まとめています。"
-    )
+    # §5.3.1: プライバシー境界（毎回読めることに意味がある）だけを 1 行で残す。
+    st.caption("映像は端末内のメモリだけで処理され、保存も外部送信もしません。")
 
     model_path = resolve_ready_landmarker()
     if model_path is None:
@@ -614,9 +714,17 @@ def render_camera_section() -> None:
     if not context.state.playing:
         # 不変条件 3: 明示的な同意の後にだけカメラ許可を求める導線を保つ。
         st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
-        # 開始前でも設定は画面上にあるべきだが、提示できる結果・取り込み・
-        # エクスポートはまだ無い。
-        with st.expander("表示設定"):
+        # FR-042/§5.1（2026-08-16）: **計測を止めた後もまとめとエクスポートへ
+        # 到達できる。** 要約は 1 セッションが終わってから読むものであり、STOP を
+        # 押した時点でタブごと消えてはならない。記録がまだ無い開始前は、パネル側
+        # が `empty_notice` で「まだ何も無い」と説明する。ライブ表示に依存する
+        # 詳細結果・対称化は、止まっている間は出す意味が無いので置かない。
+        stopped_export_tab, stopped_settings_tab = st.tabs(
+            ["📄 まとめ・エクスポート", "⚙️ 表示設定"]
+        )
+        with stopped_export_tab:
+            _render_export_panel(pipeline)
+        with stopped_settings_tab:
             _render_display_controls(pipeline)
             _render_hud_position_control()
         return
@@ -633,8 +741,11 @@ def render_camera_section() -> None:
 
     # §5.1, AC-LAYOUT-01: 映像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
     # 上の表示がスクロールで手の届かない位置へ行かないようにする。
+    # アイコンは並んだタブを見分ける手掛かりであって、文言の置き換えではない
+    # （§5.4: 記号だけで意味を伝えない）。達成度・良し悪しを表す絵文字は使わない
+    # （§5.2）。
     detail_tab, symmetry_tab, settings_tab, export_tab = st.tabs(
-        ["詳細結果", "左右対称との比較", "表示設定", "エクスポート"]
+        ["📊 詳細結果", "🪞 左右対称との比較", "⚙️ 表示設定", "📄 まとめ・エクスポート"]
     )
     with detail_tab:
         _render_detail_panel(pipeline)

@@ -25,6 +25,13 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
+from face_symmetry_lab.application.age_gate import (
+    AgeGateOutcome,
+    AgeGateService,
+)
+from face_symmetry_lab.application.age_gate import (
+    evaluate_age_gate_for_frame as _evaluate_age_gate_for_frame,
+)
 from face_symmetry_lab.application.analysis_cadence import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
     DEFAULT_DISPLAY_TTL_MS,
@@ -32,6 +39,10 @@ from face_symmetry_lab.application.analysis_cadence import (
 )
 from face_symmetry_lab.application.analyzer import AnalysisOutcome, FrameAnalyzer
 from face_symmetry_lab.application.auto_tune_controller import AutoTuneController, DisplayTuning
+from face_symmetry_lab.application.demographic_observations import (
+    DemographicObservations,
+    DemographicObservationSet,
+)
 from face_symmetry_lab.application.demographic_relay import DemographicRelay
 from face_symmetry_lab.application.frame_capture import CaptureBuffer, CapturedFrame
 from face_symmetry_lab.application.ports import (
@@ -41,11 +52,16 @@ from face_symmetry_lab.application.ports import (
 )
 from face_symmetry_lab.application.preview_compositor import PreviewCompositor
 from face_symmetry_lab.application.quality import QualityThresholds
-from face_symmetry_lab.application.session import SessionRecorder
+from face_symmetry_lab.application.session import (
+    AgeGateProvenance,
+    SessionRecorder,
+    age_gate_provenance,
+)
 from face_symmetry_lab.domain.auto_tuning import (
     recommend_age_interval_ms,
     recommend_history_capacity,
 )
+from face_symmetry_lab.domain.display_hold import DisplayHold, validate_hold_seconds
 from face_symmetry_lab.domain.export import SessionExport
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.landmarks import LandmarkFrame, TrackingStatus
@@ -56,6 +72,7 @@ from face_symmetry_lab.domain.overlay import (
     DEFAULT_POINT_COLOR,
     DEFAULT_POINT_RADIUS,
 )
+from face_symmetry_lab.domain.smoothing import validate_tau_seconds
 from face_symmetry_lab.domain.tracking_zoom import TrackingZoomPolicy
 from face_symmetry_lab.runtime.frame_scheduler import FrameScheduler
 
@@ -106,6 +123,13 @@ class PipelineSnapshot:
     #: も `SessionRecorder` 側で更新されるため、ここでも同じタイミングで動く。
     #: recorder 未接続なら `None`。
     segment_id: str | None = None
+    #: FR-038: `age_gate` が接続され、かつそのフレームが採点されたときだけ
+    #: 入る。`AgeGateOutcome.may_show_reference_age` が偽のとき、HUD は参考
+    #: 年齢・参考性別の数値を出さず `ui.age_gate_notice` を表示する。`None` は
+    #: ゲート未接続（既存 pipeline との後方互換）であり、表示可否は
+    #: `show_demographics` だけで決まる（左右差の分析結果には一切影響しない、
+    #: 不変条件 12）。
+    age_gate_outcome: AgeGateOutcome | None = None
 
     @property
     def needs_recovery(self) -> bool:
@@ -124,6 +148,7 @@ class RealtimeLandmarkPipeline:
         scheduler: FrameScheduler | None = None,
         segmenter: SegmentationProvider | None = None,
         demographic_worker: DemographicSampler | None = None,
+        age_gate: AgeGateService | None = None,
         clock: Callable[[], float] = time.monotonic,
         analysis_interval_ms: int = DEFAULT_ANALYSIS_INTERVAL_MS,
         display_ttl_ms: int = DEFAULT_DISPLAY_TTL_MS,
@@ -161,6 +186,16 @@ class RealtimeLandmarkPipeline:
         )
         self._capture = CaptureBuffer()
         self._demographics = DemographicRelay(demographic_worker)
+        #: FR-039/§9.6.1: FR-042 の Camera レポートが母集団を決めるための観測。
+        #: **表示を許された推定だけ**を溜める（`application.demographic_observations`）。
+        #: エクスポートの記録から作ると、年齢ゲートが隠した判断が母集団の年齢から
+        #: 復元できてしまう（§10.12-3）。
+        self._observations = DemographicObservations()
+        #: FR-038: 既存の worker/relay 構造は変えず（推論は独立して走り続ける）、
+        #: `age_gate` が接続されていればスコアリングと同じ同期経路で判定だけを
+        #: 追加する。`None` なら snapshot の `age_gate_outcome` も `None` のまま
+        #: で、HUD/吹き出しは従来どおり `show_demographics` だけで表示を決める。
+        self._age_gate = age_gate
         #: §14.3c/d: 再調整の窓と間引きをすべて所有する。触るのは `_analyse`
         #: だけで、そこは `FrameScheduler` が直列化しているため、自前の lock を
         #: 必要としない。
@@ -168,6 +203,13 @@ class RealtimeLandmarkPipeline:
             enabled=auto_tune_enabled,
             started_at=self._started_at,
         )
+        #: FR-041: 画面へ出す解析結果を保持時間のあいだ差し替えないためのラッチ
+        #: （ADR-0008）。**触るのは Streamlit の script thread だけ**で、worker
+        #: thread の `_analyse` は一切通らない——記帳・エクスポート・`segment_id`
+        #: はラッチの手前にあり、この設定では何も変わらない（AC-HOLD-01）。
+        #: 既定 0 秒なので、設定しない限り素通しする。
+        self._display_hold: DisplayHold[AnalysisOutcome | None] = DisplayHold()
+        self._display_hold_lock = threading.Lock()
         self._frame_id = 0
         self._last_timestamp_ms = -1
         self._snapshot = PipelineSnapshot()
@@ -278,7 +320,28 @@ class RealtimeLandmarkPipeline:
                 analysis = None
             scoring_ms = (self._clock() - scoring_started) * 1000.0
 
+        # FR-038: 既存の年齢・性別 worker/relay とは独立に、判定だけを追加する。
+        # 失敗しても採点・年齢性別推論のどちらも道連れにしない（不変条件 12）。
+        age_gate_outcome: AgeGateOutcome | None = None
+        if self._age_gate is not None and analysis is not None and self._analyzer is not None:
+            try:
+                age_gate_outcome = _evaluate_age_gate_for_frame(
+                    self._age_gate,
+                    frame=frame,
+                    outcome=analysis,
+                    config_3d=self._analyzer.config_3d,
+                )
+            except Exception:
+                age_gate_outcome = None
+
         demographic_sample = self._demographics.collect(timestamp_ms)
+        if demographic_sample is not None:
+            # §10.12-3: ゲートが表示を許したときだけ溜める。ゲート未接続
+            # （`age_gate_outcome is None`）は HUD と同じく「許す」側で扱う。
+            self._observations.observe(
+                demographic_sample[0],
+                may_show=age_gate_outcome is None or age_gate_outcome.may_show_reference_age,
+            )
 
         finished = self._clock()
         processing_ms = (finished - started) * 1000.0
@@ -288,6 +351,7 @@ class RealtimeLandmarkPipeline:
             demographic_sample,
             elapsed_ms=timestamp_ms,
             processing_ms=processing_ms,
+            age_gate=age_gate_provenance(age_gate_outcome, service=self._age_gate),
         )
 
         self._apply_cadence_tuning(
@@ -316,6 +380,7 @@ class RealtimeLandmarkPipeline:
                     demographic_sample[0] if demographic_sample is not None else None
                 ),
                 segment_id=self._recorder.segment_id if self._recorder is not None else None,
+                age_gate_outcome=age_gate_outcome,
             )
         return painted, analysis
 
@@ -327,6 +392,7 @@ class RealtimeLandmarkPipeline:
         *,
         elapsed_ms: int,
         processing_ms: float,
+        age_gate: AgeGateProvenance | None = None,
     ) -> None:
         """エクスポート用の履歴へ 1 フレーム分を書く。
 
@@ -347,6 +413,7 @@ class RealtimeLandmarkPipeline:
                 analysis,
                 elapsed_ms=elapsed_ms,
                 processing_ms=processing_ms,
+                age_gate=age_gate,
             )
             if demographic_sample is not None:
                 estimate, observed_elapsed_ms = demographic_sample
@@ -474,9 +541,97 @@ class RealtimeLandmarkPipeline:
         self._compositor.clear_caches()
         self._capture.clear()
         self._demographics.reset()
+        self._observations.reset()
         self._cadence.reset()
+        # FR-041/§4.4: 表示が保持している値も一緒に捨てる。残すと、リセットした
+        # 直後に前の区間の数値が最大 5 秒間そのまま画面に出る。
+        with self._display_hold_lock:
+            self._display_hold.reset()
         with self._state_lock:
             self._snapshot = PipelineSnapshot()
+
+    def set_smoothing_tau_seconds(self, tau_seconds: float) -> bool:
+        """FR-040: 表示平滑化の時定数だけを差し替える（§8.7、§8.8、ADR-0007）。
+
+        変更したときだけ `True` を返す。**同じ値が届いたときは何もしない。**
+        呼び出し元は 5 Hz で再実行される設定 UI であり、毎実行で「現在の選択値」が
+        届く。ここを冪等にしないと EMA が毎回作り直され、平滑化が事実上無効に
+        なったまま「平滑化している」と表示され続ける（壊れ方が静かなので、
+        AC-SMOOTH-01 がこの性質を固定している）。区間 `segment_id` も同じ理由で
+        動かさない——動くと HUD の折れ線グラフが毎 tick 空になる。
+
+        値域の検証は `domain.smoothing.validate_tau_seconds` が持ち、**範囲外は
+        clamp せず例外にする。** 何も変更する前に検証するため、拒否されたときは
+        直前の設定がそのまま残る。UI が提示するのは `TAU_CHOICES_SECONDS` の段
+        だけなので、ここへ範囲外が届くのは呼び出し側の誤りである。
+
+        `apply_advanced_settings` と違い、追跡ズーム方針・cadence・年齢性別
+        worker には触れない。これらは FR-029/FR-030 の自動調整が持つ値であり、
+        利用者が平滑化を選び直すたびに巻き戻してはならない。
+        """
+        value = validate_tau_seconds(tau_seconds)
+        if self._analyzer is None:
+            # 採点していない pipeline には平滑化そのものが無い。recorder の
+            # fingerprint だけを動かしても意味を持たないため、何もしない。
+            return False
+        if self._analyzer.tau_seconds == value:
+            return False
+        self._analyzer.set_tau_seconds(value)
+        if self._recorder is not None:
+            # §8.8: 新しい区間と config fingerprint（`ema_tau_seconds` を含む）。
+            self._recorder.reset(tau_seconds=value)
+        # FR-041: 保持中の値は古い時定数で作られている。新しい設定を選んだのに
+        # それが最大 5 秒画面へ残ると、何を見ているのか分からなくなる。
+        with self._display_hold_lock:
+            self._display_hold.reset()
+        return True
+
+    # --- FR-041 表示の更新間隔 ------------------------------------------------
+
+    @property
+    def display_hold_seconds(self) -> float:
+        """画面へ出す解析結果を差し替えない時間（FR-041）。既定 0 = 毎回更新。"""
+        return self._display_hold.hold_seconds
+
+    def set_display_hold_seconds(self, hold_seconds: float) -> bool:
+        """表示の更新間隔を差し替える。変更したときだけ `True` を返す。
+
+        `set_smoothing_tau_seconds` と同じく冪等である（5 Hz の再実行で毎回
+        同じ値が届く）。**保持中の値は捨てない**——捨てると、設定を選び直すたび
+        に表示が 1 度飛ぶ。値域の検証は `domain.display_hold` が持ち、範囲外は
+        clamp せず例外にする。
+
+        EMA・品質ゲート・解析周期・recorder のいずれにも触れない。この設定が
+        変えるのは「いつ画面を差し替えるか」だけである（AC-HOLD-01）。
+        """
+        value = validate_hold_seconds(hold_seconds)
+        with self._display_hold_lock:
+            if self._display_hold.hold_seconds == value:
+                return False
+            self._display_hold.set_hold_seconds(value)
+        return True
+
+    def hold_for_display(self, snapshot: PipelineSnapshot, *, key: object) -> PipelineSnapshot:
+        """FR-041: 表示用に、保持時間のあいだ同じ解析結果を返し続ける。
+
+        保持するのは `analysis`（1 フレーム分の結果）だけで、年齢・性別の推定・
+        フレーム統計・`segment_id` は素通しする。前者は既に独立した周期（最大
+        1Hz）で動いており、後者は診断値だからである。
+
+        ``key`` には「値が届いているかどうかの型」を渡す約束である（呼び出し側の
+        `ui.readings.display_signature`）。鍵が変われば `DisplayHold` が保持を
+        打ち切るので、顔を見失った瞬間に古い数値が画面へ残ることはない
+        （不変条件 11、AC-HOLD-02）。
+
+        保持していないとき（既定の 0 秒、または保持時間が過ぎたとき）は、渡された
+        snapshot をそのまま返す。新しいオブジェクトを作らないので、呼び出し側は
+        同一性で「差し替わったか」を判定できる。
+        """
+        with self._display_hold_lock:
+            held = self._display_hold.update(snapshot.analysis, at=self._clock(), key=key)
+        if held is snapshot.analysis:
+            return snapshot
+        return replace(snapshot, analysis=held)
 
     def apply_advanced_settings(
         self,
@@ -553,6 +708,16 @@ class RealtimeLandmarkPipeline:
         return self._cadence.interval_ms
 
     @property
+    def smoothing_tau_seconds(self) -> float | None:
+        """現在有効な表示平滑化の時定数（FR-040）。analyzer 未接続なら `None`。
+
+        設定 UI と映像上の HUD の両方がここを読む。値の正本は `FrameAnalyzer` の
+        EMA 自身であり、pipeline は自前の控えを持たない——2 か所に持つと、
+        適用に失敗したときだけ画面と実際の平滑化が食い違う。
+        """
+        return self._analyzer.tau_seconds if self._analyzer is not None else None
+
+    @property
     def display_ttl_ms(self) -> int:
         """現在有効な幾何・mask キャッシュの TTL（§1.2(17) の読み戻し）。"""
         return self._cadence.display_ttl_ms
@@ -561,6 +726,16 @@ class RealtimeLandmarkPipeline:
     def metric_config(self) -> MetricConfig | None:
         """analyzer が固定している bundle。analyzer 未接続なら None。"""
         return self._analyzer.config if self._analyzer is not None else None
+
+    @property
+    def demographic_observations(self) -> DemographicObservationSet:
+        """FR-039/§9.6.1: このセッションで**表示できた**参考年齢・参考性別。
+
+        FR-042 の Camera レポートが母集団を決めるために読む。記録（`export_bundle`）
+        ではなくこちらを読むこと——記録には年齢ゲートが表示を止めたフレームの推定も
+        入っており、そこから母集団を作ると隠した判断が復元できてしまう（§10.12-3）。
+        """
+        return self._observations.snapshot()
 
     @property
     def has_demographic_worker(self) -> bool:

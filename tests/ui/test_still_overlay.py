@@ -13,8 +13,11 @@ import numpy as np
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
 from face_symmetry_lab.domain.metrics import PART_NAMES
+from face_symmetry_lab.domain.models import GenderLabel
+from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.hud import build_hud_payload
 from face_symmetry_lab.ui.scores import PART_LABELS, format_score, format_symmetry
 from face_symmetry_lab.ui.still_overlay import (
@@ -142,6 +145,20 @@ def test_the_demographic_row_sits_in_its_own_element_apart_from_the_symmetry() -
     assert "参考性別" in demographic_block
     assert format_symmetry(0.0215) not in demographic_block
     assert format_score(0.031) not in demographic_block
+
+
+def test_a_notice_replaces_the_demographic_row_when_demographics_are_hidden() -> None:
+    """FR-038: 参考年齢を表示できないとき、`notice` を吹き出しの独立行へ出す。"""
+    markup = _overlay(estimate=None, show_demographics=False, notice="この画像では表示できません")
+
+    assert "この画像では表示できません" in markup
+
+
+def test_a_notice_is_ignored_while_demographics_are_shown() -> None:
+    markup = _overlay(estimate=_estimate(), show_demographics=True, notice="出てはいけない通知")
+
+    assert "出てはいけない通知" not in markup
+    assert "参考年齢" in markup
 
 
 # --- 枠色と文言 ---------------------------------------------------------------
@@ -315,7 +332,92 @@ def test_the_container_width_is_pinned_to_the_preview_width() -> None:
 
     assert not at.exception
     expected = preview_display_width(height=8, width=8)
-    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {expected}px; }}" in _rendered_html(at)
+    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} {{ width: {expected}px;" in _rendered_html(at)
+
+
+def test_the_preview_never_overflows_a_narrow_viewport() -> None:
+    """§5.1/§5.4: 狭い画面でも画像がコンテナの外へはみ出さない。
+
+    上限（760×520）は Python 側が決めるが、**それはブラウザ幅を知らない**。
+    そのため上限をそのまま `<img>` の固定幅として書き込むと、ブラウザがそれ
+    より狭いときに画像だけがコンテナの外へ出る（実測: 幅 639px の画面で
+    `stMain` の scrollWidth が 776px になり、ページ全体が横スクロールした）。
+    **罠: `max-width` を落とすと、この assertion が落ちる。**
+    """
+    at = AppTest.from_string(_render_source())
+    at.run()
+
+    assert not at.exception
+    markup = _rendered_html(at)
+    assert f".st-key-{STILL_OVERLAY_CONTAINER_KEY} img {{" in markup
+    assert "max-width: 100%" in markup
+    assert "height: auto" in markup, "縦横比を保ったまま縮めること"
+
+
+def test_the_preview_follows_its_container_instead_of_a_fixed_pixel_width() -> None:
+    """上限はコンテナ（`width: <px>; max-width: 100%`）が持ち、画像はそれに従う。
+
+    `st.image` へ px を渡すと、Streamlit は `<img>` を包む自前の div にもその px
+    を書き込む。その div は emotion のハッシュ class しか持たず、§5.2 が
+    セレクタに使うことを禁じているため、CSS からは縮められない。**px を渡す
+    のをやめ、コンテナ幅へ追従させるのが唯一の安定した手段である。**
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import still_overlay
+
+    source = inspect.getsource(still_overlay.render_image_with_overlay)
+
+    assert 'width="stretch"' in source
+    assert "width=display_width" not in source
+    # 上限そのものは残る（コンテナ幅として注入し、拡大はしない）。
+    assert "display_width" in source
+
+
+def test_the_bubble_scales_with_the_preview_not_only_the_viewport() -> None:
+    """縦長写真では、画面が広いままプレビューだけが狭くなる（高さ上限で頭打ち）。
+
+    ビューポート幅だけで文字を決めると、その場合に文字が最大のまま箱だけが
+    縮み、`max-height: 88%` に当たって下端（グリップ・参考値の行）が切れる。
+    **本体は `pointer-events: none` なので、切れた分は読む手段が無い**——実測で
+    表示幅 390px のとき scrollHeight 303px に対し clientHeight 260px だった。
+    そこでプレビュー幅を CSS 変数として渡し、文字をそのどちらか小さい側へ
+    合わせる。罠: 変数の注入を外すと、この assertion が落ちる。
+    """
+    from face_symmetry_lab.ui.still_overlay import (
+        _STILL_OVERLAY_CSS,
+        PREVIEW_WIDTH_CSS_VAR,
+        preview_display_width,
+    )
+
+    at = AppTest.from_string(_render_source())
+    at.run()
+
+    assert not at.exception
+    expected = preview_display_width(height=8, width=8)
+    assert f"{PREVIEW_WIDTH_CSS_VAR}: {expected}px" in _rendered_html(at)
+    assert f"var({PREVIEW_WIDTH_CSS_VAR}" in _STILL_OVERLAY_CSS
+
+
+def test_the_bubble_type_scales_with_the_viewport() -> None:
+    """§5.1/§5.4: 吹き出しの数値も画面幅へ追従する（HUD と同じ理由）。
+
+    吹き出しは本体が `pointer-events: none` なので、あふれた分を利用者が
+    スクロールで引き寄せられない。罠: `font-size: 2.2rem` のような固定値は、
+    縦長写真（表示幅 390px 前後）で数値の末尾を箱の外へ出す。
+    """
+    from face_symmetry_lab.ui.still_overlay import _STILL_OVERLAY_CSS
+
+    for selector in (
+        ".fsl-still-value {",
+        ".fsl-still-label {",
+        ".fsl-still-score {",
+        ".fsl-still-parts {",
+        ".fsl-still-demo {",
+    ):
+        start = _STILL_OVERLAY_CSS.index(selector)
+        body = _STILL_OVERLAY_CSS[start : _STILL_OVERLAY_CSS.index("}", start)]
+        assert "font-size: clamp(" in body, selector
 
 
 @pytest.mark.parametrize(
@@ -467,3 +569,118 @@ def test_the_drag_runtime_is_installed_once_per_render() -> None:
     assert not at.exception
     iframes = [element for element in at.get("iframe")]
     assert len(iframes) == 1
+
+
+# --- FR-039: 参照平均の併記 ----------------------------------------------------
+
+
+def _baseline() -> BaselineSummary:
+    means = {
+        "score_points": 45.0,
+        "symmetry_percent_overall": 96.0,
+        "symmetry_percent_contour": 95.0,
+        "symmetry_percent_eyes": 96.5,
+        "symmetry_percent_nose": 97.0,
+        "symmetry_percent_mouth": 96.2,
+    }
+    return BaselineSummary(
+        age=20,
+        gender=GenderLabel.MALE,
+        count=75,
+        metrics={name: MetricSummary(mean=value, sd=1.0) for name, value in means.items()},
+    )
+
+
+def test_the_still_overlay_reuses_the_hud_baseline_strings() -> None:
+    """罠: 吹き出し側で平均を組み立て直す実装は、HUD と 2 つ目の表示規則へ分岐する。"""
+    payload = build_hud_payload(
+        **_overlay_kwargs(), position="左上", generation="", baseline=_baseline()
+    )
+    html = _overlay(baseline=_baseline())
+
+    assert payload["baseline"]["symmetry"] in html
+    assert payload["baseline"]["score"] in html
+    assert payload["baseline"]["note"] in html
+    for name in PART_NAMES:
+        assert payload["baseline"]["parts"][name] in html
+
+
+def test_each_reading_carries_its_baseline_next_to_it() -> None:
+    """§5.1: 併記は対応する測定値のすぐ下に置き、独立した区画へ切り出さない。"""
+    html = _overlay(baseline=_baseline())
+
+    assert html.count('class="fsl-still-baseline"') == 5  # スコア + 部位別 4 つ
+    assert 'class="fsl-still-baseline fsl-still-baseline-symmetry"' in html
+    assert 'class="fsl-still-baseline-note"' in html
+    # 測定値そのものは変わらない。
+    assert format_symmetry(0.0215) in html
+    assert format_score(0.031) in html
+
+
+def test_the_overlay_without_a_baseline_leaves_the_slots_empty() -> None:
+    """併記が無いときに空行を残さない（CSS の `:empty` が畳む）。"""
+    html = _overlay()
+
+    assert "平均 " not in html
+    assert '<div class="fsl-still-baseline-note"></div>' in html
+
+
+def test_the_still_baseline_scales_with_the_preview() -> None:
+    """縦長写真でプレビューだけが狭くなる場合にも切れないこと（§5.1）。"""
+    html = _overlay(baseline=_baseline())
+    rule = html[html.index(".fsl-still-baseline {") :]
+    rule = rule[: rule.index("}")]
+
+    assert "font-size: clamp(" in rule
+    assert "var(--fsl-preview-width" in rule
+
+
+@pytest.mark.parametrize(
+    "banned",
+    ["偏差値", "順位", "パーセンタイル", "分位", "合格", "平均より上", "平均より下"],
+)
+def test_the_overlay_never_ranks_the_user(banned: str) -> None:
+    """§10.12-1 / AC-BASELINE-04。"""
+    assert banned not in _overlay(baseline=_baseline())
+
+
+def test_the_overlay_states_the_population_and_its_limits() -> None:
+    """AC-BASELINE-04: 母集団・件数・探索値であることを同じ吹き出しの中へ置く。"""
+    html = _overlay(baseline=_baseline())
+
+    assert "20 歳" in html and "男性" in html and "75 件" in html
+    assert "人種で絞り込まず" in html
+    assert "探索値" in html
+    assert "基準値ではありません" in html
+
+
+def test_the_note_never_pushes_the_drag_grip_out_of_the_box() -> None:
+    """箱は `pointer-events: none` + `max-height` なので、あふれた分は掴めない。
+
+    罠: 長い但し書きを grip の前に置く実装は、狭いプレビューで grip を箱の外へ
+    押し出し、吹き出しを退ける手段そのものを失わせる。
+    """
+    html = _overlay(baseline=_baseline())
+    markup = html[html.index('<div class="fsl-still-hud"') :]  # stylesheet を除く
+
+    assert markup.index("fsl-still-grip") < markup.index("fsl-still-baseline-note")
+
+
+def test_the_bubble_footprint_includes_its_padding_and_border() -> None:
+    """`max-width: min(320px, 64%)` を**見た目の実寸**にする。
+
+    既定の `content-box` では、上限は内容の幅にしか掛からず、左右 padding と
+    2px の border がその外側へ足される。実測（headless Chrome、プレビュー幅
+    390px・ビューポート 800px）で **277.6px = 71.2%** になっており、CSS の
+    コメントが述べる「76% を占めて顔を隠したため割合側を絞った」という意図
+    （64%）と食い違っていた。`border-box` にすると宣言どおり 249.6px に収まる。
+
+    罠: `box-sizing` を親コンテナ側だけに書く実装は、吹き出し自身へ継承されない
+    （`box-sizing` は継承しないプロパティである）。
+    """
+    html = _overlay(baseline=_baseline())
+    rule = html[html.index(f".st-key-{STILL_OVERLAY_CONTAINER_KEY} .fsl-still-hud {{") :]
+    rule = rule[: rule.index("}")]
+
+    assert "box-sizing: border-box;" in rule
+    assert "max-width: min(320px, 64%);" in rule

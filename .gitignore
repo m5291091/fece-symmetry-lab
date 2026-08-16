@@ -13,11 +13,21 @@ wheels/
 # Local model assets and generated investigation artifacts
 models/*
 !models/.gitkeep
+# age-gate/1.0.0（FR-038）だけは例外として同梱する。他のモデルと違い取得元 URL を
+# 持たない自作資産で、`bootstrap_models.py` が取りに行ける場所が無いためである。
+# 917KB、顔の画像・座標を含まない（41 個の集約特徴に対する決定木の集合）。
+# 版と sha256 は `configs/model-manifest.json` が `source: "bundled"` で追跡する（§22）。
+!models/age_gate_model.onnx
 tmp/
 
-# 診断用の実写素材と、その測定出力（不変条件 1: 顔の画像・映像・座標を
-# repository へ入れない）。scripts/measure_metric_noise.py が読む入力と、
-# それが書き出す統計 JSON、および変形画像を保存してしまった場合の受け皿。
+# ローカル専用のデータ置き場（不変条件 1: 顔の画像・映像・座標・個票を
+# repository へ入れない）。data/ は丸ごと追跡せず、置き場の説明だけ追跡する。
+#   data/takes/    診断用の実写テイクと、その測定出力 JSON
+#   data/utkface/  UTKFace notebook の出力（個票 CSV を含む）
+data/*
+!data/README.md
+
+# 上の data/ の外へ取りこぼした場合の受け皿（従来のパターンを残す）
 *.mov
 *.mp4
 *.avi
