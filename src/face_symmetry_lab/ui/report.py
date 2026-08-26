@@ -31,6 +31,7 @@ from html import escape
 from typing import Final
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.application.demographic_observations import DemographicOverview
 from face_symmetry_lab.application.reference_baseline import (
     BaselineSummary,
     SessionBaselineSummary,
@@ -86,6 +87,15 @@ REPORT_SHARING_NOTE: Final[str] = (
     "このファイルには顔写真が含まれます。保存後の共有先はアプリからは制御できません。"
 )
 
+#: §9.6（2026-08-26）: **モード共通の節見出し。** Camera と Image が別々の文字列を
+#: 持つと、同じセッションを画面で見た人とファイルで受け取った人が別の目次を読む。
+DEMOGRAPHIC_HEADING: Final[str] = "参考年齢・参考性別"
+
+#: §5.3 / 不変条件 5: 数値と同じ場所に置く 1 行。**左右差との関係を語らない。**
+DEMOGRAPHIC_NOTE: Final[str] = (
+    "モデルが推定した参考値です。断定された年齢・性別ではなく、左右差の結果とは無関係な別々の値です。"
+)
+
 _TREND_WIDTH_PX: Final[int] = 720
 _TREND_HEIGHT_PX: Final[int] = 180
 
@@ -120,6 +130,14 @@ _STYLE: Final[str] = (
     ".legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.8rem;color:#4a4f57;margin:4px 0}"
     ".legend .key{display:inline-flex;align-items:center;gap:5px}"
     ".legend i{width:14px;height:3px;border-radius:2px;display:inline-block}"
+    # 参考年齢・参考性別を、両モードで同じ形に見せるための最小の枠（§9.6）。
+    # **色で意味を作らない**（§5.2）——枠と文字の大きさだけで、読む順序を示す。
+    ".tiles{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0}"
+    ".tile{flex:1 1 200px;border:1px solid #d8dbe0;border-radius:8px;padding:10px 14px;"
+    "background:#fafbfc}"
+    ".tile .k{display:block;font-size:.8rem;color:#4a4f57}"
+    ".tile .v{display:block;font-size:1.5rem;font-weight:600;margin-top:2px;"
+    "font-variant-numeric:tabular-nums}"
 )
 
 
@@ -181,6 +199,40 @@ def _paragraphs(lines: Sequence[str], *, css_class: str = "") -> str:
 def _bullets(lines: Sequence[str]) -> str:
     items = "".join(f"<li>{_text(line)}</li>" for line in lines)
     return f"<ul>{items}</ul>"
+
+
+def _tiles(items: Sequence[tuple[str, str]]) -> str:
+    """ラベルと値の組を、そのまま読める大きさで並べる。
+
+    表にしないのは、2 項目しか無いものを行と列で組むと本文より小さく見えるため
+    である。§5.2 のとおり色・矢印・進捗の演出は持たせない。
+    """
+    cells = "".join(
+        f'<div class="tile"><span class="k">{_text(label)}</span>'
+        f'<span class="v">{_text(value)}</span></div>'
+        for label, value in items
+    )
+    return f'<div class="tiles">{cells}</div>'
+
+
+def _demographic_section(
+    items: Sequence[tuple[str, str]],
+    *,
+    meta: str = "",
+    notice: str = "",
+) -> str:
+    """§9.6（2026-08-26）: 参考年齢・参考性別を、Camera と Image で同じ形に出す。
+
+    数値が無いときは節ごと出さない（`items` が空）。ただし ``notice``——§10.11-2 の
+    固定文言——があるときは、その 1 行だけを置く。**空の見出しを残さない**のは、
+    図の節（`_figures_section`）と同じ理由である。
+    """
+    if not items:
+        return f"<p class='note'>{_text(notice)}</p>" if notice else ""
+    block = f"<h2>{_text(DEMOGRAPHIC_HEADING)}</h2>" + _tiles(items)
+    if meta:
+        block += f"<p class='meta'>{_text(meta)}</p>"
+    return block + f"<p class='meta'>{_text(DEMOGRAPHIC_NOTE)}</p>"
 
 
 def _figures_section(figures: Sequence[ReportFigure]) -> str:
@@ -430,12 +482,41 @@ def _population_line(baseline: SessionBaselineSummary | None) -> str:
     )
 
 
+def _session_demographic_section(
+    overview: DemographicOverview | None,
+    *,
+    notice: str = "",
+) -> str:
+    """§9.6.1（2026-08-26）: Image と同じ形で、そのセッションの参考年齢・参考性別。
+
+    リアルタイムは 1 点を持たないため、**実際に表示できた判定**の中央値と真ん中
+    50% の範囲、観測した参考性別、件数を出す。丸めと範囲は参照平均の母集団と同じ
+    `observed_ages` から来る（§10.12-2）。
+
+    範囲が 1 歳に収まったセッションでは「31〜31 歳」と書かない——同じ数を 2 度
+    並べても幅は伝わらない（`_population_line` と同じ作法）。
+    """
+    if overview is None:
+        return _demographic_section((), notice=notice)
+    ages = overview.ages
+    genders = "・".join(GENDER_LABELS.get(gender, "—") for gender in overview.genders)
+    meta = f"表示できた判定 {ages.sample_count:,} 件"
+    if ages.low != ages.high:
+        meta = f"真ん中50%: {ages.low}〜{ages.high} 歳 · {meta}"
+    return _demographic_section(
+        (("参考年齢（中央値）", f"{ages.median} 歳"), ("参考性別", genders)),
+        meta=meta,
+    )
+
+
 def build_camera_report(
     *,
     summary: SessionSummary,
     bundle: object,
     series: TrendSeries | None = None,
     baseline: SessionBaselineSummary | None = None,
+    overview: DemographicOverview | None = None,
+    notice: str = "",
 ) -> str:
     """§9.6.1: Camera の 1 セッション分。
 
@@ -446,6 +527,14 @@ def build_camera_report(
     1 セッションの推移であって 1 瞬間の顔ではない。持たせないことで、Camera 側は
     不変条件 1 の限定解除を必要としなくなる——顔写真がディスクへ出る経路は Image
     だけに閉じる。
+
+    ``overview``（2026-08-26）は、そのセッションで**実際に表示できた**参考年齢・
+    参考性別である。渡してよいのは
+    `application.demographic_observations.summarize_observations` の結果だけで、
+    記録から作った列を渡してはならない（§10.12-3）。1 件も表示できなかった
+    セッションでは節ごと出さず、``notice`` があればその 1 行だけを置く。
+
+    節の並び（§9.6）は Image と同じである——見出し → 測定結果 → 参考年齢・参考性別。
     """
     if summary.overall is None:
         raise ReportError("記録が 1 件も無いセッションのレポートは作れません。")
@@ -454,19 +543,25 @@ def build_camera_report(
         "リアルタイム計測のまとめ",
         f"{REPORT_VERSION} · 時刻はセッション開始からの相対値です。",
     )
-    body += "<h2>このセッションの要約</h2>" + _section_block(summary.overall, baseline=baseline)
+    body += "<h2>測定結果</h2><h3>このセッションの要約</h3>"
+    body += _section_block(summary.overall, baseline=baseline)
     if baseline is not None:
         body += f"<p class='meta'>{_text(_population_line(baseline))}</p>"
     body += f"<p class='meta'>{_text(SUMMARY_LIMITS_NOTE)}</p>"
     body += _trend_section(series)
 
     if len(summary.segments) > 1:
-        body += "<h2>区間ごとの内訳</h2>"
+        body += "<h3>区間ごとの内訳</h3>"
         body += f"<p class='meta'>{_text(SUMMARY_SEGMENT_NOTE)}</p>"
         for index, section in enumerate(summary.segments, start=1):
+            # 区間の見出しは太字の段落にする。`<h3>` にすると「区間ごとの内訳」と
+            # 同じ深さになり、どちらが親なのか読めなくなる。画面（`ui.summary_panel`）
+            # も同じく `**区間 N**` で出しているので、見出しの深さが両者で揃う。
             short = (section.segment_id or "")[:8]
             label = f"区間 {index}（{short}）" if short else f"区間 {index}"
-            body += f"<h3>{_text(label)}</h3>" + _section_block(section)
+            body += f"<p><strong>{_text(label)}</strong></p>" + _section_block(section)
+
+    body += _session_demographic_section(overview, notice=notice)
 
     return _document(title="リアルタイム計測のまとめ", body=body)
 
@@ -613,21 +708,17 @@ def build_image_report(
         ],
     )
 
-    if show_demographics and estimate is not None:
-        gender = GENDER_LABELS.get(estimate.gender, "—")
-        body += "<h3>参考年齢・参考性別</h3>" + _table(
-            ("項目", "値"),
-            [
-                ["参考年齢", f"{estimate.estimated_age_years:.0f} 歳"],
-                ["参考性別", gender],
-            ],
-        )
-        body += (
-            "<p class='meta'>モデルが推定した参考値です。断定された年齢・性別ではなく、"
-            "左右差の結果とは無関係な別々の値です。</p>"
-        )
-    elif notice:
-        body += f"<p class='note'>{_text(notice)}</p>"
+    # §9.6（2026-08-26）: 見出し・並び・整形は Camera と同じ組み立てを通す。
+    shown = estimate if show_demographics else None
+    body += _demographic_section(
+        ()
+        if shown is None
+        else (
+            ("参考年齢", f"{shown.estimated_age_years:.0f} 歳"),
+            ("参考性別", GENDER_LABELS.get(shown.gender, "—")),
+        ),
+        notice=notice,
+    )
 
     body += _figures_section(figures)
     body += _sharing_section(has_figures=bool(figures))

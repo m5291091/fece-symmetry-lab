@@ -385,6 +385,7 @@ def test_every_below_video_panel_lives_in_a_tab() -> None:
     for panel in (
         "_render_detail_panel(",
         "_render_symmetrization_panel(",
+        "_render_demographic_fragment(",
         "_render_export_panel(",
         "_render_session_controls(",
     ):
@@ -433,15 +434,18 @@ def test_the_headline_panel_and_its_wiring_are_fully_removed() -> None:
 
 
 def test_the_hud_is_published_from_a_single_existing_fragment() -> None:
-    """3 つ目の 5 Hz fragment は純粋な負荷だった。payload は既存 fragment へ
-    相乗りさせ、増やさない——モジュール全体で `@st.fragment` はちょうど 2 個
-    （HUD publish 用と詳細用）のままである。"""
+    """HUD の payload は既存 fragment へ相乗りさせ、5 Hz の口を増やさない。
+
+    モジュール全体の `@st.fragment` はちょうど 3 個である——HUD publish 用・
+    詳細用（どちらも 5 Hz）と、参考年齢・参考性別用（2026-08-26 に追加、値が
+    最大でも 1 秒に 1 度しか変わらないので 1 Hz）。
+    """
     import inspect
 
     from face_symmetry_lab.ui import camera
 
     assert "render_hud_payload(" in inspect.getsource(camera._render_hud_fragment)
-    assert inspect.getsource(camera).count("@st.fragment(") == 2
+    assert inspect.getsource(camera).count("@st.fragment(") == 3
 
 
 def test_the_hud_fragment_only_publishes_and_never_renders_a_panel() -> None:
@@ -638,22 +642,27 @@ def test_the_tabs_keep_their_names_while_gaining_icons() -> None:
 
     source = inspect.getsource(camera.render_camera_section)
 
-    for label in ("詳細結果", "左右対称との比較", "表示設定", "エクスポート"):
+    for label in ("詳細結果", "左右対称との比較", "参考年齢・参考性別", "表示設定", "エクスポート"):
         assert label in source
 
 
-def test_both_live_fragments_read_the_same_held_snapshot() -> None:
+def test_every_live_fragment_reads_the_same_held_snapshot() -> None:
     """FR-041/AC-HOLD-01: 保持中に HUD と詳細結果が別々の瞬間の値を出さない。
 
     罠: 片方だけ `pipeline.snapshot()` を直接読む実装だと、保持区間の境界で
     「HUD の部位別」と「計算過程の部位別」が食い違い、AC-DISPLAY-04 の文字列
-    一致がそこでだけ壊れる。
+    一致がそこでだけ壊れる。参考年齢の fragment（2026-08-26）も同じ snapshot を
+    読む——HUD と別の瞬間のゲート判定を読むと、片方だけが数値を出す。
     """
     import inspect
 
     from face_symmetry_lab.ui import camera
 
-    for fragment in (camera._render_hud_fragment, camera._render_detail_fragment):
+    for fragment in (
+        camera._render_hud_fragment,
+        camera._render_detail_fragment,
+        camera._render_demographic_fragment,
+    ):
         source = inspect.getsource(fragment)
         assert "_snapshot_for_display(pipeline)" in source, fragment.__name__
         assert "pipeline.snapshot()" not in source, fragment.__name__
@@ -699,7 +708,11 @@ def test_the_session_summary_is_not_recomputed_by_the_five_hertz_fragment() -> N
 
     from face_symmetry_lab.ui import camera
 
-    for fragment in (camera._render_hud_fragment, camera._render_detail_fragment):
+    for fragment in (
+        camera._render_hud_fragment,
+        camera._render_detail_fragment,
+        camera._render_demographic_fragment,
+    ):
         assert "summarize_session" not in inspect.getsource(fragment), fragment.__name__
 
 
@@ -766,5 +779,138 @@ def test_the_camera_report_takes_its_population_from_the_shown_estimates() -> No
 
     source = inspect.getsource(camera._render_export_panel)
 
-    assert "resolve_session_baseline(pipeline.demographic_observations)" in source
+    assert "observations = pipeline.demographic_observations" in source
+    assert "resolve_session_baseline(observations)" in source
     assert "estimated_age_years" not in source
+
+
+# --- §5.1（2026-08-26）: 参考年齢・参考性別の独立区画 -------------------------
+
+
+def _demographic_estimate(age: float = 31.0):
+    from datetime import UTC, datetime
+
+    from face_symmetry_lab.domain.demographics import build_demographic_estimate
+
+    return build_demographic_estimate(
+        estimated_age_years=age,
+        gender_probabilities=(0.2, 0.8),
+        model_version="age-gender/test",
+        model_sha256="a" * 64,
+        observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+
+
+def _gate(status):
+    from face_symmetry_lab.application.age_gate import AgeGateOutcome
+
+    return AgeGateOutcome(status=status, decision=None, reason=None)
+
+
+def _panel(**overrides):
+    """`_render_demographic_panel` を 1 状態だけ描画する。"""
+    settings = {
+        "estimate": _demographic_estimate(),
+        "gate_outcome": None,
+        "available": True,
+        "show_demographics": True,
+        "overview": None,
+    }
+    settings.update(overrides)
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.camera import _render_demographic_panel\n"
+        "_render_demographic_panel(**st.session_state['args'])\n"
+    )
+    at.session_state["args"] = settings
+    at.run()
+    assert not at.exception
+    return at
+
+
+def test_the_camera_panel_shows_the_estimate_the_gate_allows() -> None:
+    """依頼（2026-08-26）: 動画でも参考年齢・参考性別を読める場所を持つ。"""
+    at = _panel()
+
+    assert [metric.value for metric in at.metric] == ["31.0歳", "男性"]
+
+
+def test_the_camera_panel_obeys_the_gate_like_every_other_area() -> None:
+    """§10.12-3: HUD が隠した判断を、タブから読めるようにしてはならない。
+
+    罠: `snapshot.demographic_estimate is not None` だけで描く旧実装は、HUD が
+    固定文言へ切り替わっている間もタブに参考年齢を出し続ける。
+    """
+    from face_symmetry_lab.application.age_gate import AgeGateStatus
+    from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+
+    at = _panel(gate_outcome=_gate(AgeGateStatus.OUT_OF_RANGE))
+
+    assert not at.metric
+    assert age_gate_notice(AgeGateStatus.OUT_OF_RANGE) in [info.value for info in at.info]
+
+
+def test_the_camera_panel_never_goes_silent() -> None:
+    """FR-024/§5.1: 何も出せないときも、何が起きているかを必ず 1 行で述べる。
+
+    罠: 推定が無いときに `return` するだけの実装は、利用者から見て「壊れている」
+    と「まだ推定できていない」を区別できない状態になる。
+    """
+    from face_symmetry_lab.application.age_gate import AgeGateStatus
+
+    silent = (
+        {"available": False},
+        {"show_demographics": False},
+        {"estimate": None},
+        {"gate_outcome": _gate(AgeGateStatus.NOT_EVALUATED)},
+    )
+    for overrides in silent:
+        at = _panel(**overrides)
+
+        assert not at.metric, overrides
+        assert at.info or at.warning, overrides
+
+
+def test_the_camera_panel_reports_the_range_it_showed_this_session() -> None:
+    """§9.6.1 と同じ材料を画面にも出す（保存物だけが知っている状態にしない）。"""
+    from face_symmetry_lab.application.demographic_observations import DemographicOverview
+    from face_symmetry_lab.domain.models import GenderLabel
+    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+
+    at = _panel(
+        overview=DemographicOverview(
+            ages=ObservedAges(median=31, low=29, high=34, sample_count=42),
+            genders=(GenderLabel.MALE,),
+        )
+    )
+
+    body = " ".join(caption.value for caption in at.caption)
+    assert "29〜34 歳" in body
+    assert "42" in body
+
+
+def test_the_detail_tab_no_longer_carries_the_reference_age() -> None:
+    """同じ測定値を画面の 2 か所へ出さない（§5.1）。専用タブが唯一の受け皿になる。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_detail_fragment)
+
+    assert "render_demographic_estimate" not in source
+    assert "demographic_estimate" not in source
+
+
+def test_the_camera_report_carries_what_the_session_actually_showed() -> None:
+    """§9.6.1（2026-08-26）: レポートの参考年齢も、表示できた観測だけから作る。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+
+    source = inspect.getsource(camera._render_export_panel)
+
+    # 母集団（`resolve_session_baseline`）と同じ 1 つの snapshot から作る。2 度
+    # 取ると、その間に届いた推定の分だけ節と母集団がずれる。
+    assert "observations = pipeline.demographic_observations" in source
+    assert "summarize_observations(observations)" in source
+    assert "overview=overview" in source

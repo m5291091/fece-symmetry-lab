@@ -567,3 +567,38 @@ def test_the_symmetrisation_view_is_reused_rather_than_recomputed() -> None:
 
     assert "symmetrization_view = _render_image_symmetrization(" in section
     assert "view=symmetrization_view" in section
+
+
+# --- §5.1（2026-08-26）: Camera と同じ並び ------------------------------------
+
+
+def test_the_two_input_modes_offer_the_same_tabs_in_the_same_order() -> None:
+    """入力を切り替えても、同じものを探す先が動かないようにする（§5.1）。
+
+    罠: 片方にだけタブを足す実装は、そのモードでしか読めない結果を作る——
+    Camera が参考年齢・参考性別の区画を持っていなかったのがまさにこれだった。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera, image_section
+
+    shared = ("📊 詳細結果", "🪞 左右対称との比較", "👤 参考年齢・参考性別")
+    for section in (camera.render_camera_section, image_section.render_image_section):
+        source = inspect.getsource(section)
+        positions = [source.find(label) for label in shared]
+
+        assert all(position >= 0 for position in positions), section.__name__
+        assert positions == sorted(positions), section.__name__
+
+
+def test_both_modes_state_the_same_provenance_for_the_reference_age() -> None:
+    """同じモデルの同じ推論なので、モードで言い方が変わる理由が無い。"""
+    import inspect
+
+    from face_symmetry_lab.ui import camera, image_section
+
+    for function in (
+        camera._render_demographic_panel,
+        image_section._render_image_demographic_detail,
+    ):
+        assert "DEMOGRAPHIC_RUNTIME_CAPTION" in inspect.getsource(function), function.__name__

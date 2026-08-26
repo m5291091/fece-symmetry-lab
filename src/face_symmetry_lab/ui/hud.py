@@ -36,7 +36,7 @@ from face_symmetry_lab.domain.reference_baseline import (
     SCORE_METRIC,
     baseline_reading,
 )
-from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+from face_symmetry_lab.ui.age_gate_notice import resolve_reference_age_view
 from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.hud_assets import (
     HUD_RUNTIME_JS,
@@ -343,30 +343,29 @@ def render_hud_payload(
         else {}
     )
 
-    gate_outcome = snapshot.age_gate_outcome
-    gate_blocks = False
-    notice = ""
-    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
-        gate_blocks = True
-        if show_demographics:
-            notice = age_gate_notice(gate_outcome.status)
-    effective_show_demographics = show_demographics and not gate_blocks
+    # §5.1（2026-08-26）: 表示可否は `ui.age_gate_notice` の 1 つの解決に任せる。
+    # HUD・専用タブ・吹き出し・レポートが同じ関数を通ることが、「ある区画だけが
+    # ゲートの判断を漏らす」壊れ方を構造的に無くす手段である（§10.12-3）。
+    view = resolve_reference_age_view(
+        estimate=snapshot.demographic_estimate,
+        gate_outcome=snapshot.age_gate_outcome,
+        show_demographics=show_demographics,
+    )
 
     # FR-039/§10.12-3: 参考年齢・参考性別を実際に出しているときだけ母集団を解決する。
-    # ここで `snapshot.demographic_estimate` をそのまま渡すと、年齢ゲートが隠した
-    # 判断が「20 歳・男性の平均」という母集団の表示から復元できてしまう。
-    baseline = resolve_baseline(
-        snapshot.demographic_estimate if effective_show_demographics else None
-    )
+    # `view.estimate` は既にゲートを通した後なので、ここで `snapshot` を読み直さない
+    # ——読み直すと、年齢ゲートが隠した判断が「20 歳・男性の平均」という母集団の
+    # 表示から復元できてしまう。
+    baseline = resolve_baseline(view.estimate)
 
     st.markdown(
         hud_html(
             overall=overall,
             equal_weight=equal_weight,
             parts=parts,
-            estimate=snapshot.demographic_estimate,
-            show_demographics=effective_show_demographics,
-            notice=notice,
+            estimate=view.estimate,
+            show_demographics=view.is_shown,
+            notice=view.notice,
             baseline=baseline,
             gate=gate_color(analysis.state if analysis is not None else None),
             state=gate_label(analysis.state if analysis is not None else None),

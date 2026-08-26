@@ -24,6 +24,7 @@ from face_symmetry_lab.domain.session_summary import (
     TrendSeries,
 )
 from face_symmetry_lab.ui.report import (
+    DEMOGRAPHIC_HEADING,
     REPORT_SHARING_NOTE,
     REPORT_VERSION,
     ReportFigure,
@@ -536,3 +537,102 @@ def test_a_session_the_gate_never_ran_omits_the_rate_row() -> None:
     html = _camera(summary=SessionSummary(overall=silent, segments=()))
 
     assert "参考年齢を表示できたフレーム" not in html
+
+
+# --- §9.6 / FR-042: 参考年齢・参考性別（2026-08-26 に両モード共通へ） ---------
+
+
+def _overview():
+    from face_symmetry_lab.application.demographic_observations import (
+        DemographicOverview,
+    )
+    from face_symmetry_lab.domain.models import GenderLabel
+    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+
+    return DemographicOverview(
+        ages=ObservedAges(median=31, low=29, high=34, sample_count=42),
+        genders=(GenderLabel.MALE,),
+    )
+
+
+def _estimate(age: float = 31.0):
+    from datetime import UTC, datetime
+
+    from face_symmetry_lab.domain.demographics import build_demographic_estimate
+
+    return build_demographic_estimate(
+        estimated_age_years=age,
+        gender_probabilities=(0.2, 0.8),
+        model_version="age-gender/test",
+        model_sha256="b" * 64,
+        observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+
+
+def test_both_modes_carry_the_reference_age_under_the_same_heading() -> None:
+    """§9.6（2026-08-26）: 見出しと並びをモードで変えない。
+
+    罠: Camera だけ節ごと持たない旧実装は、同じセッションを画面で見た人と
+    ファイルで受け取った人に別の内容を見せる。
+    """
+    camera = _camera(overview=_overview())
+    image = _image(estimate=_estimate(), show_demographics=True)
+
+    assert DEMOGRAPHIC_HEADING in camera
+    assert DEMOGRAPHIC_HEADING in image
+
+
+def test_the_camera_report_names_the_range_it_actually_showed() -> None:
+    """§9.6.1: 1 点を持たないので、中央値と真ん中 50% の範囲で述べる。"""
+    html = _camera(overview=_overview())
+
+    assert "31 歳" in html
+    assert "29〜34 歳" in html
+    assert "男性" in html
+    assert "42" in html
+
+
+def test_a_single_year_session_is_written_without_a_range() -> None:
+    from face_symmetry_lab.application.demographic_observations import (
+        DemographicOverview,
+    )
+    from face_symmetry_lab.domain.models import GenderLabel
+    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+
+    html = _camera(
+        overview=DemographicOverview(
+            ages=ObservedAges(median=31, low=31, high=31, sample_count=3),
+            genders=(GenderLabel.FEMALE,),
+        )
+    )
+
+    assert "31 歳" in html
+    assert "31〜31 歳" not in html
+
+
+def test_a_camera_session_that_showed_nothing_has_no_reference_age_section() -> None:
+    """§9.6.1 / §10.12-3: 表示できなかったものをレポートへ出さない。"""
+    html = _camera(overview=None)
+
+    assert DEMOGRAPHIC_HEADING not in html
+
+
+def test_the_camera_report_carries_the_gate_notice_instead_of_a_number() -> None:
+    """§10.11-2: 数値を出せないときに置くのは固定文言だけである。"""
+    html = _camera(overview=None, notice="この画像では参考年齢・参考性別を表示できません。")
+
+    assert "この画像では参考年齢・参考性別を表示できません。" in html
+
+
+def test_the_reference_age_is_laid_out_the_same_way_in_both_modes() -> None:
+    """依頼（2026-08-26）: 画像と同じ見やすさで動画にも出す。
+
+    罠: 片方だけ表、もう片方だけ本文にする実装は「そろえた」ことにならない。
+    同じ組み立て（`_demographic_tiles`）を通ることを、マークアップで確かめる。
+    """
+    camera = _camera(overview=_overview())
+    image = _image(estimate=_estimate(), show_demographics=True)
+
+    for html in (camera, image):
+        assert html.count('class="tile"') == 2
+        assert "参考性別" in html

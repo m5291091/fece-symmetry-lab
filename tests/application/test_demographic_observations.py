@@ -14,9 +14,11 @@ import pytest
 
 from face_symmetry_lab.application.demographic_observations import (
     DemographicObservations,
+    summarize_observations,
 )
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
 from face_symmetry_lab.domain.models import GenderLabel
+from face_symmetry_lab.domain.reference_baseline import observed_ages
 
 
 def _estimate(age: float = 24.0, female: float = 0.2):
@@ -103,3 +105,43 @@ def test_a_snapshot_does_not_change_under_later_observations() -> None:
 def test_a_zero_capacity_is_refused() -> None:
     with pytest.raises(ValueError):
         DemographicObservations(capacity=0)
+
+
+# --- §9.6.1 / FR-042: レポートへ出す要約（2026-08-26） ------------------------
+
+
+def test_the_overview_reads_the_same_rounding_as_the_population() -> None:
+    """§10.12-2: 画面の「24 歳」とレポートの年齢が食い違ってはならない。
+
+    罠: `int()` の切り捨てや自前の丸めを持つ実装は、ちょうど .5 の観測で
+    `observed_ages`（母集団の丸め）と 1 歳ずれる。
+    """
+    observations = DemographicObservations()
+    for age in (24.5, 25.5, 26.0):
+        observations.observe(_estimate(age=age), may_show=True)
+
+    overview = summarize_observations(observations.snapshot())
+
+    assert overview is not None
+    assert overview.ages == observed_ages(observations.snapshot().ages)
+
+
+def test_the_overview_keeps_every_observed_gender_once() -> None:
+    """判定が途中で入れ替わったなら、その両方がそのセッションで表示された判定である。"""
+    observations = DemographicObservations()
+    observations.observe(_estimate(age=24.0, female=0.2), may_show=True)
+    observations.observe(_estimate(age=25.0, female=0.9), may_show=True)
+    observations.observe(_estimate(age=26.0, female=0.2), may_show=True)
+
+    overview = summarize_observations(observations.snapshot())
+
+    assert overview is not None
+    assert overview.genders == (GenderLabel.MALE, GenderLabel.FEMALE)
+
+
+def test_a_session_that_showed_nothing_has_no_overview() -> None:
+    """1 件も表示できなかったセッションでは、レポートの節ごと出さない（§9.6.1）。"""
+    observations = DemographicObservations()
+    observations.observe(_estimate(age=24.0), may_show=False)
+
+    assert summarize_observations(observations.snapshot()) is None

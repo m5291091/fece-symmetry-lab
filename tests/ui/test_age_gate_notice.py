@@ -14,6 +14,7 @@ from face_symmetry_lab.application.age_gate import AgeGateStatus
 from face_symmetry_lab.ui.age_gate_notice import (
     AGE_GATE_NOTICE,
     age_gate_notice,
+    resolve_reference_age_view,
 )
 
 #: 人物の属性を断定する語。1 つでも表示文言に現れてはならない（§10.11-2）。
@@ -99,3 +100,79 @@ def test_in_range_shows_no_notice() -> None:
     """通ったときは何も言わない。通過を成功として祝わない（§10.7）。"""
     assert age_gate_notice(AgeGateStatus.IN_RANGE) == ""
     assert age_gate_notice(AgeGateStatus.NOT_EVALUATED) == ""
+
+
+# --- §5.1（2026-08-26）: どの区画も同じ判定に従う ----------------------------
+
+
+def _estimate(age: float = 31.0):
+    from datetime import UTC, datetime
+
+    from face_symmetry_lab.domain.demographics import build_demographic_estimate
+
+    return build_demographic_estimate(
+        estimated_age_years=age,
+        gender_probabilities=(0.2, 0.8),
+        model_version="age-gender/test",
+        model_sha256="a" * 64,
+        observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+
+
+def _outcome(status: AgeGateStatus):
+    from face_symmetry_lab.application.age_gate import AgeGateOutcome
+
+    return AgeGateOutcome(status=status, decision=None, reason=None)
+
+
+def test_an_ungated_pipeline_shows_the_estimate() -> None:
+    """ゲート未接続（`None`）は従来どおり表示側に倒す（後方互換）。"""
+    estimate = _estimate()
+
+    view = resolve_reference_age_view(estimate=estimate, gate_outcome=None)
+
+    assert view.estimate is estimate
+    assert view.notice == ""
+    assert view.is_shown
+
+
+def test_the_gate_hides_the_estimate_everywhere_it_could_be_read() -> None:
+    """§10.12-3: 数値を隠す区画と出す区画が混在すると、隠した判断が読めてしまう。
+
+    罠: 区画ごとにゲートを読み直す実装は、片方だけ分岐を落としても
+    「動いているように見える」——だからここで 1 つの解決だけを固定する。
+    """
+    for status in (AgeGateStatus.OUT_OF_RANGE, AgeGateStatus.UNDETERMINED):
+        view = resolve_reference_age_view(estimate=_estimate(), gate_outcome=_outcome(status))
+
+        assert view.estimate is None, status
+        assert view.notice == age_gate_notice(status), status
+
+
+def test_a_gate_that_never_ran_hides_the_estimate_without_saying_why() -> None:
+    """`NOT_EVALUATED` は呼んでいない状態であり、通過でも範囲外でもない。"""
+    view = resolve_reference_age_view(
+        estimate=_estimate(), gate_outcome=_outcome(AgeGateStatus.NOT_EVALUATED)
+    )
+
+    assert view.estimate is None
+    assert view.notice == ""
+
+
+def test_turning_the_display_off_is_not_reported_as_a_gate() -> None:
+    """FR-024: 利用者が切っただけの状態へゲートの文言を出さない。"""
+    view = resolve_reference_age_view(
+        estimate=_estimate(),
+        gate_outcome=_outcome(AgeGateStatus.OUT_OF_RANGE),
+        show_demographics=False,
+    )
+
+    assert view.estimate is None
+    assert view.notice == ""
+
+
+def test_the_notice_scopes_itself_to_the_current_input() -> None:
+    """Camera でも読めるようにする——ライブ映像に「この画像では」は当てはまらない。"""
+    text = age_gate_notice(AgeGateStatus.OUT_OF_RANGE)
+
+    assert "映像" in text

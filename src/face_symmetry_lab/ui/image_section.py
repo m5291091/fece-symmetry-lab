@@ -64,7 +64,10 @@ from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig, MetricCon
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
-from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+from face_symmetry_lab.ui.age_gate_notice import (
+    age_gate_notice,
+    resolve_reference_age_view,
+)
 from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.model_setup import (
@@ -82,6 +85,7 @@ from face_symmetry_lab.ui.readings import (
 from face_symmetry_lab.ui.report import build_image_report
 from face_symmetry_lab.ui.report_figures import build_report_figures
 from face_symmetry_lab.ui.scores import (
+    DEMOGRAPHIC_RUNTIME_CAPTION,
     render_demographic_estimate,
     render_score_details,
     render_tracking_status,
@@ -428,7 +432,7 @@ def _render_image_demographic_detail(
     関わらず `ui.age_gate_notice` の固定文言だけを出す（§10.11-2、内部判断を
     属性として提示しない）。
     """
-    st.caption("runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳")
+    st.caption(DEMOGRAPHIC_RUNTIME_CAPTION)
     if gate_outcome is not None and not gate_outcome.may_show_reference_age:
         notice = age_gate_notice(gate_outcome.status)
         if notice:
@@ -459,14 +463,16 @@ def _resolve_shown_estimate(gate_outcome: AgeGateOutcome | None) -> DemographicE
 
     吹き出し（FR-039 の母集団もここから解決される）と FR-042 のレポートが同じ
     関数を通る。片方が session state の推定をそのまま読むと、**年齢ゲートが
-    隠した判断が母集団の年齢から復元されてしまう**（§10.12-3）。ゲートが表示を
-    許さないときは、推定が成功していても `None` を返す。
+    隠した判断が母集団の年齢から復元されてしまう**（§10.12-3）。
+
+    判定そのものは `ui.age_gate_notice.resolve_reference_age_view` が持つ
+    （2026-08-26、§5.1）。Camera の HUD・専用タブと同じ 1 つの解決を通すことで、
+    「ある区画だけがゲートを見落とす」壊れ方が構造的に起きなくなる。ここに残るのは
+    session state からの読み出しだけである。
     """
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
     estimate = session_estimate if isinstance(session_estimate, DemographicEstimate) else None
-    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
-        return None
-    return estimate
+    return resolve_reference_age_view(estimate=estimate, gate_outcome=gate_outcome).estimate
 
 
 def _render_preview_with_overlay(
@@ -582,10 +588,16 @@ def render_image_section() -> None:
     # 同じタブ構成にする**（§5.1「Image 側だけ異なる並びにしない」）。1 本の長い
     # スクロールだと、詳細結果・対称化・参考年齢を続けて積み上げた分だけ画像が
     # 押し上げられ、数値と写真を見比べられなくなる。
+    # §5.1（2026-08-26）: Camera と同じ名前・同じ順序・同じアイコンにする。入力を
+    # 切り替えたときに、同じものを探す先が動かないようにするためである。Camera だけ
+    # が持つ「表示設定」は、Image に対応する設定を持たないので並べない。
     detail_tab, symmetry_tab, demographic_tab, export_tab = st.tabs(
-        ["詳細結果", "左右対称との比較", "参考年齢・参考性別", "エクスポート"]
+        ["📊 詳細結果", "🪞 左右対称との比較", "👤 参考年齢・参考性別", "📄 エクスポート"]
     )
-    with detail_tab:
+    with detail_tab, st.container(border=True):
+        # 囲みは Camera の詳細タブ（`ui.camera._render_detail_fragment`）と同じ
+        # 作法である（§5.1、2026-08-26）。同じ内容が入力モードで違う枠に見えない
+        # ようにするためで、中身は変えていない。
         if analysis is None:
             st.info("この画像からは左右差を算出できませんでした。")
         else:
@@ -601,7 +613,7 @@ def render_image_section() -> None:
             st.info("ランドマークが取れていないため、比較を作成できません。")
         else:
             symmetrization_view = _render_image_symmetrization(rgb, analysis)
-    with demographic_tab:
+    with demographic_tab, st.container(border=True):
         _render_image_demographic_detail(age_input, age_gate_outcome)
     with export_tab:
         if recorder is None:

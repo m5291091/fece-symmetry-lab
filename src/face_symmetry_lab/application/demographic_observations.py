@@ -20,10 +20,28 @@ from collections import deque
 from dataclasses import dataclass
 
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
+from face_symmetry_lab.domain.reference_baseline import ObservedAges, observed_ages
 
 #: 溜める観測の上限。1Hz の推論で 30 分ぶんに相当する。四分位を取るのに十分で、
 #: これを超えたセッションでは古いほうから捨てる（新しいほうが「いまの顔」に近い）。
 DEFAULT_OBSERVATION_CAPACITY: int = 1_800
+
+
+@dataclass(frozen=True, slots=True)
+class DemographicOverview:
+    """§9.6.1: 1 セッションで**実際に表示できた**参考年齢・参考性別の要約。
+
+    FR-042 のレポートと Camera の専用タブが読む。1 点を持たないリアルタイムでは、
+    「そのセッションが何歳・どの参考性別として表示されていたか」を範囲で述べる
+    しかない。
+
+    **年齢の丸めと範囲の決め方は参照平均の母集団と同じもの**（`observed_ages`）を
+    使う。ここで 2 つ目の数え方を作ると、同じセッションのレポートの中で「31 歳」と
+    「30 歳の平均」が並ぶ（§10.12-2）。
+    """
+
+    ages: ObservedAges
+    genders: tuple[GenderLabel, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,3 +95,26 @@ class DemographicObservations:
         with self._lock:
             self._ages.clear()
             self._genders.clear()
+
+
+def summarize_observations(
+    observations: DemographicObservationSet,
+) -> DemographicOverview | None:
+    """観測から `DemographicOverview` を作る。表示できたものが無ければ `None`。
+
+    **渡してよいのは `DemographicObservations.snapshot()` だけ**である——あちらは
+    ゲートが表示を許した推定しか溜めない。記録から作った列を渡すと、ゲートが隠した
+    判断がレポートの年齢から復元できてしまう（§10.12-3、§10.11-2）。
+
+    年齢が 1 件も §9.5 の範囲（18〜75）に収まらないセッションでは `observed_ages`
+    が `None` を返すので、ここも `None` になる——clamp して「18 歳」を作らない。
+    参考性別は**観測された順で重複を落とす**。判定が途中で入れ替わったなら、その
+    両方がそのセッションで表示された判定だからである。
+    """
+    ages = observed_ages(observations.ages)
+    if ages is None:
+        return None
+    genders = tuple(dict.fromkeys(observations.genders))
+    if not genders:
+        return None
+    return DemographicOverview(ages=ages, genders=genders)

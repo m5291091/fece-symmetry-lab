@@ -41,7 +41,12 @@ from face_symmetry_lab.adapters.io.metric_config import (
     load_metric_config,
 )
 from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, InstallStatus, file_sha256
+from face_symmetry_lab.application.age_gate import AgeGateOutcome
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
+from face_symmetry_lab.application.demographic_observations import (
+    DemographicOverview,
+    summarize_observations,
+)
 from face_symmetry_lab.application.demographic_worker import DemographicWorker
 from face_symmetry_lab.application.realtime import (
     DEFAULT_ANALYSIS_INTERVAL_MS,
@@ -52,9 +57,14 @@ from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.metrics import MetricConfigError
+from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
+from face_symmetry_lab.ui.age_gate_notice import (
+    SESSION_HIDDEN_NOTICE,
+    resolve_reference_age_view,
+)
 from face_symmetry_lab.ui.baseline import resolve_session_baseline
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.hud import (
@@ -74,9 +84,10 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_asset,
     segmenter_status,
 )
-from face_symmetry_lab.ui.readings import display_signature
+from face_symmetry_lab.ui.readings import GENDER_LABELS, display_signature
 from face_symmetry_lab.ui.report import build_camera_report
 from face_symmetry_lab.ui.scores import (
+    DEMOGRAPHIC_RUNTIME_CAPTION,
     render_demographic_estimate,
     render_score_details,
 )
@@ -136,6 +147,11 @@ SYMMETRIZATION_STATE_KEY = "symmetrization_view"
 
 #: §11 NFR-003: 結果パネルは映像の fps とは独立に 4〜5 Hz で更新する。
 STATUS_REFRESH_INTERVAL = "200ms"
+
+#: 参考年齢・参考性別だけは 1 Hz で足りる。worker 自身が最大 1 秒に 1 度しか
+#: 推論しない（`DEFAULT_DEMOGRAPHIC_INTERVAL_MS`）ので、5 Hz で描き直しても
+#: 同じ値を 5 回描くだけである（§11 NFR-003 と同じ判断）。
+DEMOGRAPHIC_REFRESH_INTERVAL = "1s"
 
 VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
@@ -311,6 +327,12 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示する
     ため、`render_score_details` へ `show_parts=False` を渡して重複を避ける。
 
+    2026-08-26: 参考年齢・参考性別はここから **専用タブへ移した**
+    （`_render_demographic_fragment`）。ここに間借りしていた間、この区画は
+    推定が無いときに何も描かず、年齢ゲートの判定も読んでいなかった——HUD が
+    固定文言へ切り替わっている間もここだけが数値を出し続けており、§10.12-3 の
+    「表示していないときは併記しない」が区画によって食い違っていた。
+
     FR-041: HUD と同じ `_snapshot_for_display` を通す。片方だけ生の snapshot を
     読むと、保持中に「HUD の部位別」と「計算過程の部位別」が別の瞬間の値になり、
     AC-DISPLAY-04 の文字列一致が保持区間の境界でだけ壊れる。
@@ -328,14 +350,6 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
             render_score_details(snapshot.analysis, show_smoothed=False, show_parts=False)
         else:
             st.info("品質ゲートを満たすと、ここに計算過程などの数値が表示されます。")
-
-        if snapshot.demographic_estimate is not None:
-            st.divider()
-            # グラフは描かない。この fragment は 5 Hz で再描画される（§11 NFR-003）。
-            render_demographic_estimate(
-                snapshot.demographic_estimate,
-                show_distribution=False,
-            )
 
         st.divider()
         with st.expander("処理の状態（診断用）"):
@@ -359,6 +373,88 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
                 breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
             st.caption("内訳: " + " · ".join(breakdown))
             _render_auto_tune_status(pipeline)
+
+
+def _session_demographic_caption(overview: DemographicOverview) -> str:
+    """§9.6.1 と同じ材料を 1 行にする（保存物だけが知っている状態にしない）。
+
+    範囲が 1 歳へ収まったセッションでは「31〜31 歳」と書かない。同じ数を 2 度
+    並べても幅は伝わらない（`ui.report._session_demographic_section` と同じ作法）。
+    """
+    ages = overview.ages
+    genders = "・".join(GENDER_LABELS.get(gender, "—") for gender in overview.genders)
+    span = (
+        f"{ages.median} 歳"
+        if ages.low == ages.high
+        else f"{ages.median} 歳（真ん中50%: {ages.low}〜{ages.high} 歳）"
+    )
+    return (
+        f"このセッションで表示できた参考年齢 {span} · 参考性別 {genders} · {ages.sample_count:,} 件"
+    )
+
+
+def _render_demographic_panel(
+    *,
+    estimate: DemographicEstimate | None,
+    gate_outcome: AgeGateOutcome | None,
+    available: bool,
+    show_demographics: bool,
+    overview: DemographicOverview | None,
+) -> None:
+    """FR-022/FR-024/§5.1: 参考年齢・参考性別の独立区画（Image と同じ形）。
+
+    **黙って消えない。** 出せないときは必ず理由を 1 行で述べる——モデル未配置・
+    利用者が表示を切っている・まだ推定できていない・ゲートの固定文言のいずれか。
+    以前 Camera はこの区画を持たず、映像上の HUD の 1 行だけが受け皿だった。
+    その行は表示できない間 `:empty` で畳まれるため、利用者から見て「まだ推定
+    できていない」と「表示できない」が区別できなかった。
+
+    表示可否は `resolve_reference_age_view` が決める。HUD・吹き出し・レポートと
+    同じ 1 つの解決を通すことで、ある区画だけがゲートの判断を漏らすことがない
+    （§10.12-3）。**引数だけを読み、pipeline も session state も触らない**ので、
+    状態ごとに 1 回の描画として検証できる。
+    """
+    st.caption(DEMOGRAPHIC_RUNTIME_CAPTION)
+    if not available:
+        st.info("年齢・性別モデルが未配置のため、参考値を表示できません。")
+        return
+    if not show_demographics:
+        st.info("「表示設定」の「年齢・性別の参考値を表示」を入れると、ここに表示します。")
+        return
+
+    view = resolve_reference_age_view(
+        estimate=estimate,
+        gate_outcome=gate_outcome,
+        show_demographics=True,
+    )
+    if view.estimate is None:
+        st.info(
+            view.notice
+            or "顔が 1 名だけ正面に近い向きで写っている間に、参考年齢・参考性別を推定します。"
+        )
+    else:
+        render_demographic_estimate(view.estimate)
+
+    if overview is not None:
+        st.caption(_session_demographic_caption(overview))
+
+
+@st.fragment(run_every=DEMOGRAPHIC_REFRESH_INTERVAL)
+def _render_demographic_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
+    """1 Hz で snapshot を読み、参考年齢・参考性別の区画を描く。
+
+    FR-041: HUD・詳細結果と同じ `_snapshot_for_display` を通す。別の snapshot を
+    読むと、HUD が固定文言を出している瞬間にここだけが数値を出しうる。
+    """
+    snapshot = _snapshot_for_display(pipeline)
+    with st.container(border=True):
+        _render_demographic_panel(
+            estimate=snapshot.demographic_estimate,
+            gate_outcome=snapshot.age_gate_outcome,
+            available=pipeline.has_demographic_worker,
+            show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
+            overview=summarize_observations(pipeline.demographic_observations),
+        )
 
 
 def _render_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -456,18 +552,30 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     summary = summarize_session(records)
     render_session_summary(summary)
 
+    # FR-039/§9.6.1: 参考年齢・参考性別と母集団は、どちらも **pipeline が溜めた
+    # 「表示を許した推定」** から決める。`bundle.records` から作ると、年齢ゲートが
+    # 隠した判断が年齢から復元できてしまう（§10.12-3、AC-BASELINE-05）。
+    # **snapshot は 1 度だけ取る**（`bundle` と同じ理由）——2 度取ると、その間に
+    # 届いた推定の分だけ「参考年齢の節」と「参照平均の母集団」がずれる。
+    observations = pipeline.demographic_observations
+    overview = summarize_observations(observations)
+    # §9.6.1: 1 度も表示できなかったセッションでは節ごと出さず、ゲートを実際に
+    # 呼んでいたときだけ固定文言を 1 行置く。呼んでいないセッション（顔が写って
+    # いなかった等）へこの文を出すと、機能が失敗したように読める（FR-024）。
+    gate_ran = summary.overall is not None and summary.overall.reference_age_rate is not None
+    notice = "" if overview is not None or not gate_ran else SESSION_HIDDEN_NOTICE
+
     def _report(include_figures: bool) -> str:
         # 2026-08-16: リアルタイムのレポートに顔写真は載せない。`include_figures`
         # は Image だけが使う——Camera 側は不変条件 1 の限定解除を必要としない。
         del include_figures
-        # FR-039/§9.6.1: 母集団は **pipeline が溜めた「表示を許した推定」** から
-        # 決める。`bundle.records` から作ると、年齢ゲートが隠した判断が母集団の
-        # 年齢から復元できてしまう（§10.12-3、AC-BASELINE-05）。
         return build_camera_report(
             summary=summary,
             bundle=bundle,
             series=trend_series(records),
-            baseline=resolve_session_baseline(pipeline.demographic_observations),
+            baseline=resolve_session_baseline(observations),
+            overview=overview,
+            notice=notice,
         )
 
     render_export_panel(
@@ -744,8 +852,14 @@ def render_camera_section() -> None:
     # アイコンは並んだタブを見分ける手掛かりであって、文言の置き換えではない
     # （§5.4: 記号だけで意味を伝えない）。達成度・良し悪しを表す絵文字は使わない
     # （§5.2）。
-    detail_tab, symmetry_tab, settings_tab, export_tab = st.tabs(
-        ["📊 詳細結果", "🪞 左右対称との比較", "⚙️ 表示設定", "📄 まとめ・エクスポート"]
+    detail_tab, symmetry_tab, demographic_tab, settings_tab, export_tab = st.tabs(
+        [
+            "📊 詳細結果",
+            "🪞 左右対称との比較",
+            "👤 参考年齢・参考性別",
+            "⚙️ 表示設定",
+            "📄 まとめ・エクスポート",
+        ]
     )
     with detail_tab:
         _render_detail_panel(pipeline)
@@ -753,6 +867,10 @@ def render_camera_section() -> None:
         # FR-034/§14.3g: 一度きりの静止表示。上のライブ表示はこれが画面に出て
         # いる間も自身の周期で動き続ける。
         _render_symmetrization_panel(pipeline)
+    with demographic_tab:
+        # §5.1（2026-08-26）: Image と同じ位置・同じ名前の独立区画。左右差とは
+        # 別の結果として扱う（不変条件 5）。
+        _render_demographic_fragment(pipeline)
     with settings_tab:
         _render_display_controls(pipeline)
         _render_hud_position_control()

@@ -628,18 +628,21 @@ def _render_reading_limits() -> None:
 
 # --- 参考年齢・参考性別 -------------------------------------------------------
 
+#: §10.8: 参考年齢・参考性別の区画に必ず添える来歴の 1 行。**Camera と Image で
+#: 同じ文字列を使う**（2026-08-26、§5.1）——同じモデルの同じ推論であり、モードで
+#: 言い方が変わる理由が無い。
+DEMOGRAPHIC_RUNTIME_CAPTION: Final[str] = (
+    "runtime: OpenCV DNN CPU · Open Model Zoo 2023.0 FP16由来ONNX / 対象18〜75歳"
+)
 
-def render_demographic_estimate(
-    estimate: DemographicEstimate,
-    *,
-    show_distribution: bool = True,
-) -> None:
+
+def render_demographic_estimate(estimate: DemographicEstimate) -> None:
     """§10.8 の年齢・性別参考パネルを描画する（Image と Camera で共有）。
 
-    `show_distribution` は 2 クラスの確率グラフを描く。ライブのカメラパネルは
-    これを切る。パネルは 5 Hz で再描画されるのに対し、この値は最大でも 1 秒に
-    1 度しか変わらず、グラフの費用がここの他の要素すべての合計より大きい
-    ためである。どちらの場合も同じ数値はテキストとして参照できる。
+    **2 クラス確率の棒グラフは持たない**（2026-08-26）。以前は Image だけが描き、
+    Camera は 5 Hz の再描画で費用が見合わないため切っていた——同じ推定が入力
+    モードによって別の見た目になっていた。同じ 2 つの数はすぐ下にテキストで
+    出ており、図にすると参考値が左右差の結果より目立つ（§5.2）。
     """
     st.subheader("モデル推定の参考年齢・参考性別")
     age_column, gender_column = st.columns(2)
@@ -649,18 +652,8 @@ def render_demographic_estimate(
         f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
         "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
     )
-    if show_distribution:
-        st.bar_chart(
-            {
-                "モデルラベル": ["female", "male"],
-                "モデル出力": list(estimate.gender_probabilities),
-            },
-            x="モデルラベル",
-            y="モデル出力",
-        )
-    else:
-        female, male = estimate.gender_probabilities
-        st.caption(f"モデル出力 female {female:.3f} / male {male:.3f}")
+    female, male = estimate.gender_probabilities
+    st.caption(f"モデル出力 female {female:.3f} / male {male:.3f}")
     if estimate.is_cached:
         st.caption("同一区間内の直近推論を再表示しています。")
     with st.expander("モデル情報"):
