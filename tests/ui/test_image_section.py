@@ -83,10 +83,10 @@ _DEMOGRAPHIC_TRIGGER_SCRIPT = (
     "    _render_image_demographic_detail,\n"
     ")\n"
     "age_input = np.zeros((62, 62, 3), dtype=np.uint8)\n"
-    "_maybe_estimate_image_demographics(\n"
+    "available = _maybe_estimate_image_demographics(\n"
     "    age_input, input_fingerprint='fp-1', recorder=None,\n"
     ")\n"
-    "_render_image_demographic_detail(age_input)\n"
+    "_render_image_demographic_detail(age_input, available=available)\n"
 )
 
 
@@ -261,10 +261,10 @@ def test_no_face_detected_skips_inference_and_explains_why(
         "    _maybe_estimate_image_demographics,\n"
         "    _render_image_demographic_detail,\n"
         ")\n"
-        "_maybe_estimate_image_demographics(\n"
+        "available = _maybe_estimate_image_demographics(\n"
         "    None, input_fingerprint='fp-1', recorder=None,\n"
         ")\n"
-        "_render_image_demographic_detail(None)\n"
+        "_render_image_demographic_detail(None, available=available)\n"
     )
     at.run()
 
@@ -345,13 +345,13 @@ def test_gate_blocking_hides_the_demographic_detail_and_shows_the_notice(
         "    _render_image_demographic_detail,\n"
         ")\n"
         "age_input = np.zeros((62, 62, 3), dtype=np.uint8)\n"
-        "_maybe_estimate_image_demographics(\n"
+        "available = _maybe_estimate_image_demographics(\n"
         "    age_input, input_fingerprint='fp-1', recorder=None,\n"
         ")\n"
         "gate_outcome = AgeGateOutcome(\n"
         "    status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
         ")\n"
-        "_render_image_demographic_detail(age_input, gate_outcome)\n"
+        "_render_image_demographic_detail(age_input, gate_outcome, available=available)\n"
     )
     at.run()
 
@@ -577,28 +577,53 @@ def test_the_two_input_modes_offer_the_same_tabs_in_the_same_order() -> None:
 
     罠: 片方にだけタブを足す実装は、そのモードでしか読めない結果を作る——
     Camera が参考年齢・参考性別の区画を持っていなかったのがまさにこれだった。
+    2026-08-27: 名前と並びは `ui.result_tabs` が持つ。**どちらの section も
+    ラベル文字列を自分で持たない**ことまで固定する——手書きへ戻した瞬間に、
+    片方だけ名前がずれても両方の test が通ってしまう状態へ逆戻りする。
     """
     import inspect
 
     from face_symmetry_lab.ui import camera, image_section
+    from face_symmetry_lab.ui.result_tabs import result_tab_labels
 
-    shared = ("📊 詳細結果", "🪞 左右対称との比較", "👤 参考年齢・参考性別")
     for section in (camera.render_camera_section, image_section.render_image_section):
         source = inspect.getsource(section)
-        positions = [source.find(label) for label in shared]
 
-        assert all(position >= 0 for position in positions), section.__name__
-        assert positions == sorted(positions), section.__name__
+        assert "render_result_tabs(" in source, section.__name__
+        for label in result_tab_labels(with_settings=True):
+            assert label not in source, (section.__name__, label)
+
+    # Image だけが「表示設定」を持たない（§5.1）。それ以外は 1 つも減らさない。
+    image_source = inspect.getsource(image_section.render_image_section)
+    assert "settings=" not in image_source
+    assert "settings=" in inspect.getsource(camera.render_camera_section)
 
 
-def test_both_modes_state_the_same_provenance_for_the_reference_age() -> None:
-    """同じモデルの同じ推論なので、モードで言い方が変わる理由が無い。"""
+def test_both_modes_render_the_same_reference_age_panel() -> None:
+    """同じモデルの同じ推論なので、モードで見た目も言い方も変わる理由が無い。
+
+    罠: 区画を 2 か所で書く実装は、状態を見る順序がずれる——実際に Image は
+    「モデル未配置」を最後のフォールバックとして見ていたため、モデルが無い
+    環境では「単一顔を検出できた写真でのみ…」という無関係な理由が出ていた。
+    """
     import inspect
 
-    from face_symmetry_lab.ui import camera, image_section
+    from face_symmetry_lab.ui import camera, demographic_panel, image_section
 
+    # Camera はライブと停止中で `_render_demographic_area` を共有し、そこから
+    # 共有パネルを呼ぶ（2026-08-27）。Image は 1 枚しかないので直接呼ぶ。
     for function in (
-        camera._render_demographic_panel,
+        camera._render_demographic_area,
         image_section._render_image_demographic_detail,
     ):
-        assert "DEMOGRAPHIC_RUNTIME_CAPTION" in inspect.getsource(function), function.__name__
+        source = inspect.getsource(function)
+        assert "render_demographic_panel(" in source, function.__name__
+        # 来歴の 1 行も分岐も共有パネルが持つ。呼び出し側は持ち込まない。
+        assert "DEMOGRAPHIC_RUNTIME_CAPTION" not in source, function.__name__
+
+    for caller in (camera._render_demographic_fragment, camera._render_stopped_demographic_panel):
+        assert "_render_demographic_area(" in inspect.getsource(caller), caller.__name__
+
+    assert "DEMOGRAPHIC_RUNTIME_CAPTION" in inspect.getsource(
+        demographic_panel.render_demographic_panel
+    )

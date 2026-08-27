@@ -24,6 +24,7 @@ from face_symmetry_lab.ui.camera import (
     SYMMETRIZATION_STATE_KEY,
     build_video_frame_callback,
 )
+from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result
 
 
 class StubLandmarker:
@@ -369,7 +370,7 @@ def test_the_camera_section_puts_the_video_above_every_tab() -> None:
 
     source = inspect.getsource(camera.render_camera_section)
 
-    assert source.index("webrtc_streamer(") < source.index("st.tabs(")
+    assert source.index("webrtc_streamer(") < source.index("render_result_tabs(")
     assert source.index("webrtc_streamer(") < source.index("_render_display_controls(")
 
 
@@ -380,7 +381,10 @@ def test_every_below_video_panel_lives_in_a_tab() -> None:
     from face_symmetry_lab.ui import camera
 
     source = inspect.getsource(camera.render_camera_section)
-    tabs_at = source.index("st.tabs(")
+    # タブの中身は closure として組み立てられ、`render_result_tabs` だけが
+    # それを開く。どの panel も、その closure の組み立てが始まってから先にしか
+    # 現れない——映像の直後に直接描画する panel が残っていればここで落ちる。
+    closures_at = source.index("def _detail_tab(")
 
     for panel in (
         "_render_detail_panel(",
@@ -388,8 +392,13 @@ def test_every_below_video_panel_lives_in_a_tab() -> None:
         "_render_demographic_fragment(",
         "_render_export_panel(",
         "_render_session_controls(",
+        "_render_stopped_detail_panel(",
+        "_render_stopped_symmetrization_panel(",
+        "_render_stopped_demographic_panel(",
     ):
-        assert source.index(panel) > tabs_at, panel
+        assert panel in source, panel
+        assert source.index(panel) > closures_at, panel
+    assert source.count("render_result_tabs(") == 1
 
 
 def test_render_camera_section_does_not_split_the_video_with_columns() -> None:
@@ -502,9 +511,10 @@ def test_the_detail_fragment_suppresses_the_duplicated_part_breakdown() -> None:
 
     source = inspect.getsource(camera._render_detail_fragment)
 
-    assert (
-        "render_score_details(snapshot.analysis, show_smoothed=False, show_parts=False)" in source
-    )
+    # 枠は `ui.detail_panel` と共有するが、部位別の可否は入力ごとに違う
+    # （AC-LAYOUT-01）。共有化のついでに握りつぶしていないことを固定する。
+    assert "render_detail_panel(" in source
+    assert "show_parts=False" in source
 
 
 def test_the_frame_path_is_untouched_by_the_overlay_work() -> None:
@@ -547,7 +557,7 @@ def test_fullscreen_skips_the_tab_block_entirely() -> None:
 
     source = inspect.getsource(camera.render_camera_section)
 
-    assert source.index("if fullscreen:") < source.index("st.tabs(")
+    assert source.index("if fullscreen:") < source.index("render_result_tabs(")
 
 
 def test_the_exit_control_is_labelled_as_an_exit() -> None:
@@ -634,16 +644,24 @@ def test_the_settings_tab_groups_its_controls_into_titled_sections() -> None:
     assert "映像上のHUD" in inspect.getsource(camera._render_hud_position_control)
 
 
-def test_the_tabs_keep_their_names_while_gaining_icons() -> None:
-    """アイコンは見分けの手掛かりであって、文言の置き換えではない（§5.4）。"""
+def test_the_tabs_come_from_the_shared_component() -> None:
+    """§5.1: 名前・順序・アイコンは `ui.result_tabs` が Image と共有する。
+
+    罠: ここで `st.tabs([...])` を手書きへ戻す実装は、Image 側と食い違っても
+    どちらの test も落ちない（実際に「まとめ・エクスポート」と「エクスポート」に
+    分かれていた）。ラベル文字列がこの module に無いことまで固定する。
+    """
     import inspect
 
     from face_symmetry_lab.ui import camera
+    from face_symmetry_lab.ui.result_tabs import result_tab_labels
 
     source = inspect.getsource(camera.render_camera_section)
 
-    for label in ("詳細結果", "左右対称との比較", "参考年齢・参考性別", "表示設定", "エクスポート"):
-        assert label in source
+    assert "render_result_tabs(" in source
+    # 停止中の 2 タブも同じ定数から取る（STOP の前後で名前が変わらない）。
+    for label in result_tab_labels(with_settings=True):
+        assert label not in source, label
 
 
 def test_every_live_fragment_reads_the_same_held_snapshot() -> None:
@@ -716,14 +734,24 @@ def test_the_session_summary_is_not_recomputed_by_the_five_hertz_fragment() -> N
         assert "summarize_session" not in inspect.getsource(fragment), fragment.__name__
 
 
-def test_the_export_tab_is_named_for_both_of_its_contents() -> None:
+def test_the_report_tab_still_carries_both_of_its_contents() -> None:
+    """§5.1（2026-08-27）: タブ名は Image とそろえて「レポート」にした。
+
+    名前をそろえた代わりに、**中身が減っていないこと**をここで固定する——
+    Camera のレポートタブは FR-021 の要約を画面にも出し、その下に FR-042 の
+    ダウンロードを置く。罠: 名前だけそろえて要約を別の場所へ移す実装は、
+    「まとめはどこへ行ったのか」を利用者に探させる。
+    """
     import inspect
 
     from face_symmetry_lab.ui import camera
+    from face_symmetry_lab.ui.result_tabs import REPORT_TAB_LABEL
 
-    source = inspect.getsource(camera.render_camera_section)
+    source = inspect.getsource(camera._render_export_panel)
 
-    assert "まとめ・エクスポート" in source
+    assert "render_session_summary(" in source
+    assert "render_export_panel(" in source
+    assert REPORT_TAB_LABEL == "📄 レポート"
 
 
 def test_the_camera_report_carries_no_photo_at_all() -> None:
@@ -745,24 +773,33 @@ def test_the_camera_report_carries_no_photo_at_all() -> None:
     assert "report_has_figures=False" in source
 
 
-def test_the_summary_and_export_survive_stopping_the_camera() -> None:
-    """FR-042/§5.1: 要約は 1 セッションが終わってから読むものである。
+def test_every_tab_survives_stopping_the_camera() -> None:
+    """§5.1（2026-08-27）: STOP でタブが 2 枚へ減らない。
 
-    罠: `context.state.playing` が偽のときに即 return する旧実装では、STOP を
-    押した瞬間にまとめごと到達できなくなる。
+    結果は 1 セッションが終わってから読むものであり、押した瞬間に詳細結果・
+    対称化・参考年齢が画面から消えてはならない。
+
+    罠: `if not context.state.playing:` の枝で 2 枚だけの `st.tabs([...])` を
+    別に組む旧実装は、名前も数も並びもライブ中と食い違わせる（そして片方だけ
+    ラベルを直せば、両方の test が通ったまま画面がずれる）。
     """
     import inspect
 
     from face_symmetry_lab.ui import camera
 
     source = inspect.getsource(camera.render_camera_section)
-    stopped = source.split("if not context.state.playing:")[1].split("return")[0]
 
-    assert "_render_export_panel(pipeline)" in stopped
-    assert "まとめ・エクスポート" in stopped
-    # 止まっている間、ライブ表示に依存するものは出さない。
-    assert "_render_detail_panel(" not in stopped
-    assert "_render_symmetrization_panel(" not in stopped
+    # 停止中も同じ 1 つの合成を通る。タブを別に組む枝が無いことを固定する。
+    assert "st.tabs(" not in source
+    assert source.count("render_result_tabs(") == 1
+    for stopped_body in (
+        "_render_stopped_detail_panel(",
+        "_render_stopped_symmetrization_panel(",
+        "_render_stopped_demographic_panel(",
+    ):
+        assert stopped_body in source, stopped_body
+    # レポートと表示設定は再生状態で分岐しない（同じ中身がそのまま残る）。
+    assert source.count("_render_export_panel(pipeline)") == 1
 
 
 def test_the_camera_report_takes_its_population_from_the_shown_estimates() -> None:
@@ -785,90 +822,54 @@ def test_the_camera_report_takes_its_population_from_the_shown_estimates() -> No
 
 
 # --- §5.1（2026-08-26）: 参考年齢・参考性別の独立区画 -------------------------
+#
+# 区画そのものの描画（状態ごとの 1 行・ゲートの適用・来歴）は Image と共有する
+# ようになったため、`tests/ui/test_demographic_panel.py` が受け持つ。ここに残す
+# のは **Camera 側の配線** ——共有パネルへ何を渡しているか——だけである。
 
 
-def _demographic_estimate(age: float = 31.0):
-    from datetime import UTC, datetime
+def test_the_camera_panel_is_the_shared_one() -> None:
+    """§5.1: Image と同じ区画を使う。罠: Camera 側にだけ分岐を書き足す実装は、
+    「片方の入力でしか出ない状態」を作り、そこからゲートの判断が漏れる。"""
+    import inspect
 
-    from face_symmetry_lab.domain.demographics import build_demographic_estimate
+    from face_symmetry_lab.ui import camera
 
-    return build_demographic_estimate(
-        estimated_age_years=age,
-        gender_probabilities=(0.2, 0.8),
-        model_version="age-gender/test",
-        model_sha256="a" * 64,
-        observed_at=datetime(2026, 8, 26, tzinfo=UTC),
-    )
+    source = inspect.getsource(camera._render_demographic_area)
 
-
-def _gate(status):
-    from face_symmetry_lab.application.age_gate import AgeGateOutcome
-
-    return AgeGateOutcome(status=status, decision=None, reason=None)
+    assert "render_demographic_panel(" in source
+    # 表示可否の分岐は共有パネルが持つ。ここへ書き戻していないことを固定する。
+    assert "resolve_reference_age_view(" not in source
+    assert "render_demographic_estimate(" not in source
+    assert not hasattr(camera, "_render_demographic_panel")
 
 
-def _panel(**overrides):
-    """`_render_demographic_panel` を 1 状態だけ描画する。"""
-    settings = {
-        "estimate": _demographic_estimate(),
-        "gate_outcome": None,
-        "available": True,
-        "show_demographics": True,
-        "overview": None,
-    }
-    settings.update(overrides)
-    at = AppTest.from_string(
-        "import streamlit as st\n"
-        "from face_symmetry_lab.ui.camera import _render_demographic_panel\n"
-        "_render_demographic_panel(**st.session_state['args'])\n"
-    )
-    at.session_state["args"] = settings
-    at.run()
-    assert not at.exception
-    return at
+def test_the_camera_panel_is_fed_the_gate_and_the_worker_state() -> None:
+    """共有パネルは引数だけを読む。渡し忘れると常に「表示できる」側へ倒れる。
 
-
-def test_the_camera_panel_shows_the_estimate_the_gate_allows() -> None:
-    """依頼（2026-08-26）: 動画でも参考年齢・参考性別を読める場所を持つ。"""
-    at = _panel()
-
-    assert [metric.value for metric in at.metric] == ["31.0歳", "男性"]
-
-
-def test_the_camera_panel_obeys_the_gate_like_every_other_area() -> None:
-    """§10.12-3: HUD が隠した判断を、タブから読めるようにしてはならない。
-
-    罠: `snapshot.demographic_estimate is not None` だけで描く旧実装は、HUD が
-    固定文言へ切り替わっている間もタブに参考年齢を出し続ける。
+    罠: `available` を渡さない実装は既定 `True` になり、worker を持たない
+    セッションでも「まだ推定できていない」と言い続ける（FR-024）。
     """
-    from face_symmetry_lab.application.age_gate import AgeGateStatus
-    from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
+    import inspect
 
-    at = _panel(gate_outcome=_gate(AgeGateStatus.OUT_OF_RANGE))
+    from face_symmetry_lab.ui import camera
 
-    assert not at.metric
-    assert age_gate_notice(AgeGateStatus.OUT_OF_RANGE) in [info.value for info in at.info]
+    # ライブと停止中で 1 つの関数を共有する（罠: 2 か所に分けると、停止中だけ
+    # ゲートや worker の状態を渡し忘れても気づけない）。
+    source = inspect.getsource(camera._render_demographic_area)
 
+    for argument in (
+        "estimate=snapshot.demographic_estimate",
+        "gate_outcome=snapshot.age_gate_outcome",
+        "available=pipeline.has_demographic_worker",
+        "show_demographics=",
+        "pending_notice=",
+        "footnote=",
+    ):
+        assert argument in source, argument
 
-def test_the_camera_panel_never_goes_silent() -> None:
-    """FR-024/§5.1: 何も出せないときも、何が起きているかを必ず 1 行で述べる。
-
-    罠: 推定が無いときに `return` するだけの実装は、利用者から見て「壊れている」
-    と「まだ推定できていない」を区別できない状態になる。
-    """
-    from face_symmetry_lab.application.age_gate import AgeGateStatus
-
-    silent = (
-        {"available": False},
-        {"show_demographics": False},
-        {"estimate": None},
-        {"gate_outcome": _gate(AgeGateStatus.NOT_EVALUATED)},
-    )
-    for overrides in silent:
-        at = _panel(**overrides)
-
-        assert not at.metric, overrides
-        assert at.info or at.warning, overrides
+    for caller in (camera._render_demographic_fragment, camera._render_stopped_demographic_panel):
+        assert "_render_demographic_area(" in inspect.getsource(caller), caller.__name__
 
 
 def test_the_camera_panel_reports_the_range_it_showed_this_session() -> None:
@@ -876,17 +877,17 @@ def test_the_camera_panel_reports_the_range_it_showed_this_session() -> None:
     from face_symmetry_lab.application.demographic_observations import DemographicOverview
     from face_symmetry_lab.domain.models import GenderLabel
     from face_symmetry_lab.domain.reference_baseline import ObservedAges
+    from face_symmetry_lab.ui import camera
 
-    at = _panel(
-        overview=DemographicOverview(
+    caption = camera._session_demographic_caption(
+        DemographicOverview(
             ages=ObservedAges(median=31, low=29, high=34, sample_count=42),
             genders=(GenderLabel.MALE,),
         )
     )
 
-    body = " ".join(caption.value for caption in at.caption)
-    assert "29〜34 歳" in body
-    assert "42" in body
+    assert "29〜34 歳" in caption
+    assert "42" in caption
 
 
 def test_the_detail_tab_no_longer_carries_the_reference_age() -> None:
@@ -914,3 +915,195 @@ def test_the_camera_report_carries_what_the_session_actually_showed() -> None:
     assert "observations = pipeline.demographic_observations" in source
     assert "summarize_observations(observations)" in source
     assert "overview=overview" in source
+
+
+# --- §5.1（2026-08-27）: 停止後の各区画の中身 ---------------------------------
+
+
+class ScoredAnalyzer:
+    """品質ゲートを通った 1 フレーム分の結果を返す（停止後の表示検証用）。
+
+    合成フレームでは実際の品質ゲート（顔の大きさ・向き）が閉じるため、表示側の
+    検証には結果そのものを与える。`StubAnalyzer` は `Status.HOLD` で `symmetry`
+    を持たないので、部位別の描画までは届かない。
+    """
+
+    def analyze(
+        self,
+        frame: LandmarkFrame,
+        *,
+        at: float,
+        rgb_image: np.ndarray | None = None,
+    ) -> AnalysisOutcome:
+        del frame, at, rgb_image
+        return _outcome_for_display(
+            symmetry_3d=_symmetry_3d_result(
+                contour=0.0211, eyes=0.0144, nose=0.0062, mouth=0.0183, overall=0.018
+            ),
+            smooth_3d=None,
+        )
+
+    def reset(self) -> None:
+        return None
+
+
+def _stopped_pipeline(*, scored: bool = True) -> RealtimeLandmarkPipeline:
+    """1 フレームだけ解析して止めた pipeline（= `STOP` を押した直後の状態）。
+
+    WebRTC のコールバックが呼ばれなくなるだけなので、pipeline も snapshot も
+    そのまま残る。停止中の区画が読むのはこの「最後に解析したフレーム」である。
+    """
+    analyzer = (
+        ScoredAnalyzer()
+        if scored
+        else FrameAnalyzer(config=_symmetrizable_config(), config_3d=_symmetrizable_config())
+    )
+    pipeline = RealtimeLandmarkPipeline(
+        landmarker=SymmetrizableLandmarker(),
+        analyzer=analyzer,  # type: ignore[arg-type]
+        analysis_interval_ms=0,
+    )
+    pipeline.process_with_analysis(np.full((80, 80, 3), 30, dtype=np.uint8))
+    return pipeline
+
+
+def _stopped_panel(function: str, *, pipeline: RealtimeLandmarkPipeline) -> AppTest:
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        f"from face_symmetry_lab.ui.camera import {function}\n"
+        f"{function}(st.session_state['pipeline'])\n"
+    )
+    at.session_state["pipeline"] = pipeline
+    at.run()
+    assert not at.exception
+    return at
+
+
+def test_the_stopped_detail_panel_shows_the_last_analysed_frame() -> None:
+    """§5.1: 停止中は部位別 4 つもここへ出る（HUD が数値を publish しないため）。
+
+    罠: ライブ用の `show_parts=False` をそのまま持ち込む実装は、停止した瞬間に
+    部位別 4 つを画面のどこからも読めなくする——項目26（H3）の重複回避は、HUD が
+    動いている間にだけ意味を持つ。
+    """
+    from face_symmetry_lab.ui.scores import SCORE_HEADING
+
+    at = _stopped_panel("_render_stopped_detail_panel", pipeline=_stopped_pipeline())
+
+    assert SCORE_HEADING in [element.value for element in at.subheader]
+    labels = [metric.label for metric in at.metric]
+    for part in ("輪郭", "目", "鼻", "口"):
+        assert part in labels, part
+
+
+def test_the_stopped_detail_panel_says_which_frame_it_is_showing() -> None:
+    """不変条件 11: 古い値を現在値として見せない。最後のフレームだと明示する。"""
+    at = _stopped_panel("_render_stopped_detail_panel", pipeline=_stopped_pipeline())
+
+    captions = " ".join(caption.value for caption in at.caption)
+    assert "最後に解析したフレーム" in captions
+
+
+def test_the_stopped_detail_panel_explains_a_session_with_nothing_to_show() -> None:
+    """FR-024: 一度も解析できなかったセッションでも空の枠を出さない。"""
+    pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(face_count=0))
+
+    at = _stopped_panel("_render_stopped_detail_panel", pipeline=pipeline)
+
+    assert at.info
+
+
+def test_the_stopped_symmetrisation_tab_never_arms_a_capture() -> None:
+    """§10.4: 生フレームは保持しないので、停止後に折りたたむ対象が存在しない。
+
+    罠: ライブ用のパネルをそのまま呼ぶ実装は、決して解決しない取り込み要求を
+    立て、「次に顔を検出したフレームを取り込みます」と言ったまま固まる。
+    """
+    pipeline = _stopped_pipeline()
+
+    at = _stopped_panel("_render_stopped_symmetrization_panel", pipeline=pipeline)
+
+    capture_buttons = [
+        button for button in at.button if button.proto.id.endswith("capture_symmetrization")
+    ]
+    assert not capture_buttons
+    assert pipeline.capture_pending is False
+    assert at.info
+
+
+def test_the_stopped_symmetrisation_tab_keeps_a_view_captured_before_stopping() -> None:
+    """停止前に取り込んだ表示は、STOP をまたいでそのまま読める。"""
+    from face_symmetry_lab.application.symmetrization import symmetrize_frame
+
+    pipeline = _stopped_pipeline(scored=False)
+    pipeline.request_capture()
+    pipeline.process(np.full((80, 80, 3), 30, dtype=np.uint8))
+    captured = pipeline.take_capture()
+    assert captured is not None
+    view = symmetrize_frame(captured.rgb_image, captured.frame, config=_symmetrizable_config())
+
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.camera import _render_stopped_symmetrization_panel\n"
+        "_render_stopped_symmetrization_panel(st.session_state['pipeline'])\n"
+    )
+    at.session_state["pipeline"] = pipeline
+    at.session_state[SYMMETRIZATION_STATE_KEY] = view
+    at.run()
+
+    assert not at.exception
+    assert "平均のズレ" in [metric.label for metric in at.metric]
+
+
+def test_the_stopped_reference_age_panel_never_goes_silent() -> None:
+    """FR-024/§5.1: 停止中も、何が起きているかを必ず 1 行で述べる。"""
+    at = _stopped_panel("_render_stopped_demographic_panel", pipeline=_stopped_pipeline())
+
+    assert at.info or at.error or at.warning
+
+
+def test_the_idle_panels_do_not_claim_a_session_was_stopped() -> None:
+    """§5.1（2026-08-27）: 開始前に「停止しました」と言わない。
+
+    `START` を一度も押していない画面でも同じ 5 つのタブを出すが、そこで
+    「最後に解析したフレーム」を名乗るのは、起きていないことを起きたように
+    説明することになる。
+
+    罠: 再生状態だけで分岐する実装は、初回表示でいきなり「計測を停止しました」
+    と述べる——利用者はまだ何も始めていない。
+    """
+    import inspect
+
+    from face_symmetry_lab.ui import camera
+    from face_symmetry_lab.ui.camera import LAST_FRAME_CAPTION
+
+    idle = RealtimeLandmarkPipeline(landmarker=StubLandmarker())
+    assert camera._has_analysed_frame(idle.snapshot()) is False
+
+    for function in ("_render_stopped_detail_panel", "_render_stopped_demographic_panel"):
+        at = _stopped_panel(function, pipeline=idle)
+
+        assert LAST_FRAME_CAPTION not in [caption.value for caption in at.caption], function
+        assert at.info, function  # 黙らない（FR-024）
+
+    assert any(
+        "START" in element.value
+        for element in _stopped_panel("_render_stopped_detail_panel", pipeline=idle).info
+    )
+    # 参考年齢側は、この pipeline に worker が無いのでモデル未配置の理由が先に
+    # 出る（`ui.demographic_panel` の順序）。開始前の 1 行を選ぶ分岐そのものを
+    # 固定しておく——罠: `pending_notice` を停止中の文で固定すると、開始前の
+    # 画面が「表示できたフレームがありませんでした」と述べる。
+    source = inspect.getsource(camera._render_stopped_demographic_panel)
+    assert "IDLE_DEMOGRAPHIC_NOTICE" in source
+    assert "_DEMOGRAPHIC_STOPPED_NOTICE" in source
+
+
+def test_the_stopped_panels_do_say_which_frame_they_show_once_a_frame_exists() -> None:
+    """裏返し: 1 フレームでも解析していれば、いつの値かを必ず述べる。"""
+    from face_symmetry_lab.ui.camera import LAST_FRAME_CAPTION
+
+    for function in ("_render_stopped_detail_panel", "_render_stopped_demographic_panel"):
+        at = _stopped_panel(function, pipeline=_stopped_pipeline())
+
+        assert LAST_FRAME_CAPTION in [caption.value for caption in at.caption], function

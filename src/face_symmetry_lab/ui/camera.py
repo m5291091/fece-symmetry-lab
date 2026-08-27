@@ -41,7 +41,6 @@ from face_symmetry_lab.adapters.io.metric_config import (
     load_metric_config,
 )
 from face_symmetry_lab.adapters.io.model_store import LOCK_PATH, InstallStatus, file_sha256
-from face_symmetry_lab.application.age_gate import AgeGateOutcome
 from face_symmetry_lab.application.analyzer import FrameAnalyzer
 from face_symmetry_lab.application.demographic_observations import (
     DemographicOverview,
@@ -57,15 +56,13 @@ from face_symmetry_lab.application.session import SessionRecorder
 from face_symmetry_lab.application.symmetrization import symmetrize_frame
 from face_symmetry_lab.domain.frame_adjustments import BackgroundMode
 from face_symmetry_lab.domain.metrics import MetricConfigError
-from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.domain.symmetrization import SymmetrizationError
-from face_symmetry_lab.ui.age_gate_notice import (
-    SESSION_HIDDEN_NOTICE,
-    resolve_reference_age_view,
-)
+from face_symmetry_lab.ui.age_gate_notice import SESSION_HIDDEN_NOTICE
 from face_symmetry_lab.ui.baseline import resolve_session_baseline
+from face_symmetry_lab.ui.demographic_panel import render_demographic_panel
+from face_symmetry_lab.ui.detail_panel import render_detail_panel
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.hud import (
     HUD_POSITION_OPTIONS,
@@ -86,10 +83,9 @@ from face_symmetry_lab.ui.model_setup import (
 )
 from face_symmetry_lab.ui.readings import GENDER_LABELS, display_signature
 from face_symmetry_lab.ui.report import build_camera_report
-from face_symmetry_lab.ui.scores import (
-    DEMOGRAPHIC_RUNTIME_CAPTION,
-    render_demographic_estimate,
-    render_score_details,
+from face_symmetry_lab.ui.result_tabs import (
+    ResultTabs,
+    render_result_tabs,
 )
 from face_symmetry_lab.ui.smoothing_panel import render_smoothing_control
 from face_symmetry_lab.ui.summary_panel import render_session_summary
@@ -144,6 +140,30 @@ PIPELINE_STATE_KEY = "landmark_pipeline"
 #: FR-034: 利用者が取り込んだフレームの対称化ビュー。セッション状態のみに置き、
 #: ディスクへ書かず、解析のリセットと一緒に消す（§10.4）。
 SYMMETRIZATION_STATE_KEY = "symmetrization_view"
+
+#: §5.1（2026-08-27）: 停止中の区画が読んでいるのは「そのセッションで最後に
+#: 解析したフレーム」である。不変条件 11 が禁じるのは古い値を**現在値として**
+#: 見せることなので、いつの値かを述べたうえで出す。
+LAST_FRAME_CAPTION: Final[str] = (
+    "計測を停止しました。以下はこのセッションで最後に解析したフレームの値です。"
+)
+
+#: 開始前の 1 行。**「停止しました」と言わない**——`START` を一度も押していない
+#: 画面で「最後に解析したフレーム」を名乗るのは、起きていないことを起きたように
+#: 説明することになる（§5.1、2026-08-27）。
+IDLE_DETAIL_NOTICE: Final[str] = (
+    "`START` を押して計測を始めると、ここに計算過程などの数値が表示されます。"
+)
+IDLE_DEMOGRAPHIC_NOTICE: Final[str] = (
+    "`START` を押して計測を始めると、参考年齢・参考性別をここに表示します。"
+)
+
+#: FR-034 の枠付け。ライブと停止中で同じ 1 文にする（§5.3/§10.7 の中立文言は、
+#: 再生状態で言い方が変わってよいものではない）。
+SYMMETRIZATION_CAPTION: Final[str] = (
+    "この瞬間の顔を正中線で折りたたみ、そろえた位置と重ねて表示します。"
+    "どちらが正しい・望ましいという意味はありません。"
+)
 
 #: §11 NFR-003: 結果パネルは映像の fps とは独立に 4〜5 Hz で更新する。
 STATUS_REFRESH_INTERVAL = "200ms"
@@ -320,6 +340,40 @@ def _render_hud_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     )
 
 
+def _detail_diagnostics(
+    pipeline: RealtimeLandmarkPipeline,
+    snapshot: PipelineSnapshot,
+) -> Callable[[], None]:
+    """§14.3f/NFR-002: 実行時の数値を折りたたみへ入れる中身を作る。
+
+    ライブと停止中で同じ 1 か所から作る。2 つに分けると、片方だけが段階別の
+    内訳を落としても気づけない——どちらも「遅いセッションを段階まで絞り込む」
+    ための同じ診断値である。
+    """
+
+    def _render() -> None:
+        tracking, points = st.columns(2)
+        tracking.metric("追跡状態", snapshot.status.value)
+        points.metric("ランドマーク点数", snapshot.landmark_count)
+        sampled, busy = st.columns(2)
+        sampled.metric("プレビュー専用フレーム", snapshot.throttled_frames)
+        busy.metric("処理中スキップ", snapshot.dropped_frames)
+        st.caption(
+            f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
+            f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
+        )
+        # 背景置換と scoring はその段階が実際に走ったときだけ出す。
+        breakdown = [f"landmark {snapshot.landmark_ms:.1f} ms"]
+        if snapshot.segmentation_ms > 0.0:
+            breakdown.append(f"背景置換 {snapshot.segmentation_ms:.1f} ms")
+        if snapshot.scoring_ms > 0.0:
+            breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
+        st.caption("内訳: " + " · ".join(breakdown))
+        _render_auto_tune_status(pipeline)
+
+    return _render
+
+
 @st.fragment(run_every=STATUS_REFRESH_INTERVAL)
 def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     """不変 snapshot を 5 Hz で読み、画面幅いっぱいの詳細ブロックを描画する。
@@ -336,43 +390,74 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     FR-041: HUD と同じ `_snapshot_for_display` を通す。片方だけ生の snapshot を
     読むと、保持中に「HUD の部位別」と「計算過程の部位別」が別の瞬間の値になり、
     AC-DISPLAY-04 の文字列一致が保持区間の境界でだけ壊れる。
+
+    2026-08-27: 囲み・回復導線・診断用の折りたたみという**枠**は
+    `ui.detail_panel` が Image と共有する。ここに残るのは、その枠へ渡す
+    「この入力に固有の中身」——`show_parts=False`（HUD との重複回避）と、
+    NFR-002 のフレーム統計——だけである。
     """
     snapshot = _snapshot_for_display(pipeline)
-    with st.container(border=True):
+    render_detail_panel(
+        snapshot.analysis,
+        empty_notice="品質ゲートを満たすと、ここに計算過程などの数値が表示されます。",
+        # 項目26（H3）: HUD が既に部位別 4 つを表示するため、詳細タブでは省く。
+        show_parts=False,
         # §14.4: 回復導線。以前は映像隣の見出しパネルにあったが、パネルの削除
         # に伴いここへ移した。
-        if snapshot.needs_recovery:
-            st.warning("処理が続けて失敗しています。カメラを停止して再開してください。")
+        warning=(
+            "処理が続けて失敗しています。カメラを停止して再開してください。"
+            if snapshot.needs_recovery
+            else None
+        ),
+        diagnostics=_detail_diagnostics(pipeline, snapshot),
+    )
 
-        # 測定結果を先頭に置く。下の実行時カウンタは診断用であり、利用者が
-        # 手を打てないフレーム統計で結果を埋もれさせていた。
-        if snapshot.analysis is not None:
-            render_score_details(snapshot.analysis, show_smoothed=False, show_parts=False)
-        else:
-            st.info("品質ゲートを満たすと、ここに計算過程などの数値が表示されます。")
 
-        st.divider()
-        with st.expander("処理の状態（診断用）"):
-            tracking, points = st.columns(2)
-            tracking.metric("追跡状態", snapshot.status.value)
-            points.metric("ランドマーク点数", snapshot.landmark_count)
-            sampled, busy = st.columns(2)
-            sampled.metric("プレビュー専用フレーム", snapshot.throttled_frames)
-            busy.metric("処理中スキップ", snapshot.dropped_frames)
-            st.caption(
-                f"解析サンプル #{snapshot.frame_id} · 処理 {snapshot.processing_ms:.1f} ms · "
-                f"最大 {1000 // DEFAULT_ANALYSIS_INTERVAL_MS} Hz"
-            )
-            # §14.3f: 上の合計を段階別に分けた NFR-002 の診断表示。遅いセッション
-            # を GPU や配備の変更を検討する前に段階まで絞り込めるようにする。
-            # 背景置換と scoring はその段階が実際に走ったときだけ出す。
-            breakdown = [f"landmark {snapshot.landmark_ms:.1f} ms"]
-            if snapshot.segmentation_ms > 0.0:
-                breakdown.append(f"背景置換 {snapshot.segmentation_ms:.1f} ms")
-            if snapshot.scoring_ms > 0.0:
-                breakdown.append(f"scoring {snapshot.scoring_ms:.1f} ms")
-            st.caption("内訳: " + " · ".join(breakdown))
-            _render_auto_tune_status(pipeline)
+def _has_analysed_frame(snapshot: PipelineSnapshot) -> bool:
+    """このセッションで 1 フレームでも解析したか（= `START` を押したことがあるか）。
+
+    `frame_id` は解析のたびに進み、`reset_analysis` で 0 へ戻る。停止中の区画は
+    これを見て「まだ計測していない」と「計測が終わった」を分ける——同じ 1 行で
+    両方を説明すると、片方が必ず嘘になる。
+    """
+    return snapshot.frame_id > 0
+
+
+def _render_stopped_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    """§5.1（2026-08-27）: `STOP` の後の詳細結果。
+
+    読むのは **そのセッションで最後に解析したフレーム**である。WebRTC の
+    コールバックが呼ばれなくなるだけなので snapshot はそのまま残っており、
+    ここではそれを「最後のフレームの値」と明示したうえで出す（不変条件 11:
+    古い値を現在値として見せない）。
+
+    fragment にしない。停止中は新しいフレームが届かないので、5 Hz で描き直して
+    も同じ値を描き直すだけである。
+
+    `_snapshot_for_display` ではなく `pipeline.snapshot()` を読む。表示ラッチ
+    （FR-041）は「読んでいる最中に数字が止まっていてほしい」という要求のための
+    時間依存の機構であり、止まった後の 1 枚を読むのにその時計を進める理由が無い。
+
+    `show_parts=True` にする理由は HUD である。停止中は `_render_hud_fragment`
+    が payload を publish しないため、映像上の HUD は数値を持たない。項目26（H3）
+    の重複回避はライブ中にだけ意味を持つので、ここが部位別 4 つの唯一の受け皿に
+    なる（Image の詳細タブと同じ扱い）。
+    """
+    snapshot = pipeline.snapshot()
+    analysed = _has_analysed_frame(snapshot)
+    if analysed:
+        st.caption(LAST_FRAME_CAPTION)
+    render_detail_panel(
+        snapshot.analysis,
+        empty_notice=(
+            "このセッションでは、品質ゲートを満たすフレームがありませんでした。"
+            "明るさ・顔の大きさ・向きを整えて `START` から取り直してください。"
+            if analysed
+            else IDLE_DETAIL_NOTICE
+        ),
+        show_parts=True,
+        diagnostics=_detail_diagnostics(pipeline, snapshot),
+    )
 
 
 def _session_demographic_caption(overview: DemographicOverview) -> str:
@@ -393,50 +478,49 @@ def _session_demographic_caption(overview: DemographicOverview) -> str:
     )
 
 
-def _render_demographic_panel(
+#: まだ推定できていない間の 1 行。Image は「単一顔を検出できた写真でのみ」と
+#: 言うが、ライブ映像では顔が入ってくるのを待っている状態なので、待てば出うる
+#: ことを述べる（`ui.demographic_panel` がこの 1 文だけを入力ごとに受け取る）。
+_DEMOGRAPHIC_PENDING_NOTICE: Final[str] = (
+    "顔が 1 名だけ正面に近い向きで写っている間に、参考年齢・参考性別を推定します。"
+)
+
+#: 停止後の同じ 1 行。**できなかった内訳は述べない**——ゲートが働いた回と顔が
+#: 写っていなかった回を区別させると、§10.11-2 が禁じる「内部判断を属性として
+#: 提示する」ことに近づく。左右差へ影響しないことだけを添える（FR-024）。
+_DEMOGRAPHIC_STOPPED_NOTICE: Final[str] = (
+    "このセッションでは参考年齢・参考性別を表示できたフレームがありませんでした。"
+    "左右差の分析結果には影響しません。"
+)
+
+
+def _render_demographic_area(
+    pipeline: RealtimeLandmarkPipeline,
     *,
-    estimate: DemographicEstimate | None,
-    gate_outcome: AgeGateOutcome | None,
-    available: bool,
-    show_demographics: bool,
-    overview: DemographicOverview | None,
+    snapshot: PipelineSnapshot,
+    pending_notice: str,
 ) -> None:
-    """FR-022/FR-024/§5.1: 参考年齢・参考性別の独立区画（Image と同じ形）。
+    """参考年齢・参考性別の区画を、ライブでも停止後でも同じ 1 か所から描く。
 
-    **黙って消えない。** 出せないときは必ず理由を 1 行で述べる——モデル未配置・
-    利用者が表示を切っている・まだ推定できていない・ゲートの固定文言のいずれか。
-    以前 Camera はこの区画を持たず、映像上の HUD の 1 行だけが受け皿だった。
-    その行は表示できない間 `:empty` で畳まれるため、利用者から見て「まだ推定
-    できていない」と「表示できない」が区別できなかった。
+    区画そのもの（囲み・来歴の 1 行・状態を見る順序・ゲートの適用）は
+    `ui.demographic_panel` が Image と共有する。ここに残るのは snapshot と
+    pipeline からの読み出しだけで、**表示の分岐は 1 つも持たない**——分岐を
+    ここへ書き足すと、Image 側とまた食い違う。
 
-    表示可否は `resolve_reference_age_view` が決める。HUD・吹き出し・レポートと
-    同じ 1 つの解決を通すことで、ある区画だけがゲートの判断を漏らすことがない
-    （§10.12-3）。**引数だけを読み、pipeline も session state も触らない**ので、
-    状態ごとに 1 回の描画として検証できる。
+    ライブと停止中で変わるのは、まだ出せていないときの 1 文だけである。2 か所へ
+    分けると、停止中だけゲートや worker の状態を渡し忘れても気づけない。
     """
-    st.caption(DEMOGRAPHIC_RUNTIME_CAPTION)
-    if not available:
-        st.info("年齢・性別モデルが未配置のため、参考値を表示できません。")
-        return
-    if not show_demographics:
-        st.info("「表示設定」の「年齢・性別の参考値を表示」を入れると、ここに表示します。")
-        return
-
-    view = resolve_reference_age_view(
-        estimate=estimate,
-        gate_outcome=gate_outcome,
-        show_demographics=True,
+    overview = summarize_observations(pipeline.demographic_observations)
+    render_demographic_panel(
+        estimate=snapshot.demographic_estimate,
+        gate_outcome=snapshot.age_gate_outcome,
+        available=pipeline.has_demographic_worker,
+        show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
+        pending_notice=pending_notice,
+        # §9.6.1: セッションを通して表示できた範囲。Image は 1 枚しか持たない
+        # ため、添えるものがない（`footnote=None`）。
+        footnote=None if overview is None else _session_demographic_caption(overview),
     )
-    if view.estimate is None:
-        st.info(
-            view.notice
-            or "顔が 1 名だけ正面に近い向きで写っている間に、参考年齢・参考性別を推定します。"
-        )
-    else:
-        render_demographic_estimate(view.estimate)
-
-    if overview is not None:
-        st.caption(_session_demographic_caption(overview))
 
 
 @st.fragment(run_every=DEMOGRAPHIC_REFRESH_INTERVAL)
@@ -446,15 +530,33 @@ def _render_demographic_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
     FR-041: HUD・詳細結果と同じ `_snapshot_for_display` を通す。別の snapshot を
     読むと、HUD が固定文言を出している瞬間にここだけが数値を出しうる。
     """
-    snapshot = _snapshot_for_display(pipeline)
-    with st.container(border=True):
-        _render_demographic_panel(
-            estimate=snapshot.demographic_estimate,
-            gate_outcome=snapshot.age_gate_outcome,
-            available=pipeline.has_demographic_worker,
-            show_demographics=bool(st.session_state.get(DEMOGRAPHIC_ENABLED_STATE_KEY, True)),
-            overview=summarize_observations(pipeline.demographic_observations),
-        )
+    _render_demographic_area(
+        pipeline,
+        snapshot=_snapshot_for_display(pipeline),
+        pending_notice=_DEMOGRAPHIC_PENDING_NOTICE,
+    )
+
+
+def _render_stopped_demographic_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    """§5.1（2026-08-27）: `STOP` の後の参考年齢・参考性別。
+
+    詳細結果と同じく、最後に解析したフレームの値を明示して出す。fragment に
+    しないのと `pipeline.snapshot()` を読む理由も同じである
+    （`_render_stopped_detail_panel` を参照）。
+
+    出せていないときの 1 文だけをセッション向けに差し替える。**理由の内訳は
+    述べない**——ゲートが働いた回と顔が写っていなかった回を利用者から区別
+    させないためである（§10.11-2）。
+    """
+    snapshot = pipeline.snapshot()
+    analysed = _has_analysed_frame(snapshot)
+    if analysed:
+        st.caption(LAST_FRAME_CAPTION)
+    _render_demographic_area(
+        pipeline,
+        snapshot=snapshot,
+        pending_notice=_DEMOGRAPHIC_STOPPED_NOTICE if analysed else IDLE_DEMOGRAPHIC_NOTICE,
+    )
 
 
 def _render_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -507,10 +609,7 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     静止結果であり、表示中もライブ表示はそのまま動き続ける（§14.3g）。
     """
     st.markdown(SYMMETRIZATION_HEADING)
-    st.caption(
-        "この瞬間の顔を正中線で折りたたみ、そろえた位置と重ねて表示します。"
-        "どちらが正しい・望ましいという意味はありません。"
-    )
+    st.caption(SYMMETRIZATION_CAPTION)
 
     # ボタンより前に読む。取り込みを起こすトグルの現在値が、その取り込みへ
     # 適用される値と一致するようにするためである。
@@ -535,6 +634,43 @@ def _render_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
         return
 
     render_symmetrization_view(view, warp_requested=warp)
+
+
+def _render_stopped_symmetrization_panel(pipeline: RealtimeLandmarkPipeline) -> None:
+    """§5.1（2026-08-27）: `STOP` の後の「左右対称との比較」。
+
+    **停止中は新しい取り込みを行わない。** §10.4 のとおり生フレームは端末内の
+    メモリにも残さない（`take_capture` は一度で消費し、pipeline は保持しない）
+    ので、止まった後に折りたたむ対象そのものが存在しない。ライブ用のパネルを
+    そのまま呼ぶと、決して解決しない取り込み要求を立てて「次に顔を検出した
+    フレームを取り込みます」と言ったまま固まるため、取り込みの操作子はここに
+    置かない。
+
+    停止前に取り込んだ表示は残っているので、そのまま読めるようにする。消す
+    操作だけは残す（§10.4: 利用者がいつでも破棄できる）。
+    """
+    st.markdown(SYMMETRIZATION_HEADING)
+    st.caption(SYMMETRIZATION_CAPTION)
+
+    view = st.session_state.get(SYMMETRIZATION_STATE_KEY)
+    if isinstance(view, str):
+        st.warning(view)
+        return
+    if view is None:
+        st.info(
+            "取り込みはカメラの再生中にだけ行えます。映像は端末内のメモリでしか扱わず"
+            "保存もしないため、停止した後のフレームから作ることはできません。"
+            "`START` で再開してから「この瞬間を対称化して見る」を押してください。"
+        )
+        return
+
+    # 停止中は取り込み時の選択を変えられないので、**実際に生成されているか**を
+    # そのまま要求として渡す。生成されていない画像について「作れませんでした」と
+    # 述べても、利用者にできることが無い。
+    render_symmetrization_view(view, warp_requested=view.warped is not None)
+    if st.button("表示を消す", key="clear_symmetrization_stopped"):
+        _clear_symmetrization(pipeline)
+        st.rerun()
 
 
 def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
@@ -819,62 +955,69 @@ def render_camera_section() -> None:
             async_processing=True,
         )
 
-    if not context.state.playing:
+    playing = context.state.playing
+    if not playing:
         # 不変条件 3: 明示的な同意の後にだけカメラ許可を求める導線を保つ。
         st.info("`START` を押すと、ブラウザがカメラの許可を求めます。")
-        # FR-042/§5.1（2026-08-16）: **計測を止めた後もまとめとエクスポートへ
-        # 到達できる。** 要約は 1 セッションが終わってから読むものであり、STOP を
-        # 押した時点でタブごと消えてはならない。記録がまだ無い開始前は、パネル側
-        # が `empty_notice` で「まだ何も無い」と説明する。ライブ表示に依存する
-        # 詳細結果・対称化は、止まっている間は出す意味が無いので置かない。
-        stopped_export_tab, stopped_settings_tab = st.tabs(
-            ["📄 まとめ・エクスポート", "⚙️ 表示設定"]
-        )
-        with stopped_export_tab:
-            _render_export_panel(pipeline)
-        with stopped_settings_tab:
-            _render_display_controls(pipeline)
-            _render_hud_position_control()
-        return
+    else:
+        # 項目26（H3）: 映像に隣接して数値を出すのは映像上の HUD だけである。この
+        # fragment は payload の publish だけを行い、それ自体は何も描画しない。
+        _render_hud_fragment(pipeline)
 
-    # 項目26（H3）: 映像に隣接して数値を出すのは映像上の HUD だけである。この
-    # fragment は payload の publish だけを行い、それ自体は何も描画しない。
-    _render_hud_fragment(pipeline)
+        if fullscreen:
+            # 映像がビューポートを覆っている間、その下の要素へは到達できない。
+            # 誰も見られないパネルを 5 Hz で再描画し続けないよう、まるごと省く。
+            st.caption("全画面表示中です。設定・詳細結果は「全画面を終了」で戻ると表示されます。")
+            return
 
-    if fullscreen:
-        # 映像がビューポートを覆っている間、その下の要素へは到達できない。
-        # 誰も見られないパネルを 5 Hz で再描画し続けないよう、まるごと省く。
-        st.caption("全画面表示中です。設定・詳細結果は「全画面を終了」で戻ると表示されます。")
-        return
+    # §5.1（2026-08-27）: **`STOP` の後もタブの名前・順序・数は変わらない。**
+    # 以前は停止中だけ 2 枚のタブを別に組んでおり、押した瞬間に
+    # 詳細結果・対称化・参考年齢が画面から消えていた。ここで変えてよいのは
+    # 「各タブが何を読むか」だけである——停止中はライブの fragment ではなく、
+    # そのセッションで最後に解析したフレームを読む区画へ差し替える。
+    def _detail_tab() -> None:
+        if playing:
+            _render_detail_panel(pipeline)
+        else:
+            _render_stopped_detail_panel(pipeline)
 
-    # §5.1, AC-LAYOUT-01: 映像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
-    # 上の表示がスクロールで手の届かない位置へ行かないようにする。
-    # アイコンは並んだタブを見分ける手掛かりであって、文言の置き換えではない
-    # （§5.4: 記号だけで意味を伝えない）。達成度・良し悪しを表す絵文字は使わない
-    # （§5.2）。
-    detail_tab, symmetry_tab, demographic_tab, settings_tab, export_tab = st.tabs(
-        [
-            "📊 詳細結果",
-            "🪞 左右対称との比較",
-            "👤 参考年齢・参考性別",
-            "⚙️ 表示設定",
-            "📄 まとめ・エクスポート",
-        ]
-    )
-    with detail_tab:
-        _render_detail_panel(pipeline)
-    with symmetry_tab:
-        # FR-034/§14.3g: 一度きりの静止表示。上のライブ表示はこれが画面に出て
-        # いる間も自身の周期で動き続ける。
-        _render_symmetrization_panel(pipeline)
-    with demographic_tab:
+    def _symmetry_tab() -> None:
+        # FR-034/§14.3g: 一度きりの静止表示。上のライブ表示はこれが画面に
+        # 出ている間も自身の周期で動き続ける。停止中は §10.4 により取り込む
+        # 対象が無いので、操作子を持たない読み取り専用の区画になる。
+        if playing:
+            _render_symmetrization_panel(pipeline)
+        else:
+            _render_stopped_symmetrization_panel(pipeline)
+
+    def _demographic_tab() -> None:
         # §5.1（2026-08-26）: Image と同じ位置・同じ名前の独立区画。左右差とは
         # 別の結果として扱う（不変条件 5）。
-        _render_demographic_fragment(pipeline)
-    with settings_tab:
+        if playing:
+            _render_demographic_fragment(pipeline)
+        else:
+            _render_stopped_demographic_panel(pipeline)
+
+    def _settings_tab() -> None:
+        # 停止中も操作でき、選んだ値は次のセッションへ引き継がれる。
         _render_display_controls(pipeline)
         _render_hud_position_control()
         st.divider()
         _render_session_controls(pipeline)
-    with export_tab:
-        _render_export_panel(pipeline)
+
+    # §5.1, AC-LAYOUT-01: 映像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
+    # 上の表示がスクロールで手の届かない位置へ行かないようにする。**名前・順序・
+    # アイコンは `ui.result_tabs` が Image と共有する**（2026-08-27）——ここで
+    # 直接タブを組み立てていた間、共通のはずのラベルが実際にずれていた。
+    render_result_tabs(
+        ResultTabs(
+            detail=_detail_tab,
+            symmetry=_symmetry_tab,
+            demographic=_demographic_tab,
+            # Image は対応する設定を持たないため、Camera だけがこのタブを渡す。
+            settings=_settings_tab,
+            # レポートはセッション全体を対象とするので、再生状態で分岐しない。
+            # 記録がまだ無い開始前は、パネル側が `empty_notice` で説明する。
+            report=lambda: _render_export_panel(pipeline),
+        )
+    )
