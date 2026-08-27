@@ -14,7 +14,12 @@ BEGIN_MARKER = "<!-- BEGIN GENERATED TREE -->"
 END_MARKER = "<!-- END GENERATED TREE -->"
 MAX_DIRECTORY_DEPTH = 5
 MAX_FILE_DEPTH = 3
-MAX_GENERATED_LINES = 220
+#: 2026-08-27: 220 だと追跡済みのツリーがちょうど上限に張り付いており、
+#: `tests/ui/` のような深さ 3 の directory へ file を 1 つ足しただけで生成が
+#: 失敗していた。summarization を強める（`MAX_FILE_DEPTH` を下げる）と、この
+#: 索引の要である「どの module にどの test が対応するか」が counts へ潰れる
+#: ため、上限のほうを上げる。
+MAX_GENERATED_LINES = 240
 
 _EXCLUDED_PARTS = {
     ".git",

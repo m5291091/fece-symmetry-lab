@@ -32,6 +32,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
 | 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
 | Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
+| Camera / Image 共有の結果タブの並び（§5.1） | `src/face_symmetry_lab/ui/result_tabs.py` |
+| Camera / Image 共有の参考年齢・参考性別の区画 | `src/face_symmetry_lab/ui/demographic_panel.py` |
+| Camera / Image 共有の詳細結果の枠 | `src/face_symmetry_lab/ui/detail_panel.py` |
 | Domain models | `src/face_symmetry_lab/domain/` |
 | Upload validation | `src/face_symmetry_lab/application/image_input.py` |
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
@@ -133,6 +136,9 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 詳細結果の描画と §5.3 の文言 | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3, §8.6.3 |
 | 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
 | Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
+| Camera / Image 共有の結果タブの並び | `ui/result_tabs.py` | `tests/ui/test_result_tabs.py` | FR-013, FR-032, §5.1, §5.4, AC-LAYOUT-01 |
+| Camera / Image 共有の参考年齢・参考性別の区画 | `ui/demographic_panel.py` | `tests/ui/test_demographic_panel.py` | FR-022, FR-024, FR-038, §5.1, §10.11, §10.12 |
+| Camera / Image 共有の詳細結果の枠 | `ui/detail_panel.py` | `tests/ui/test_detail_panel.py` | FR-013, FR-014, §5.1, §14.3f, AC-LAYOUT-01 |
 | Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
 | ダウンロードパネル（CSV / JSON / レポート、Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020, FR-042 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
@@ -167,7 +173,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `a55e990ab30e9cfd71339b0a9096d973c619ce348bc0690082b726373034cf5b`_
+_File-list SHA-256: `040b89b4fae282d607192cce560dc958776718c44f7ab8940667332668ebf9c7`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -235,6 +241,8 @@ face-symmetry-lab/
   - `symmetry-metric-level3.md`
   - `symmetry-metric-measurements.md`
 - `research/`
+  - `frll-symmetry/`
+    - `measure_frll.py`
   - `utkface-symmetry/`
     - `utkface_age_gate_lab.ipynb`
     - `utkface_symmetry_lab.ipynb`
@@ -273,7 +281,7 @@ face-symmetry-lab/
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (21 files)
+      - … (24 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -361,6 +369,8 @@ face-symmetry-lab/
     - `test_app.py`
     - `test_baseline.py`
     - `test_camera.py`
+    - `test_demographic_panel.py`
+    - `test_detail_panel.py`
     - `test_export_panel.py`
     - `test_guidance.py`
     - `test_hud.py`
@@ -371,6 +381,7 @@ face-symmetry-lab/
     - `test_reference_page.py`
     - `test_report.py`
     - `test_report_figures.py`
+    - `test_result_tabs.py`
     - `test_scores.py`
     - `test_smoothing_panel.py`
     - `test_still_overlay.py`
