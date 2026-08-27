@@ -69,6 +69,8 @@ from face_symmetry_lab.ui.age_gate_notice import (
     resolve_reference_age_view,
 )
 from face_symmetry_lab.ui.baseline import resolve_baseline
+from face_symmetry_lab.ui.demographic_panel import render_demographic_panel
+from face_symmetry_lab.ui.detail_panel import render_detail_panel
 from face_symmetry_lab.ui.export_panel import render_export_panel
 from face_symmetry_lab.ui.model_setup import (
     build_age_gate_service,
@@ -84,12 +86,8 @@ from face_symmetry_lab.ui.readings import (
 )
 from face_symmetry_lab.ui.report import build_image_report
 from face_symmetry_lab.ui.report_figures import build_report_figures
-from face_symmetry_lab.ui.scores import (
-    DEMOGRAPHIC_RUNTIME_CAPTION,
-    render_demographic_estimate,
-    render_score_details,
-    render_tracking_status,
-)
+from face_symmetry_lab.ui.result_tabs import ResultTabs, render_result_tabs
+from face_symmetry_lab.ui.scores import render_tracking_status
 from face_symmetry_lab.ui.still_overlay import render_image_with_overlay
 from face_symmetry_lab.ui.symmetrization_panel import (
     SYMMETRIZATION_HEADING,
@@ -290,8 +288,13 @@ def _maybe_estimate_image_demographics(
     *,
     input_fingerprint: str,
     recorder: SessionRecorder | None,
-) -> None:
+) -> bool:
     """H2/§10.8: 単一顔を検出できたら、ボタン操作なしに年齢・性別を推定する。
+
+    戻り値は「年齢・性別モデルが使える状態か」である。`resolve_ready_demographic`
+    は未配置のとき導線（取得元・sha256・実行するコマンド）を**自分で描画する**
+    ため、同じ判定を参考年齢の区画からもう一度呼ぶと、その導線が画面に 2 度出る。
+    ここで 1 度だけ呼び、結果を呼び出し側が区画へ渡す（2026-08-27）。
 
     `IMAGE_RECORDED_INPUT_KEY` が landmark 記録の重複を防ぐのと同じ方式で、
     同じ写真（アップロード bytes の sha256 = ``input_fingerprint``）に対しては
@@ -305,10 +308,12 @@ def _maybe_estimate_image_demographics(
     描画するため、ここで例外を握りつぶすことがそのまま失敗分離の実装になる。
     """
     demographic_model = resolve_ready_demographic()
-    if age_input is None or demographic_model is None:
-        return
+    if demographic_model is None:
+        return False
+    if age_input is None:
+        return True
     if st.session_state.get(IMAGE_DEMOGRAPHIC_INPUT_KEY) == input_fingerprint:
-        return  # この写真に対しては既に 1 度試みている。
+        return True  # この写真に対しては既に 1 度試みている。
 
     st.session_state[IMAGE_DEMOGRAPHIC_INPUT_KEY] = input_fingerprint
     onnx_path, model_version = demographic_model
@@ -327,6 +332,7 @@ def _maybe_estimate_image_demographics(
             if isinstance(error, DemographicInferenceError)
             else "年齢・性別を推定できませんでした。"
         )
+    return True
 
 
 # --- タブの中身 ---------------------------------------------------------------
@@ -420,39 +426,33 @@ def _render_image_symmetrization(
 def _render_image_demographic_detail(
     age_input: np.ndarray | None,
     gate_outcome: AgeGateOutcome | None = None,
+    *,
+    available: bool = True,
 ) -> None:
     """年齢・性別の参考値パネル全体。常に下側へ画面幅いっぱいで表示する（§5.1）。
 
     FR-024 はこれを左右差側から独立させている。推定は `_maybe_estimate_image_demographics`
     がこの関数より先に済ませているため、ここでは結果を読んで表示するだけである。
-    黙って消えるのではなく、常に何が起きているかを説明する（顔が検出できない・
-    モデルが未配置・推定が成功した・推定が失敗した、のいずれの状態でも）。
 
-    FR-038: `gate_outcome` が参考年齢の表示を許さない場合は、推定の成否に
-    関わらず `ui.age_gate_notice` の固定文言だけを出す（§10.11-2、内部判断を
-    属性として提示しない）。
+    区画の形（囲み・来歴の 1 行・状態を見る順序・FR-038 のゲート適用）は
+    `ui.demographic_panel` が Camera と共有する（2026-08-27）。この関数に残るのは
+    **session state からの読み出しと、この入力に固有の 1 文**だけである——分岐を
+    ここへ書き足すと Camera 側とまた食い違う。
     """
-    st.caption(DEMOGRAPHIC_RUNTIME_CAPTION)
-    if gate_outcome is not None and not gate_outcome.may_show_reference_age:
-        notice = age_gate_notice(gate_outcome.status)
-        if notice:
-            st.info(notice)
-            return
-    if age_input is None:
-        st.info("単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。")
-        return
-
     session_estimate = st.session_state.get(RESULT_STATE_KEY)
-    if isinstance(session_estimate, DemographicEstimate):
-        render_demographic_estimate(session_estimate)
-        return
-
     error_message = st.session_state.get(DEMOGRAPHIC_ERROR_KEY)
-    if error_message:
-        st.error(error_message)
-        return
-
-    st.info("年齢・性別モデルが未配置のため、参考値を表示できません。")
+    render_demographic_panel(
+        estimate=session_estimate if isinstance(session_estimate, DemographicEstimate) else None,
+        gate_outcome=gate_outcome,
+        available=available,
+        # 静止画は 1 枚で完結するので、待てば出るという言い方をしない。
+        pending_notice=(
+            "単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。"
+            if age_input is None
+            else "この写真からは参考年齢・参考性別を推定できませんでした。"
+        ),
+        error=str(error_message) if error_message else None,
+    )
 
 
 # --- セクション全体 -----------------------------------------------------------
@@ -569,7 +569,7 @@ def render_image_section() -> None:
 
     # H2: 吹き出しが `estimate` を読む前に確定させる。ボタンが無くなったため、
     # ここで済ませないと吹き出しが 1 呼吸遅れて古い値のまま描画されてしまう。
-    _maybe_estimate_image_demographics(
+    demographic_available = _maybe_estimate_image_demographics(
         age_input,
         input_fingerprint=input_fingerprint,
         recorder=recorder,
@@ -583,39 +583,49 @@ def render_image_section() -> None:
     else:
         _render_preview_with_overlay(analysis, age_gate_outcome)
 
-    # §5.1, AC-LAYOUT-01: 画像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
-    # 上の画像がスクロールで手の届かない位置へ行かないようにする。**Camera と
-    # 同じタブ構成にする**（§5.1「Image 側だけ異なる並びにしない」）。1 本の長い
-    # スクロールだと、詳細結果・対称化・参考年齢を続けて積み上げた分だけ画像が
-    # 押し上げられ、数値と写真を見比べられなくなる。
-    # §5.1（2026-08-26）: Camera と同じ名前・同じ順序・同じアイコンにする。入力を
-    # 切り替えたときに、同じものを探す先が動かないようにするためである。Camera だけ
-    # が持つ「表示設定」は、Image に対応する設定を持たないので並べない。
-    detail_tab, symmetry_tab, demographic_tab, export_tab = st.tabs(
-        ["📊 詳細結果", "🪞 左右対称との比較", "👤 参考年齢・参考性別", "📄 エクスポート"]
-    )
-    with detail_tab, st.container(border=True):
-        # 囲みは Camera の詳細タブ（`ui.camera._render_detail_fragment`）と同じ
-        # 作法である（§5.1、2026-08-26）。同じ内容が入力モードで違う枠に見えない
-        # ようにするためで、中身は変えていない。
+    symmetrization_view: SymmetrizationView | None = None
+
+    def _detail_tab() -> None:
+        """§5.1: 枠は `ui.detail_panel` が Camera と共有する。"""
         if analysis is None:
-            st.info("この画像からは左右差を算出できませんでした。")
-        else:
+            render_detail_panel(
+                None,
+                empty_notice="この画像からは左右差を算出できませんでした。",
+                show_parts=True,
+            )
+            return
+
+        found = analysis
+
+        def _diagnostics() -> None:
             st.caption(
                 f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
-                f"ランドマーク点数 {analysis.landmarks.landmark_count}"
+                f"ランドマーク点数 {found.landmarks.landmark_count}"
             )
-            # 静止画は状態を持たないため、生の値をそのまま表示する（§8.7）。
-            render_score_details(analysis.outcome, show_smoothed=False)
-    symmetrization_view: SymmetrizationView | None = None
-    with symmetry_tab:
+
+        render_detail_panel(
+            found.outcome,
+            empty_notice="この画像からは左右差を算出できませんでした。",
+            # AC-LAYOUT-01: Image は HUD を持たないため、部位別 4 つはここに残る。
+            show_parts=True,
+            diagnostics=_diagnostics,
+        )
+
+    def _symmetry_tab() -> None:
+        nonlocal symmetrization_view
         if analysis is None:
             st.info("ランドマークが取れていないため、比較を作成できません。")
         else:
             symmetrization_view = _render_image_symmetrization(rgb, analysis)
-    with demographic_tab, st.container(border=True):
-        _render_image_demographic_detail(age_input, age_gate_outcome)
-    with export_tab:
+
+    def _demographic_tab() -> None:
+        _render_image_demographic_detail(
+            age_input, age_gate_outcome, available=demographic_available
+        )
+
+    def _report_tab() -> None:
+        # FR-042: 対称化タブより後に走る（`render_result_tabs` の並びがそれを
+        # 保証する）ので、上で作ったビューをそのまま使い回せる。
         if recorder is None:
             st.info("エクスポートできる分析結果がまだありません。")
         else:
@@ -625,3 +635,19 @@ def render_image_section() -> None:
                 view=symmetrization_view,
                 gate_outcome=age_gate_outcome,
             )
+
+    # §5.1, AC-LAYOUT-01: 画像の下はすべて画面幅いっぱいで一度に 1 つだけ表示し、
+    # 上の画像がスクロールで手の届かない位置へ行かないようにする。1 本の長い
+    # スクロールだと、詳細結果・対称化・参考年齢を続けて積み上げた分だけ画像が
+    # 押し上げられ、数値と写真を見比べられなくなる。
+    # §5.1（2026-08-27）: 名前・順序・アイコンは `ui.result_tabs` が Camera と
+    # 共有する。Camera だけが持つ「表示設定」のタブは、Image に対応する設定を
+    # 持たないので渡さない。
+    render_result_tabs(
+        ResultTabs(
+            detail=_detail_tab,
+            symmetry=_symmetry_tab,
+            demographic=_demographic_tab,
+            report=_report_tab,
+        )
+    )
