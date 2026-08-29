@@ -12,6 +12,8 @@ Read this file once at the start of a task. After locating the relevant module, 
 | AI and development policy | `CLAUDE.md` |
 | Test traceability | `testbox.md` |
 | Streamlit application | `src/face_symmetry_lab/ui/app.py` |
+| UI 表示言語の切替（FR-043） | `src/face_symmetry_lab/ui/i18n.py` |
+| 英語の訳表（FR-043） | `src/face_symmetry_lab/ui/translations/` |
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
 | 参照統計ブラウザ（人種・性別・年齢での絞り込み閲覧、FR-037） | `src/face_symmetry_lab/ui/reference_page.py` |
 | 参照統計の凍結セルテーブル（§9.5、アプリが読む唯一の参照データ） | `configs/reference/utkface_symmetry3d_cells_v1.csv` |
@@ -40,7 +42,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Realtime use case | `src/face_symmetry_lab/application/realtime.py` |
 | 解析周期と表示キャッシュ TTL | `src/face_symmetry_lab/application/analysis_cadence.py` |
 | 表示専用の合成（描画・背景置換・表示キャッシュ） | `src/face_symmetry_lab/application/preview_compositor.py` |
-| 一発取り込みバッファ | `src/face_symmetry_lab/application/frame_capture.py` |
 | 年齢・性別 worker との中継役 | `src/face_symmetry_lab/application/demographic_relay.py` |
 | 自動調整の判断ロジック | `src/face_symmetry_lab/application/auto_tune_controller.py` |
 | Realtime age/gender worker | `src/face_symmetry_lab/application/demographic_worker.py` |
@@ -116,7 +117,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
 | 解析周期・表示 TTL | `application/analysis_cadence.py` | `tests/application/test_analysis_cadence.py` | NFR-006, §1.2(17), §14.3d |
 | 表示専用の合成 | `application/preview_compositor.py` | `tests/application/test_preview_compositor.py` | FR-013, FR-027, FR-028, §14.3b |
-| 一発取り込みバッファ | `application/frame_capture.py` | `tests/application/test_frame_capture.py` | FR-034, §10.4, §14.3g |
 | 年齢・性別の中継役 | `application/demographic_relay.py` | `tests/application/test_demographic_relay.py` | FR-022〜024, §14.3 |
 | 自動調整の判断ロジック（cadence・表示のみ） | `application/auto_tune_controller.py` | `tests/application/test_auto_tune_controller.py` | FR-029, FR-030, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | 年齢・性別の独立worker | `application/demographic_worker.py` | `tests/application/test_demographic_worker.py` | FR-022〜024, §14.3 |
@@ -147,12 +147,13 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
-| Camera composition（対称化キャプチャUIを含む） | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, FR-034, NFR-009 |
+| Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, FR-034, NFR-009 |
 | 映像へ重ねる HUD の組み立て | `ui/hud.py` | `tests/ui/test_hud.py` | FR-013, FR-032, §5.2, §14.3e |
 | HUD のブラウザ資産（CSS・実行時 JS） | `ui/hud_assets.py` | `tests/ui/test_hud_assets.py` | FR-013, FR-032, §5.2, §5.4, §14.3e |
 | 位置誘導メッセージ | `ui/guidance.py` | `tests/ui/test_guidance.py` | FR-031, AC-GUIDE-01 |
 | Model readiness UI | `ui/model_setup.py` | `tests/ui/test_model_setup.py` | FR-001, FR-002, FR-020 |
 | Analyze ページの骨格（同意・入力選択） | `ui/app.py` | `tests/ui/test_app.py` | FR-001, FR-004, AC-FLOW-01, AC-A11Y-01 |
+| UI 表示言語の切替 | `ui/i18n.py` | `tests/ui/test_i18n.py` | FR-043, AC-I18N-01〜03 |
 | About page | `ui/about_page.py` | `tests/ui/test_about_page.py` | §4.1, FR-014, §10.7 |
 | 参照統計セルの絞り込みと合併（Chan の並列分散） | `domain/reference_stats.py` | `tests/domain/test_reference_stats.py` | FR-037, §9.5, AC-REFERENCE-01, AC-REFERENCE-02 |
 | 参照統計の use case・入力検証・失敗分離 | `application/reference_browser.py` | `tests/application/test_reference_browser.py` | FR-037, AC-REFERENCE-02, AC-REFERENCE-03 |
@@ -173,7 +174,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `a6a981522e78c2e6f0c9ce3070580ae6afe0dd5cf3bef6c2c2c077e4c5cda97b`_
+_File-list SHA-256: `2574118a576f9dff52179ec59cc115a7e88222225e647b5ea73d56ffffd4d0c1`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -276,13 +277,15 @@ face-symmetry-lab/
         - … (4 files)
       - … (1 files)
     - `application/`
-      - … (19 files)
+      - … (18 files)
     - `domain/`
       - … (25 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
-      - … (24 files)
+      - `translations/`
+        - … (10 files)
+      - … (25 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -308,7 +311,6 @@ face-symmetry-lab/
     - `test_demographic_observations.py`
     - `test_demographic_relay.py`
     - `test_demographic_worker.py`
-    - `test_frame_capture.py`
     - `test_image_input.py`
     - `test_preview_compositor.py`
     - `test_quality.py`
@@ -376,6 +378,7 @@ face-symmetry-lab/
     - `test_guidance.py`
     - `test_hud.py`
     - `test_hud_assets.py`
+    - `test_i18n.py`
     - `test_image_section.py`
     - `test_model_setup.py`
     - `test_readings.py`

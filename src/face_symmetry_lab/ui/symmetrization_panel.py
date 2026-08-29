@@ -20,6 +20,7 @@ from typing import Final
 import streamlit as st
 
 from face_symmetry_lab.application.symmetrization import SymmetrizationView
+from face_symmetry_lab.ui.i18n import t, translate_message
 from face_symmetry_lab.ui.readings import format_distance
 
 SYMMETRIZATION_HEADING: Final[str] = "#### 左右対称にそろえた位置との比較"
@@ -66,7 +67,7 @@ def render_warp_checkbox(*, key: str) -> bool:
     別々の widget を持つ必要があるが、ラベル・help・既定値まで別々にする理由は
     無い（同じ操作が同じ言葉で説明されるべきである）。
     """
-    return st.checkbox(WARP_CHECKBOX_LABEL, key=key, help=WARP_CHECKBOX_HELP)
+    return st.checkbox(t(WARP_CHECKBOX_LABEL), key=key, help=t(WARP_CHECKBOX_HELP))
 
 
 def render_symmetrized_image(view: SymmetrizationView, *, requested: bool) -> None:
@@ -82,11 +83,19 @@ def render_symmetrized_image(view: SymmetrizationView, *, requested: bool) -> No
     if not requested:
         return
     if view.warped is None:
-        st.info(view.warp_unavailable_reason or "対称化した画像は生成されていません。")
+        # FR-043: `view.warp_unavailable_reason` は `WarpMeshError` 等の実行時の
+        # 例外文言なので、UI 境界の `translate_message`（`ui/i18n.py`）で訳す。
+        # 値を埋め込んで組み立てられた文言は原文一致せず日本語のまま残る
+        # （既知の穴、`translations/_errors.py`）。
+        st.info(
+            translate_message(view.warp_unavailable_reason)
+            if view.warp_unavailable_reason
+            else t("対称化した画像は生成されていません。")
+        )
         return
-    st.image(view.warped, caption=SYMMETRIZED_IMAGE_CAPTION, width="stretch")
-    st.caption(SYMMETRIZED_IMAGE_NOTICE)
-    st.caption(SYMMETRIZED_IMAGE_LIMITS)
+    st.image(view.warped, caption=t(SYMMETRIZED_IMAGE_CAPTION), width="stretch")
+    st.caption(t(SYMMETRIZED_IMAGE_NOTICE))
+    st.caption(t(SYMMETRIZED_IMAGE_LIMITS))
 
 
 def render_symmetrization_view(view: SymmetrizationView, *, warp_requested: bool) -> None:
@@ -96,13 +105,15 @@ def render_symmetrization_view(view: SymmetrizationView, *, warp_requested: bool
     （要求されていれば）変形画像、の順で並べる。**この並びと文言を Camera /
     Image で分岐させない。**
     """
-    st.image(view.overlay, caption=OVERLAY_IMAGE_CAPTION, width="stretch")
+    st.image(view.overlay, caption=t(OVERLAY_IMAGE_CAPTION), width="stretch")
     mean_column, max_column = st.columns(2)
-    mean_column.metric("平均のズレ", format_distance(view.mean_deviation))
-    max_column.metric("最大のズレ", format_distance(view.max_deviation))
+    mean_column.metric(t("平均のズレ"), format_distance(view.mean_deviation))
+    max_column.metric(t("最大のズレ"), format_distance(view.max_deviation))
     st.caption(
-        f"対称化した点 {view.symmetrized_point_count} 点。"
-        "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
+        t(
+            "対称化した点 {count} 点。"
+            "対応する左右のペアが定義されていない点は、実測のまま動かしていません。"
+        ).format(count=view.symmetrized_point_count)
     )
-    st.caption(DEVIATION_UNIT_CAPTION)
+    st.caption(t(DEVIATION_UNIT_CAPTION))
     render_symmetrized_image(view, requested=warp_requested)

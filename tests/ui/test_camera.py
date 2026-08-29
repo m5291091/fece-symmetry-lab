@@ -21,7 +21,6 @@ from face_symmetry_lab.ui.camera import (
     FULLSCREEN_STATE_KEY,
     LOOPBACK_RTC_CONFIGURATION,
     MEDIA_STREAM_CONSTRAINTS,
-    SYMMETRIZATION_STATE_KEY,
     build_video_frame_callback,
 )
 from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result
@@ -251,91 +250,29 @@ def _symmetrizable_config():
     )
 
 
-def _panel_script() -> str:
-    return (
-        "import streamlit as st\n"
-        "from face_symmetry_lab.ui.camera import _render_symmetrization_panel\n"
-        "_render_symmetrization_panel(st.session_state['pipeline'])\n"
-    )
+def test_the_camera_has_no_symmetrisation_path_at_all() -> None:
+    """§0 項目 33（H10, 2026-08-29）: Camera から対称化と一発取り込みを削除した。
 
-
-def test_the_capture_button_arms_the_pipeline_without_stopping_it() -> None:
-    """FR-034: 取り込みの要求が、走っている解析を乱してはならない。"""
-    pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analysis_interval_ms=0)
-    at = AppTest.from_string(_panel_script())
-    at.session_state["pipeline"] = pipeline
-    at.run()
-    assert not at.exception
-
-    at.button(key="capture_symmetrization").click().run()
-
-    assert pipeline.capture_pending is True
-
-
-def test_a_captured_frame_becomes_a_symmetrization_view() -> None:
-    """§14.3g: 保持したフレームは一度だけ消費され、静止結果として描画される。"""
-    pipeline = RealtimeLandmarkPipeline(
-        landmarker=SymmetrizableLandmarker(),
-        analyzer=FrameAnalyzer(config=_symmetrizable_config(), config_3d=_symmetrizable_config()),
-        analysis_interval_ms=0,
-    )
-    pipeline.request_capture()
-    pipeline.process(np.full((80, 80, 3), 30, dtype=np.uint8))
-
-    at = AppTest.from_string(_panel_script())
-    at.session_state["pipeline"] = pipeline
-    at.run()
-
-    assert not at.exception
-    view = at.session_state[SYMMETRIZATION_STATE_KEY]
-    assert not isinstance(view, str)
-    assert view.symmetrized_point_count > 0
-    assert pipeline.take_capture() is None  # ちょうど 1 回で消費される
-
-
-def test_a_capture_that_cannot_be_symmetrized_is_reported_not_retried() -> None:
-    pipeline = RealtimeLandmarkPipeline(
-        landmarker=StubLandmarker(),  # 退化した 1 点だけでは折り返せない
-        analyzer=FrameAnalyzer(config=_symmetrizable_config(), config_3d=_symmetrizable_config()),
-        analysis_interval_ms=0,
-    )
-    pipeline.request_capture()
-    pipeline.process(np.full((40, 40, 3), 30, dtype=np.uint8))
-
-    at = AppTest.from_string(_panel_script())
-    at.session_state["pipeline"] = pipeline
-    at.run()
-
-    assert not at.exception
-    assert isinstance(at.session_state[SYMMETRIZATION_STATE_KEY], str)
-    assert at.warning  # 黙って捨てず利用者へ提示する
-
-
-def test_clearing_the_view_also_drops_the_held_frame() -> None:
-    """§10.4: 利用者がパネルを消した後、顔由来の画像を一切残さない。"""
-    pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker(), analysis_interval_ms=0)
-    pipeline.request_capture()
-
-    at = AppTest.from_string(_panel_script())
-    at.session_state["pipeline"] = pipeline
-    at.run()
-    at.button(key="clear_symmetrization").click().run()
-
-    assert pipeline.capture_pending is False
-    assert pipeline.take_capture() is None
-    assert SYMMETRIZATION_STATE_KEY not in at.session_state
-
-
-def test_the_symmetrization_panel_avoids_value_laden_wording() -> None:
-    """§5.3/§10.7: 対称化した顔は構成物であって規範ではない。"""
+    罠: UI だけ消して pipeline の capture API を残す実装は、リアルタイム経路が
+    生フレームを 1 枚保持する仕組みを温存する（§10.4）。
+    """
     import inspect
 
+    from face_symmetry_lab.application.realtime import RealtimeLandmarkPipeline
     from face_symmetry_lab.ui import camera
 
-    source = inspect.getsource(camera._render_symmetrization_panel)
-
-    for forbidden in ("理想", "正解", "補正後", "あるべき", "完璧", "欠点"):
-        assert forbidden not in source
+    for gone in (
+        "_render_symmetrization_panel",
+        "_render_stopped_symmetrization_panel",
+        "_consume_pending_capture",
+        "_clear_symmetrization",
+        "SYMMETRIZATION_STATE_KEY",
+        "SYMMETRIZATION_CAPTION",
+    ):
+        assert not hasattr(camera, gone), gone
+    for gone in ("request_capture", "take_capture", "capture_pending", "clear_capture"):
+        assert not hasattr(RealtimeLandmarkPipeline, gone), gone
+    assert "symmetry=" not in inspect.getsource(camera.render_camera_section)
 
 
 def test_the_export_tab_explains_itself_before_the_first_record() -> None:
@@ -375,7 +312,13 @@ def test_the_camera_section_puts_the_video_above_every_tab() -> None:
 
 
 def test_every_below_video_panel_lives_in_a_tab() -> None:
-    """一度に 1 つだけ表示することで、映像が見えたままの高さに収める。"""
+    """一度に 1 つだけ表示することで、映像が見えたままの高さに収める。
+
+    2026-08-29: 表示設定（`_render_display_controls`）とセッション操作
+    （`_render_session_controls`）はタブではなく映像直下のポップオーバーへ移った
+    ため、この 2 つは「タブの closure より後」ではなく「映像より後・タブより
+    前」であることを別に確かめる（項目 29）。
+    """
     import inspect
 
     from face_symmetry_lab.ui import camera
@@ -388,17 +331,25 @@ def test_every_below_video_panel_lives_in_a_tab() -> None:
 
     for panel in (
         "_render_detail_panel(",
-        "_render_symmetrization_panel(",
         "_render_demographic_fragment(",
         "_render_export_panel(",
-        "_render_session_controls(",
         "_render_stopped_detail_panel(",
-        "_render_stopped_symmetrization_panel(",
         "_render_stopped_demographic_panel(",
     ):
         assert panel in source, panel
         assert source.index(panel) > closures_at, panel
     assert source.count("render_result_tabs(") == 1
+
+    # 表示設定とセッション操作は映像より後・タブの closure より前で呼ばれる。
+    video_at = source.index("webrtc_streamer(")
+    display_controls_at = source.index("_render_display_controls(")
+    assert video_at < display_controls_at < closures_at
+    # `_render_session_controls` はポップオーバーの中身（`_render_display_controls`
+    # 自身）が呼ぶので、`render_camera_section` の source には現れない。
+    assert "_render_session_controls(" not in source
+    assert "_render_session_controls(pipeline)" in inspect.getsource(
+        camera._render_display_controls
+    )
 
 
 def test_render_camera_section_does_not_split_the_video_with_columns() -> None:
@@ -624,32 +575,81 @@ def test_the_hud_fragment_publishes_the_active_smoothing_window() -> None:
     assert "display_hold_seconds=pipeline.display_hold_seconds" in source
 
 
-def test_the_settings_tab_groups_its_controls_into_titled_sections() -> None:
-    """§5.1: 設定が平らな 1 列に並ぶと、どれが何のための操作か読み取れない。"""
+def test_the_settings_live_in_a_popover_below_the_video() -> None:
+    """§0 項目 29（2026-08-29）: 表示設定はタブではなく、映像直下に畳んで置く
+    ポップオーバー 1 つへ集約する。
+
+    罠: ポップオーバーを `playing` の分岐の中や early return の後へ置く実装は、
+    停止中・全画面中に設定 widget が描画されず、選んだ値が黙って既定へ戻る。
+    """
     import inspect
 
     from face_symmetry_lab.ui import camera
-    from face_symmetry_lab.ui.smoothing_panel import SMOOTHING_HEADING
 
-    source = inspect.getsource(camera._render_display_controls)
+    source = inspect.getsource(camera.render_camera_section)
 
-    assert source.count("st.container(border=True)") >= 3
-    for heading in ("映像の見え方", "自動調整の現在値"):
-        assert heading in source
-    # 平滑化区画の見出しは panel 自身が持つ。**ここで重ねて出さない**（罠: 両方が
-    # 出すと同じ囲みの中に見出しが 2 行並ぶ。実ブラウザで見つけた回帰）。
-    assert 'st.markdown("##### 数値の落ち着き' not in source
-    assert SMOOTHING_HEADING.startswith("##### 数値の落ち着き")
-    # HUD の位置は別の関数が持つが、同じ作法で囲う。
-    assert "映像上のHUD" in inspect.getsource(camera._render_hud_position_control)
+    assert source.index("webrtc_streamer(") < source.index("st.popover(")
+    assert source.index("st.popover(") < source.index("playing = context.state.playing")
+
+    popover_line = next(line for line in source.splitlines() if "st.popover(" in line)
+    assert "on_change" not in popover_line
+
+    controls_source = inspect.getsource(camera._render_display_controls)
+    assert "st.container(border=True)" not in controls_source
+    assert "##### " not in controls_source
+
+
+def test_the_popover_settings_render_and_keep_their_values_across_reruns() -> None:
+    """§14.3e/§5.1（2026-08-29）: `on_change` を渡さない `st.popover` の既定
+    (`"ignore"`) は、開閉に関わらず中身を毎回実行し、widget の値をそのまま保つ。
+
+    `AppTest` は開閉そのものを模擬しないが、それは実機と同じ理由による——値は
+    widget 自身の session state に残るのであって、ポップオーバーの開閉状態には
+    紐づかない。`Block` は子孫を再帰的に yield するため、`at.toggle` / `at.radio`
+    / `at.select_slider` はポップオーバーの中の widget も列挙できる。
+
+    罠: ポップオーバーへ `on_change="rerun"` かコールバックを渡す実装は、この
+    ような widget の列挙結果そのものは変えないが、実機では閉じている間に中身の
+    再実行を止め、選んだ値がフル再実行のたびに黙って既定へ戻る（`on_change` の
+    不在は `test_the_settings_live_in_a_popover_below_the_video` が別に固定する）。
+    """
+    from face_symmetry_lab.ui.camera import DEMOGRAPHIC_ENABLED_STATE_KEY
+
+    pipeline = RealtimeLandmarkPipeline(landmarker=StubLandmarker())
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.camera import _render_display_controls\n"
+        "with st.popover('表示設定'):\n"
+        "    _render_display_controls(st.session_state['pipeline'])\n"
+    )
+    at.session_state["pipeline"] = pipeline
+    at.run()
+    assert not at.exception
+
+    assert {toggle.key for toggle in at.toggle} >= {
+        "camera_midline_enabled",
+        DEMOGRAPHIC_ENABLED_STATE_KEY,
+    }
+    assert at.radio  # HUD 位置
+    assert at.select_slider  # 平滑化・保持時間
+    assert at.button  # セッション操作
+
+    midline = next(toggle for toggle in at.toggle if toggle.key == "camera_midline_enabled")
+    assert midline.value is True
+    midline.set_value(False).run()
+
+    assert at.session_state["camera_midline_enabled"] is False
+    # 値を変えた後にもう一度フル再実行しても、選んだ値が黙って既定へ戻らない。
+    at.run()
+    assert at.session_state["camera_midline_enabled"] is False
 
 
 def test_the_tabs_come_from_the_shared_component() -> None:
     """§5.1: 名前・順序・アイコンは `ui.result_tabs` が Image と共有する。
 
     罠: ここで `st.tabs([...])` を手書きへ戻す実装は、Image 側と食い違っても
-    どちらの test も落ちない（実際に「まとめ・エクスポート」と「エクスポート」に
-    分かれていた）。ラベル文字列がこの module に無いことまで固定する。
+    どちらの test も落ちない(実際に「まとめ・エクスポート」と「エクスポート」に
+    分かれていた)。ラベル文字列がこの module に無いことまで固定する。
     """
     import inspect
 
@@ -659,8 +659,9 @@ def test_the_tabs_come_from_the_shared_component() -> None:
     source = inspect.getsource(camera.render_camera_section)
 
     assert "render_result_tabs(" in source
-    # 停止中の 2 タブも同じ定数から取る（STOP の前後で名前が変わらない）。
-    for label in result_tab_labels(with_settings=True):
+    # 停止中の 2 タブも同じ定数から取る(STOP の前後で名前が変わらない)。Camera
+    # は「左右対称との比較」を持たない(項目 33)。
+    for label in result_tab_labels(with_symmetry=False):
         assert label not in source, label
 
 
@@ -774,13 +775,15 @@ def test_the_camera_report_carries_no_photo_at_all() -> None:
 
 
 def test_every_tab_survives_stopping_the_camera() -> None:
-    """§5.1（2026-08-27）: STOP でタブが 2 枚へ減らない。
+    """§5.1（2026-08-27）: STOP でタブが減らない。
 
     結果は 1 セッションが終わってから読むものであり、押した瞬間に詳細結果・
-    対称化・参考年齢が画面から消えてはならない。
+    参考年齢が画面から消えてはならない。2026-08-29: 「左右対称との比較」は
+    Camera から削除された（項目 33）ので、ここで確かめる停止中の中身も 2 つに
+    減る。
 
-    罠: `if not context.state.playing:` の枝で 2 枚だけの `st.tabs([...])` を
-    別に組む旧実装は、名前も数も並びもライブ中と食い違わせる（そして片方だけ
+    罠: `if not context.state.playing:` の枝で減らしたタブだけの `st.tabs([...])`
+    を別に組む旧実装は、名前も数も並びもライブ中と食い違わせる（そして片方だけ
     ラベルを直せば、両方の test が通ったまま画面がずれる）。
     """
     import inspect
@@ -794,7 +797,6 @@ def test_every_tab_survives_stopping_the_camera() -> None:
     assert source.count("render_result_tabs(") == 1
     for stopped_body in (
         "_render_stopped_detail_panel(",
-        "_render_stopped_symmetrization_panel(",
         "_render_stopped_demographic_panel(",
     ):
         assert stopped_body in source, stopped_body
@@ -1013,48 +1015,6 @@ def test_the_stopped_detail_panel_explains_a_session_with_nothing_to_show() -> N
     assert at.info
 
 
-def test_the_stopped_symmetrisation_tab_never_arms_a_capture() -> None:
-    """§10.4: 生フレームは保持しないので、停止後に折りたたむ対象が存在しない。
-
-    罠: ライブ用のパネルをそのまま呼ぶ実装は、決して解決しない取り込み要求を
-    立て、「次に顔を検出したフレームを取り込みます」と言ったまま固まる。
-    """
-    pipeline = _stopped_pipeline()
-
-    at = _stopped_panel("_render_stopped_symmetrization_panel", pipeline=pipeline)
-
-    capture_buttons = [
-        button for button in at.button if button.proto.id.endswith("capture_symmetrization")
-    ]
-    assert not capture_buttons
-    assert pipeline.capture_pending is False
-    assert at.info
-
-
-def test_the_stopped_symmetrisation_tab_keeps_a_view_captured_before_stopping() -> None:
-    """停止前に取り込んだ表示は、STOP をまたいでそのまま読める。"""
-    from face_symmetry_lab.application.symmetrization import symmetrize_frame
-
-    pipeline = _stopped_pipeline(scored=False)
-    pipeline.request_capture()
-    pipeline.process(np.full((80, 80, 3), 30, dtype=np.uint8))
-    captured = pipeline.take_capture()
-    assert captured is not None
-    view = symmetrize_frame(captured.rgb_image, captured.frame, config=_symmetrizable_config())
-
-    at = AppTest.from_string(
-        "import streamlit as st\n"
-        "from face_symmetry_lab.ui.camera import _render_stopped_symmetrization_panel\n"
-        "_render_stopped_symmetrization_panel(st.session_state['pipeline'])\n"
-    )
-    at.session_state["pipeline"] = pipeline
-    at.session_state[SYMMETRIZATION_STATE_KEY] = view
-    at.run()
-
-    assert not at.exception
-    assert "平均のズレ" in [metric.label for metric in at.metric]
-
-
 def test_the_stopped_reference_age_panel_never_goes_silent() -> None:
     """FR-024/§5.1: 停止中も、何が起きているかを必ず 1 行で述べる。"""
     at = _stopped_panel("_render_stopped_demographic_panel", pipeline=_stopped_pipeline())
@@ -1065,7 +1025,7 @@ def test_the_stopped_reference_age_panel_never_goes_silent() -> None:
 def test_the_idle_panels_do_not_claim_a_session_was_stopped() -> None:
     """§5.1（2026-08-27）: 開始前に「停止しました」と言わない。
 
-    `START` を一度も押していない画面でも同じ 5 つのタブを出すが、そこで
+    `START` を一度も押していない画面でも同じ 3 つのタブを出すが、そこで
     「最後に解析したフレーム」を名乗るのは、起きていないことを起きたように
     説明することになる。
 

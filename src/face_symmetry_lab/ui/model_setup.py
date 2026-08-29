@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Final
 
 import streamlit as st
 
@@ -29,6 +30,7 @@ from face_symmetry_lab.adapters.io.model_store import (
     load_manifest,
 )
 from face_symmetry_lab.application.age_gate import AgeGateService
+from face_symmetry_lab.ui.i18n import t, translate_message
 
 #: spec を読めない場合に `AgeGateService` へ渡す既定値。`classifier=None` の
 #: ときは `evaluate()` がこれらへ触れる前に `UNDETERMINED` へ倒すため、
@@ -47,6 +49,15 @@ SEGMENTER_ASSET_NAME = "selfie_segmenter"
 BOOTSTRAP_COMMAND = "uv run python scripts/bootstrap_models.py --accept-manifest"
 CONVERT_DEMOGRAPHIC_COMMAND = "uv run --script scripts/convert_demographic_model.py"
 
+#: FR-043: 既存の f-string は、値を差し込む前にテンプレート定数へ切り出してから
+#: `t()` へ通す（`t(f"...")` を禁じる規約のため）。
+_ASSET_DETAIL_TEMPLATE: Final[str] = (
+    "取得元 {url} / {size:,} bytes / ライセンス {license} / sha256 {sha256}"
+)
+_LANDMARKER_OVERRIDE_HINT_TEMPLATE: Final[str] = (
+    "別の場所に置く場合は環境変数 `{env_var}` で `{path}` を指定します。"
+)
+
 
 def landmark_asset() -> ModelAsset:
     """manifest から、固定された Face Landmarker の項目を返す。"""
@@ -64,9 +75,9 @@ def demographic_assets() -> tuple[ModelAsset, ModelAsset]:
     xml_asset = find_asset(assets, DEMOGRAPHIC_XML_ASSET_NAME)
     bin_asset = find_asset(assets, DEMOGRAPHIC_BIN_ASSET_NAME)
     if xml_asset.version != bin_asset.version:
-        raise ModelStoreError("年齢・性別モデルのXML/BINバージョンが一致しません。")
+        raise ModelStoreError(t("年齢・性別モデルのXML/BINバージョンが一致しません。"))
     if xml_asset.license != bin_asset.license:
-        raise ModelStoreError("年齢・性別モデルのXML/BINライセンスが一致しません。")
+        raise ModelStoreError(t("年齢・性別モデルのXML/BINライセンスが一致しません。"))
     return xml_asset, bin_asset
 
 
@@ -75,9 +86,9 @@ def demographic_asset() -> DerivedModelAsset:
     xml_asset, bin_asset = demographic_assets()
     onnx_asset = find_derived_asset(load_derived_assets(), DEMOGRAPHIC_ONNX_ASSET_NAME)
     if onnx_asset.source_assets != (xml_asset.name, bin_asset.name):
-        raise ModelStoreError("年齢・性別ONNXの元asset指定がmanifestと一致しません。")
+        raise ModelStoreError(t("年齢・性別ONNXの元asset指定がmanifestと一致しません。"))
     if onnx_asset.license != xml_asset.license or onnx_asset.license != bin_asset.license:
-        raise ModelStoreError("年齢・性別ONNXと元assetのライセンスが一致しません。")
+        raise ModelStoreError(t("年齢・性別ONNXと元assetのライセンスが一致しません。"))
     return onnx_asset
 
 
@@ -120,14 +131,18 @@ def segmenter_status(path: Path) -> InstallStatus:
 
 
 def _render_missing(path: Path, asset: ModelAsset) -> None:
-    st.warning("ランドマークモデルが未配置です。アプリは自動取得しません。")
+    st.warning(t("ランドマークモデルが未配置です。アプリは自動取得しません。"))
     st.caption(
-        f"取得元 {asset.url} / {asset.size_bytes:,} bytes / "
-        f"ライセンス {asset.license} / sha256 {asset.sha256}"
+        t(_ASSET_DETAIL_TEMPLATE).format(
+            url=asset.url,
+            size=asset.size_bytes,
+            license=asset.license,
+            sha256=asset.sha256,
+        )
     )
     st.code(BOOTSTRAP_COMMAND, language="bash")
     st.caption(
-        f"別の場所に置く場合は環境変数 `{LANDMARKER_PATH_ENV_VAR}` で `{path}` を指定します。"
+        t(_LANDMARKER_OVERRIDE_HINT_TEMPLATE).format(env_var=LANDMARKER_PATH_ENV_VAR, path=path)
     )
 
 
@@ -136,7 +151,8 @@ def resolve_ready_landmarker() -> Path | None:
     try:
         asset = landmark_asset()
     except ModelStoreError as error:
-        st.error(str(error))
+        # FR-043: UI 境界で例外文言を訳す（`translations/_errors.py`）。
+        st.error(translate_message(str(error)))
         return None
 
     path = configured_landmarker_path()
@@ -147,13 +163,15 @@ def resolve_ready_landmarker() -> Path | None:
         return None
     if status is InstallStatus.MISMATCH:
         st.error(
-            "配置済みモデルの sha256 が manifest と一致しません。"
-            "改変または破損の可能性があるため読み込みません。"
+            t(
+                "配置済みモデルの sha256 が manifest と一致しません。"
+                "改変または破損の可能性があるため読み込みません。"
+            )
         )
         st.code(BOOTSTRAP_COMMAND, language="bash")
         return None
 
-    st.caption(f"model: {asset.version} · sha256 {asset.sha256[:12]}… · 検証済み")
+    st.caption(f"model: {asset.version} · sha256 {asset.sha256[:12]}… · {t('検証済み')}")
     return path
 
 
@@ -165,30 +183,37 @@ def resolve_ready_demographic() -> tuple[Path, str] | None:
         onnx_path = configured_demographic_path()
         status = demographic_model_status(onnx_path)
     except ModelStoreError as error:
-        st.error(str(error))
+        # FR-043: UI 境界で例外文言を訳す（`translations/_errors.py`）。
+        st.error(translate_message(str(error)))
         return None
 
     if status is InstallStatus.MISSING:
-        st.warning("年齢・性別モデルの派生ONNXが未配置です。アプリは自動生成しません。")
+        st.warning(t("年齢・性別モデルの派生ONNXが未配置です。アプリは自動生成しません。"))
         for asset in (xml_asset, bin_asset):
             st.caption(
-                f"取得元 {asset.url} / {asset.size_bytes:,} bytes / "
-                f"ライセンス {asset.license} / sha256 {asset.sha256}"
+                t(_ASSET_DETAIL_TEMPLATE).format(
+                    url=asset.url,
+                    size=asset.size_bytes,
+                    license=asset.license,
+                    sha256=asset.sha256,
+                )
             )
         st.code(BOOTSTRAP_COMMAND, language="bash")
         st.code(CONVERT_DEMOGRAPHIC_COMMAND, language="bash")
         return None
     if status is InstallStatus.MISMATCH:
         st.error(
-            "年齢・性別モデルのONNXがmanifestと一致しません。"
-            "改変または破損の可能性があるため読み込みません。"
+            t(
+                "年齢・性別モデルのONNXがmanifestと一致しません。"
+                "改変または破損の可能性があるため読み込みません。"
+            )
         )
         st.code(CONVERT_DEMOGRAPHIC_COMMAND, language="bash")
         return None
 
     st.caption(
         f"model: {onnx_asset.version} · ONNX {onnx_asset.sha256[:12]}… · "
-        f"source XML/BIN {xml_asset.sha256[:8]}…/{bin_asset.sha256[:8]}… · 検証済み"
+        f"source XML/BIN {xml_asset.sha256[:8]}…/{bin_asset.sha256[:8]}… · {t('検証済み')}"
     )
     return onnx_path, onnx_asset.version
 

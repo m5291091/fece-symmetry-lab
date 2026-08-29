@@ -17,6 +17,8 @@ from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
 from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
 from face_symmetry_lab.ui.hud import (
+    FULLSCREEN_BADGE,
+    FULLSCREEN_HINT,
     HUD_CHART_CAPACITY,
     HUD_CHART_WINDOW_SECONDS,
     HUD_CHART_Y_MAX,
@@ -165,7 +167,7 @@ def test_a_missing_score_or_part_renders_as_a_dash_not_zero() -> None:
 
 
 def test_every_part_label_used_by_the_panel_has_a_hud_reading() -> None:
-    """HUD の部位別行は `ui.scores.PART_LABELS` と同じ 4 部位を持つ。"""
+    """HUD の部位別行は `ui.readings.PART_LABELS` と同じ 4 部位を持つ。"""
     assert set(_payload()["parts"]) == set(PART_LABELS)
 
 
@@ -792,3 +794,108 @@ def test_render_hud_payload_publishes_the_display_hold() -> None:
     html = at.markdown[0].value
     payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
     assert payload["hold"] == "更新 5.0 秒ごと"
+
+
+# --- FR-043: UI 表示言語の切替 -------------------------------------------------
+
+
+def test_the_position_labels_are_ready_for_translation_but_the_options_stay_japanese() -> None:
+    """§3d 受け渡し: 訳語だけ用意し、`options` は識別子のまま残す。
+
+    `HUD_POSITION_OPTIONS`/`HUD_HIDDEN` は session state の値であり
+    `HUD_PLACEMENTS` の引き当て鍵でもあるため、ここでは `t()` を呼ばない。
+    表示だけを訳す `format_func=lambda v: t(v)` は `ui.camera`（別担当）が
+    付ける——訳すと言語切替の瞬間に保存済みの選択と CSS の引き当てが壊れる。
+    """
+    from face_symmetry_lab.ui.translations import EN
+
+    assert EN["左上"] == "Top left"
+    assert EN["右上"] == "Top right"
+    assert EN["左下"] == "Bottom left"
+    assert EN["右下"] == "Bottom right"
+    assert EN["非表示"] == "Hidden"
+    assert HUD_POSITION_OPTIONS == ("左上", "右上", "左下", "右下", "非表示")
+
+
+def test_the_hud_label_translates_to_english() -> None:
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.hud import build_hud_payload\n"
+        "payload = build_hud_payload(\n"
+        "    overall=0.0215, equal_weight=0.031,\n"
+        "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
+        "    estimate=None, show_demographics=False, gate='#2E9E5B',\n"
+        "    position='左上', generation='segment-1',\n"
+        ")\n"
+        "st.session_state['label'] = payload['label']\n"
+    )
+    at.session_state["ui_language"] = "en"
+    at.run()
+
+    assert not at.exception
+    assert at.session_state["label"] == "Symmetry (experimental)"
+
+
+def test_the_demographic_line_template_translates_to_english() -> None:
+    """§3b〜3f 規約 2: f-string だったテンプレートを `t()` へ通した後も、
+    括弧の中の実測値（年齢の数値）は変わらない。"""
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.hud import build_hud_payload\n"
+        "from tests.ui.test_hud import _estimate\n"
+        "payload = build_hud_payload(\n"
+        "    overall=0.0215, equal_weight=0.031,\n"
+        "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
+        "    estimate=_estimate(age=34.4), show_demographics=True,\n"
+        "    gate='#2E9E5B', position='左上', generation='segment-1',\n"
+        ")\n"
+        "st.session_state['demo'] = payload['demo']\n"
+    )
+    at.session_state["ui_language"] = "en"
+    at.run()
+
+    assert not at.exception
+    demo = at.session_state["demo"]
+    assert "Age 34 years" in demo
+    assert "Gender" in demo
+    assert "参考年齢" not in demo
+
+
+def test_the_bridge_config_translates_its_static_labels_to_english() -> None:
+    """FR-043: 骨格へ焼き込んでいた日本語は、bridge が毎回組み立てる CFG から
+    来る。骨格自体（`HUD_RUNTIME_JS`）を作り直さなくても言語切替が効く。"""
+    at = AppTest.from_string(
+        "import json\n"
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.hud import hud_bridge_script\n"
+        "script = hud_bridge_script(fullscreen=True, position='左上')\n"
+        "blob = script.split('__fslHudConfig = ', 1)[1].split(';\\n', 1)[0]\n"
+        "st.session_state['config'] = json.loads(blob)\n"
+    )
+    at.session_state["ui_language"] = "en"
+    at.run()
+
+    assert not at.exception
+    config = at.session_state["config"]
+    assert config["scoreLabel"] == "Overall score"
+    assert config["partLabels"] == {
+        "contour": "Contour",
+        "eyes": "Eyes",
+        "nose": "Nose",
+        "mouth": "Mouth",
+    }
+    assert config["legendOverallLabel"] == "Overall"
+    assert config["gripText"] == "Drag to move"
+    assert config["badgeText"] != FULLSCREEN_BADGE
+    assert config["hintText"] != FULLSCREEN_HINT
+
+
+def test_the_bridge_config_defaults_to_japanese_labels() -> None:
+    """罠: 既定言語（session state 未設定）で英語が漏れないことを固定する。"""
+    config_json = hud_bridge_script(fullscreen=False, position="左上")
+    blob = config_json.split("__fslHudConfig = ", 1)[1].split(";\n", 1)[0]
+    config = json.loads(blob)
+
+    assert config["scoreLabel"] == "全体のスコア"
+    assert config["partLabels"]["contour"] == "輪郭"
+    assert config["gripText"] == "ドラッグで移動"

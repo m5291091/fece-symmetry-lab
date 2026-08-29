@@ -9,7 +9,6 @@
 
 * `AnalysisCadence` — 解析周期と表示キャッシュの TTL
 * `PreviewCompositor` — 描画・背景置換・表示キャッシュ
-* `CaptureBuffer` — §14.3g の一発取り込み
 * `DemographicRelay` — 年齢・性別 worker との受け渡し
 * `AutoTuneController` — §14.3c/d の再調整判断
 """
@@ -44,7 +43,6 @@ from face_symmetry_lab.application.demographic_observations import (
     DemographicObservationSet,
 )
 from face_symmetry_lab.application.demographic_relay import DemographicRelay
-from face_symmetry_lab.application.frame_capture import CaptureBuffer, CapturedFrame
 from face_symmetry_lab.application.ports import (
     DemographicSampler,
     LandmarkProvider,
@@ -86,7 +84,6 @@ __all__ = [
     "DEFAULT_ANALYSIS_INTERVAL_MS",
     "DEFAULT_DISPLAY_TTL_MS",
     "ERROR_CIRCUIT_THRESHOLD",
-    "CapturedFrame",
     "PipelineSnapshot",
     "RealtimeLandmarkPipeline",
 ]
@@ -184,7 +181,6 @@ class RealtimeLandmarkPipeline:
             brightness_gain=brightness_gain,
             background_mode=background_mode,
         )
-        self._capture = CaptureBuffer()
         self._demographics = DemographicRelay(demographic_worker)
         #: FR-039/§9.6.1: FR-042 の Camera レポートが母集団を決めるための観測。
         #: **表示を許された推定だけ**を溜める（`application.demographic_observations`）。
@@ -289,7 +285,6 @@ class RealtimeLandmarkPipeline:
             # §14.3c: 計測は生フレームに対して行い、影響するのは *次の* フレーム
             # だけなので、描画との前後関係は自由に選べる。
             self._apply_display_tuning(self._auto_tune.display_tuning(rgb_image, frame, at=started))
-            self._capture.store(rgb_image, frame)
             painted = self._compositor.paint(rgb_image, frame)
             painted, segmentation_ms = self._compositor.apply_background(
                 rgb_image, painted, timestamp_ms, at=started
@@ -471,25 +466,6 @@ class RealtimeLandmarkPipeline:
             else:
                 self._recorder.resize_history_capacity(capacity)
 
-    # --- §14.3g 取り込み ------------------------------------------------------
-
-    def request_capture(self) -> None:
-        """§14.3g: 次に解析へ成功した単一顔フレームを保持する。"""
-        self._capture.request()
-
-    def take_capture(self) -> CapturedFrame | None:
-        """保持したフレームを消費する。準備できていなければ None。"""
-        return self._capture.take()
-
-    @property
-    def capture_pending(self) -> bool:
-        """要求がまだ使えるフレームを待っている状態かどうか。"""
-        return self._capture.pending
-
-    def clear_capture(self) -> None:
-        """保留中の要求と保持済みフレームを両方破棄する（§4.4, §10.4）。"""
-        self._capture.clear()
-
     # --- 状態 -----------------------------------------------------------------
 
     def _record_error(
@@ -539,7 +515,6 @@ class RealtimeLandmarkPipeline:
             self._recorder.reset()
         self.scheduler.reset()
         self._compositor.clear_caches()
-        self._capture.clear()
         self._demographics.reset()
         self._observations.reset()
         self._cadence.reset()
@@ -673,7 +648,6 @@ class RealtimeLandmarkPipeline:
         if age_interval_ms is not None:
             self._demographics.set_interval_ms(age_interval_ms)
         self._compositor.clear_caches()
-        self._capture.clear()
         self._demographics.reset()
 
     # --- 表示専用の設定 -------------------------------------------------------
@@ -753,7 +727,6 @@ class RealtimeLandmarkPipeline:
         if self._closed:
             return
         self._closed = True
-        self._capture.clear()
         self._landmarker.close()
         self._compositor.close()
         self._demographics.close()

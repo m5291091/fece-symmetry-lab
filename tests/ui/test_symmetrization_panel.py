@@ -198,19 +198,23 @@ def test_the_warped_image_wording_avoids_a_value_judgement() -> None:
     assert "加工画像" in shown
 
 
-def test_camera_and_image_reach_the_same_panel_instead_of_writing_their_own() -> None:
+def test_image_reaches_the_shared_panel_instead_of_writing_its_own() -> None:
     """重複の再発を構造で止める。
 
-    罠: どちらかの module が `st.image(view.overlay, ...)` や「平均のズレ」を
-    自前で書き直すと、この module を通らない 2 つ目の表示規則が復活する。
+    2026-08-29（項目 33）: 対称化と一発取り込みは Camera から削除され、Image
+    だけが持つ機能になった（FR-034）。**Camera がこの module を呼ばないこと**
+    まで固定する——罠: どちらかの module が `st.image(view.overlay, ...)` や
+    「平均のズレ」を自前で書き直すと、この module を通らない 2 つ目の表示規則が
+    復活する。
     """
     import inspect
 
     from face_symmetry_lab.ui import camera, image_section
 
-    for module in (camera, image_section):
-        source = inspect.getsource(module)
-        assert "render_symmetrization_view" in source
-        assert "平均のズレ" not in source
-        assert "最大のズレ" not in source
-        assert "view.overlay" not in source
+    image_source = inspect.getsource(image_section)
+    assert "render_symmetrization_view" in image_source
+    assert "平均のズレ" not in image_source
+    assert "最大のズレ" not in image_source
+    assert "view.overlay" not in image_source
+
+    assert "render_symmetrization_view" not in inspect.getsource(camera)

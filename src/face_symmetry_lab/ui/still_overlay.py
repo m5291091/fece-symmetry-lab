@@ -38,7 +38,8 @@ from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.ui.hud import build_hud_payload
-from face_symmetry_lab.ui.readings import PART_LABELS
+from face_symmetry_lab.ui.i18n import t
+from face_symmetry_lab.ui.readings import part_label
 from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL
 
 #: 位置指定コンテキストを作るコンテナの key。`st.container(key=...)` は
@@ -70,6 +71,10 @@ MAX_PREVIEW_HEIGHT_PX: Final[int] = 520
 #: ドラッグ中の吹き出し（`position: fixed` + `window.innerWidth` への clamp）を
 #: 壊すためである。
 PREVIEW_WIDTH_CSS_VAR: Final[str] = "--fsl-preview-width"
+
+#: FR-043: grip の文言。「⠿」は移動を示す装飾記号であり訳さない
+#: （`ui.hud_assets.HUD_RUNTIME_JS` の grip 文言と対になる語彙）。
+_DRAG_GRIP_LABEL: Final[str] = "ドラッグで移動"
 
 
 def preview_display_width(*, height: int, width: int) -> int:
@@ -343,14 +348,14 @@ def still_overlay_html(
     assert isinstance(baseline_parts, Mapping)
     part_items = "".join(
         '<span class="fsl-still-part">'
-        f"<span><b>{PART_LABELS[name]}</b>{readings[name]}</span>"
+        f"<span><b>{part_label(name)}</b>{readings[name]}</span>"
         f'<span class="fsl-still-baseline">{baseline_parts[name]}</span>'
         "</span>"
         for name in PART_NAMES
     )
     demo = payload["demo"]
     demo_row = f'<div class="fsl-still-demo">{demo}</div>' if demo else ""
-    grip = '<div class="fsl-still-grip">⠿ ドラッグで移動</div>'
+    grip = f'<div class="fsl-still-grip">⠿ {t(_DRAG_GRIP_LABEL)}</div>'
     return (
         f"<style>{_STILL_OVERLAY_CSS}</style>"
         # **この要素がそのまま画面に出る。** JS が動かなくても CSS だけで画像の

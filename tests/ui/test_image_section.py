@@ -572,14 +572,19 @@ def test_the_symmetrisation_view_is_reused_rather_than_recomputed() -> None:
 # --- §5.1（2026-08-26）: Camera と同じ並び ------------------------------------
 
 
-def test_the_two_input_modes_offer_the_same_tabs_in_the_same_order() -> None:
+def test_the_two_input_modes_share_the_common_tabs_and_only_image_adds_symmetry() -> None:
     """入力を切り替えても、同じものを探す先が動かないようにする（§5.1）。
 
     罠: 片方にだけタブを足す実装は、そのモードでしか読めない結果を作る——
     Camera が参考年齢・参考性別の区画を持っていなかったのがまさにこれだった。
-    2026-08-27: 名前と並びは `ui.result_tabs` が持つ。**どちらの section も
+    名前と並びは `ui.result_tabs` が持つ。**どちらの section も
     ラベル文字列を自分で持たない**ことまで固定する——手書きへ戻した瞬間に、
     片方だけ名前がずれても両方の test が通ってしまう状態へ逆戻りする。
+
+    2026-08-29（項目 33、29）: 共通する 3 つの並び（詳細結果・参考年齢・
+    レポート）はどちらも持ち、**「左右対称との比較」は Image だけが持つ**。
+    「表示設定」はどちらの section もタブとして持たない（Camera は映像直下の
+    ポップオーバーへ移した）。
     """
     import inspect
 
@@ -590,13 +595,14 @@ def test_the_two_input_modes_offer_the_same_tabs_in_the_same_order() -> None:
         source = inspect.getsource(section)
 
         assert "render_result_tabs(" in source, section.__name__
-        for label in result_tab_labels(with_settings=True):
+        for label in result_tab_labels(with_symmetry=True):
             assert label not in source, (section.__name__, label)
 
-    # Image だけが「表示設定」を持たない（§5.1）。それ以外は 1 つも減らさない。
+    # Camera だけが「左右対称との比較」を持たない（項目 33）。それ以外は
+    # 1 つも減らさない。
     image_source = inspect.getsource(image_section.render_image_section)
-    assert "settings=" not in image_source
-    assert "settings=" in inspect.getsource(camera.render_camera_section)
+    assert "symmetry=" in image_source
+    assert "symmetry=" not in inspect.getsource(camera.render_camera_section)
 
 
 def test_both_modes_render_the_same_reference_age_panel() -> None:

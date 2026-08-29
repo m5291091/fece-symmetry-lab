@@ -42,6 +42,7 @@ from face_symmetry_lab.domain.smoothing import (
     nearest_tau_choice,
     response_time_seconds,
 )
+from face_symmetry_lab.ui.i18n import t
 
 #: 選択値は session state が持つ。`ui.camera` の他の表示設定と同じ命名にそろえる。
 SMOOTHING_STATE_KEY: Final[str] = "camera_smoothing_tau_seconds"
@@ -106,15 +107,30 @@ HOLD_MISSING_NOTE: Final[str] = (
 #: `st.select_slider` の options は表示文字列そのものにする。`format_func` を
 #: 通さないことで、session state に入る値と画面のラベルが一致し、目盛りの読み
 #: 違いが起きない。
+#: **FR-043: これらは識別子であり翻訳しない**（ADR-0010 (c)）。言語を切り替えた
+#: 瞬間に保存済みの選択が options から外れて設定が失われるためである。表示だけ
+#: を `_tau_choice_label` / `_hold_choice_label`（`format_func`）が切り替える。
 _CHOICE_LABELS: Final[tuple[str, ...]] = tuple(f"{tau:.1f} 秒" for tau in TAU_CHOICES_SECONDS)
 _LABEL_TO_TAU: Final[dict[str, float]] = dict(zip(_CHOICE_LABELS, TAU_CHOICES_SECONDS, strict=True))
 
 #: 0 秒だけは「毎回」と言葉で書く。「0.0 秒ごとに更新」は意味が取れない。
+#: この文字列自体は識別子なので翻訳しない（上と同じ理由）。
+_HOLD_LABEL_EVERY_FRAME: Final[str] = "毎回"
 _HOLD_LABELS: Final[tuple[str, ...]] = tuple(
-    "毎回" if hold <= 0.0 else f"{hold:.1f} 秒" for hold in DISPLAY_HOLD_CHOICES_SECONDS
+    _HOLD_LABEL_EVERY_FRAME if hold <= 0.0 else f"{hold:.1f} 秒"
+    for hold in DISPLAY_HOLD_CHOICES_SECONDS
 )
 _LABEL_TO_HOLD: Final[dict[str, float]] = dict(
     zip(_HOLD_LABELS, DISPLAY_HOLD_CHOICES_SECONDS, strict=True)
+)
+
+#: FR-043: 表示だけを翻訳するテンプレート（ADR-0010 (a)）。`_CHOICE_LABELS` /
+#: `_HOLD_LABELS` の値そのものは上記のとおり識別子のまま変えない。
+_SECONDS_VALUE_TEMPLATE: Final[str] = "{value:.1f} 秒"
+_SAMPLE_COUNT_VALUE_TEMPLATE: Final[str] = "{value:.1f} 個"
+_SAMPLE_COUNT_HELP_TEMPLATE: Final[str] = (
+    "いまの解析周期（{interval_ms} ms）での目安です。"
+    "解析周期はAIが自動調整するため、同じ設定でもこの本数は動きます。"
 )
 
 
@@ -131,7 +147,7 @@ def _label_for(tau_seconds: float) -> str:
 
 
 def _hold_label_for(hold_seconds: float) -> str:
-    return "毎回" if hold_seconds <= 0.0 else f"{hold_seconds:.1f} 秒"
+    return _HOLD_LABEL_EVERY_FRAME if hold_seconds <= 0.0 else f"{hold_seconds:.1f} 秒"
 
 
 def nearest_hold_choice(hold_seconds: float | None) -> float:
@@ -139,6 +155,22 @@ def nearest_hold_choice(hold_seconds: float | None) -> float:
     if hold_seconds is None or not isfinite(hold_seconds):
         return DEFAULT_DISPLAY_HOLD_SECONDS
     return min(DISPLAY_HOLD_CHOICES_SECONDS, key=lambda choice: abs(choice - hold_seconds))
+
+
+def _tau_choice_label(label: str) -> str:
+    """`_CHOICE_LABELS` の値（識別子）はそのまま、`st.select_slider` の表示だけを
+    翻訳する（ADR-0010 (c)、`ui.camera._background_mode_label` と同じ形）。
+    """
+    return t(_SECONDS_VALUE_TEMPLATE).format(value=_LABEL_TO_TAU[label])
+
+
+def _hold_choice_label(label: str) -> str:
+    """`_HOLD_LABELS` も同じ理由で値は識別子のまま保つ。「毎回」だけは言葉なので
+    翻訳する。
+    """
+    if label == _HOLD_LABEL_EVERY_FRAME:
+        return t(_HOLD_LABEL_EVERY_FRAME)
+    return t(_SECONDS_VALUE_TEMPLATE).format(value=_LABEL_TO_HOLD[label])
 
 
 def render_smoothing_control(
@@ -165,12 +197,13 @@ def render_smoothing_control(
     if HOLD_STATE_KEY not in st.session_state:
         st.session_state[HOLD_STATE_KEY] = _hold_label_for(nearest_hold_choice(hold_seconds))
 
-    st.markdown(SMOOTHING_HEADING)
+    st.markdown(t(SMOOTHING_HEADING))
     selected_label = st.select_slider(
-        "平均する時間",
+        t("平均する時間"),
         options=_CHOICE_LABELS,
         key=SMOOTHING_STATE_KEY,
-        help=SMOOTHING_HELP,
+        format_func=_tau_choice_label,
+        help=t(SMOOTHING_HELP),
     )
     selected = _LABEL_TO_TAU[str(selected_label)]
 
@@ -179,25 +212,28 @@ def render_smoothing_control(
     # 設定値に良し悪しがあるかのように読める（§5.2）。
     quick, settled, samples = st.columns(3)
     quick.metric(
-        "63% 追いつくまで",
-        f"{response_time_seconds(selected, fraction=RESPONSE_FRACTION_63):.1f} 秒",
-        help="表示が新しい水準へ 63% 近づくまでの時間です（この値が時定数そのものです）。",
+        t("63% 追いつくまで"),
+        t(_SECONDS_VALUE_TEMPLATE).format(
+            value=response_time_seconds(selected, fraction=RESPONSE_FRACTION_63)
+        ),
+        help=t("表示が新しい水準へ 63% 近づくまでの時間です（この値が時定数そのものです）。"),
     )
     settled.metric(
-        "95% 追いつくまで",
-        f"{response_time_seconds(selected, fraction=RESPONSE_FRACTION_95):.1f} 秒",
-        help="ほぼ追いついたと言える時間です。時定数のおよそ 3.0 倍になります。",
+        t("95% 追いつくまで"),
+        t(_SECONDS_VALUE_TEMPLATE).format(
+            value=response_time_seconds(selected, fraction=RESPONSE_FRACTION_95)
+        ),
+        help=t("ほぼ追いついたと言える時間です。時定数のおよそ 3.0 倍になります。"),
     )
     samples.metric(
-        "均している解析サンプル数",
-        f"{effective_sample_count(selected, interval_ms=analysis_interval_ms):.1f} 個",
-        help=(
-            f"いまの解析周期（{analysis_interval_ms} ms）での目安です。"
-            "解析周期はAIが自動調整するため、同じ設定でもこの本数は動きます。"
+        t("均している解析サンプル数"),
+        t(_SAMPLE_COUNT_VALUE_TEMPLATE).format(
+            value=effective_sample_count(selected, interval_ms=analysis_interval_ms)
         ),
+        help=t(_SAMPLE_COUNT_HELP_TEMPLATE).format(interval_ms=analysis_interval_ms),
     )
 
-    st.caption(SMOOTHING_TRADEOFF_NOTE)
+    st.caption(t(SMOOTHING_TRADEOFF_NOTE))
 
     # FR-041: ここからが「頻度」の設定。平滑化とは効き方が違うので区切りを入れる
     # が、見出しは足さない——widget ラベルと同じ文字列が 2 行続くだけになる。
@@ -205,15 +241,16 @@ def render_smoothing_control(
     # だからである。
     st.divider()
     selected_hold_label = st.select_slider(
-        HOLD_LABEL,
+        t(HOLD_LABEL),
         options=_HOLD_LABELS,
         key=HOLD_STATE_KEY,
-        help=f"{HOLD_HELP}\n\n{HOLD_MISSING_NOTE}",
+        format_func=_hold_choice_label,
+        help=f"{t(HOLD_HELP)}\n\n{t(HOLD_MISSING_NOTE)}",
     )
     selected_hold = _LABEL_TO_HOLD[str(selected_hold_label)]
-    st.caption(HOLD_EFFECT_NOTE)
+    st.caption(t(HOLD_EFFECT_NOTE))
 
     # §5.3.1（2026-08-16）: 常時出す注意は 1 行。リセットの挙動と「止まった数値が
     # いつまで有効か」は `help` へ移した——内容は削っていない。
-    st.caption(SMOOTHING_SCOPE_NOTE, help=f"{SMOOTHING_RESET_NOTE}\n\n{HOLD_MISSING_NOTE}")
+    st.caption(t(SMOOTHING_SCOPE_NOTE), help=f"{t(SMOOTHING_RESET_NOTE)}\n\n{t(HOLD_MISSING_NOTE)}")
     return StabilityChoice(tau_seconds=selected, hold_seconds=selected_hold)

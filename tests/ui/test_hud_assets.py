@@ -488,3 +488,33 @@ def test_the_display_hold_has_its_own_chip_in_the_skeleton() -> None:
 
     assert 'id="fsl-hud-hold"' in skeleton
     assert "setText('fsl-hud-hold', data.hold" in tick
+
+
+# --- FR-043: UI 表示言語の切替 -------------------------------------------------
+
+
+def test_the_static_labels_are_read_from_the_bridge_config_not_baked_into_the_skeleton() -> None:
+    """FR-043: 骨格（`HUD_RUNTIME_JS`）は 1 度しか作り直さないので、日本語を
+    直接焼き込むと言語切替が効かない。CFG から読む配線があることを固定する。
+    """
+    assert "CFG.scoreLabel" in HUD_RUNTIME_JS
+    assert "CFG.partLabels.contour" in HUD_RUNTIME_JS
+    assert "CFG.partLabels.eyes" in HUD_RUNTIME_JS
+    assert "CFG.partLabels.nose" in HUD_RUNTIME_JS
+    assert "CFG.partLabels.mouth" in HUD_RUNTIME_JS
+    assert "CFG.legendOverallLabel" in HUD_RUNTIME_JS
+    assert "CFG.gripText" in HUD_RUNTIME_JS
+    # このラベル書き換えは、骨格を新規に作った・作らなかったに関わらず毎回走る
+    # 節に置く（`if (!hud) { ... }` の外）。bridge の再実行だけで言語が切り替わる
+    # ようにするためである。
+    assert HUD_RUNTIME_JS.index("CFG.scoreLabel") > HUD_RUNTIME_JS.index(
+        "document.body.appendChild(hud);"
+    )
+
+
+def test_the_runtime_no_longer_hardcodes_the_japanese_labels() -> None:
+    """罠: 骨格へ日本語を戻すと、英語モードでも「輪郭」等が焼き付いたまま出る。"""
+    assert '<span id="fsl-hud-score-label">全体のスコア</span>' not in HUD_RUNTIME_JS
+    assert "<b>輪郭</b>" not in HUD_RUNTIME_JS
+    assert ">全体</span>" not in HUD_RUNTIME_JS
+    assert '<div id="fsl-hud-grip">⠿ ドラッグで移動</div>' not in HUD_RUNTIME_JS

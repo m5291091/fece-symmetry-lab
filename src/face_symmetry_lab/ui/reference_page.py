@@ -18,6 +18,19 @@
 **`metadata.warning` は `st.text` で表示する。** `st.markdown`/`st.caption` は
 Markdown として解釈するため、原文に記号が含まれると意図しない見た目になりうる。
 `st.text` は書式解釈をしない、最も「そのまま」に近い widget である。
+
+**FR-043**: `metadata.warning`（配布元注意書きの原文引用）、`AGE_BANDS` /
+`RACE_LABELS` / `GENDER_LABELS`（`domain.reference_stats` のデータ列の値）、
+`dataset_name` / `license_scope` / `dataset_url` / 各 version / sha256 は
+訳さない。前者は原文一致を要求する引用であり、後二者はデータそのものである。
+`_AGE_MODE_BAND` / `_AGE_MODE_RANGE` は `st.radio` の内部値（比較にも使う）を
+維持したまま、`format_func` で表示だけを訳す（ADR-0010 (c)、`ui.camera` の
+`_BACKGROUND_MODE_LABELS` と同じ作法）。**`resolved.unavailable_reason` の
+中身（`ReferenceDatasetError` の文言）が値を埋め込んで組み立てられている場合は
+原文一致せず訳せない**——それ自体は `ui.i18n.translate_message`（UI 境界専用）
+で訳を試みるが、静的でなければ日本語のまま残る（既知の穴、ADR-0010
+Consequences）。外枠の文（`_UNAVAILABLE_WARNING_TEMPLATE`）は静的な template
+なので `t()` で訳す。
 """
 
 from __future__ import annotations
@@ -41,7 +54,8 @@ from face_symmetry_lab.domain.reference_stats import (
     ReferenceDatasetMetadata,
     ReferenceFilter,
 )
-from face_symmetry_lab.ui.readings import PART_LABELS
+from face_symmetry_lab.ui.i18n import t, translate_message
+from face_symmetry_lab.ui.readings import PART_LABELS, part_label
 
 _AGE_MODE_BAND: Final[str] = "年齢帯で選ぶ"
 _AGE_MODE_RANGE: Final[str] = "1歳刻みの範囲で選ぶ"
@@ -81,6 +95,78 @@ _PERCENT_METRIC_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("symmetry_percent_overall", "全体"),
 )
 
+_FILTERS_HEADING: Final[str] = "絞り込み"
+_RACE_LABEL: Final[str] = "人種"
+_GENDER_LABEL: Final[str] = "性別"
+_AGE_MODE_LABEL: Final[str] = "年齢の指定方法"
+_AGE_BAND_LABEL: Final[str] = "年齢帯"
+_AGE_RANGE_LABEL: Final[str] = "年齢の範囲（1歳刻み）"
+
+_MATCHED_CELLS_EXPANDER_TEMPLATE: Final[str] = "一致したセル一覧（{count} 件）"
+_NO_MATCHING_CELLS_CAPTION: Final[str] = "一致するセルがありません。"
+
+_MATCHED_COUNT_LABEL: Final[str] = "一致した件数"
+_NO_MATCH_NOTICE: Final[str] = (
+    "条件に一致するデータがありません。人種・性別・年齢の条件を変更してください。"
+)
+_INSUFFICIENT_COUNT_TEMPLATE: Final[str] = (
+    "一致した件数が {threshold} 件未満のため、平均・標準偏差は表示しません"
+    "（件数が少ない集計は誤差が大きく、参考になりません）。"
+)
+_MEAN_SCORE_LABEL: Final[str] = "平均スコア（点）"
+_SD_SCORE_LABEL: Final[str] = "標準偏差（点）"
+_PART_BREAKDOWN_CAPTION: Final[str] = "部位別・全体の平均対称度（%）"
+_OVERALL_LABEL: Final[str] = "全体"
+
+_DISCLOSURES_HEADING: Final[str] = "この画面についての注意"
+_DISCLOSURES_BODY: Final[str] = (
+    "- この結果は探索値であり、"
+    "正常値・目標値・個人評価・人物間比較には使用できません。\n"
+    "- 群間の差は、撮影条件・注釈・構成比、"
+    "ランドマーク検出の群ごとの挙動差を含みうるため、原因を断定できません。\n"
+    "- 人種・性別・年齢は UTKFace の配布時の注釈であり、"
+    "本アプリやモデルの推定ではありません。\n"
+    "- この画面は平均と標準偏差だけを扱います。"
+    "中央値と 95% 信頼区間はセル集計から復元できないため、v1 では表示しません。\n"
+)
+_DATASET_LICENSE_LINE_TEMPLATE: Final[str] = (
+    "- {name} は非商用研究限定のデータセットです（{scope} · {url}）。"
+)
+_SOURCE_WARNING_CAPTION: Final[str] = "配布元の注意書き（原文）"
+
+_VERSION_INFO_HEADING: Final[str] = "版とデータ出典"
+_METRIC_VERSION_LINE_TEMPLATE: Final[str] = "- 指標の版: `{value}`"
+_SCHEMA_VERSION_LINE_TEMPLATE: Final[str] = "- 参照データの schema: `{value}`"
+_CELLS_SHA256_LINE_TEMPLATE: Final[str] = "- セル CSV の sha256: `{value}…`"
+_LANDMARK_MAP_VERSION_LINE_TEMPLATE: Final[str] = "- ランドマーク対応表の版: `{value}`"
+
+_PAGE_TITLE: Final[str] = "参照統計ブラウザ（UTKFace）"
+_PAGE_CAPTION: Final[str] = (
+    "探索的な記述統計です。正常値・目標値・個人評価・人物間比較には使えません。"
+)
+_PAGE_CAPTION_HELP: Final[str] = (
+    "事前に集計した参照データセット（UTKFace、非商用研究限定）を表示します。"
+    "この画面にはカメラ・画像の分析結果を表示しません。"
+)
+#: `resolved.unavailable_reason` は `ui.i18n.translate_message`（UI 境界専用）
+#: で個別に訳す（`ReferenceDatasetError` が静的な文言のときだけ訳が効く）。
+#: 外枠のこの template 自体は静的なので `t()` で訳す。
+_UNAVAILABLE_WARNING_TEMPLATE: Final[str] = (
+    "参照データを読み込めないため、この画面は利用できません（{reason}）。"
+)
+_RESULTS_HEADING: Final[str] = "結果"
+
+
+def _age_mode_label(mode: str) -> str:
+    """`st.radio` の `format_func`。**内部値（`age_mode` の比較に使う）は変えず**、
+    表示だけを訳す（ADR-0010 (c)）。`t(mode)` のように lambda 引数を渡すと
+    `tests/ui/test_i18n.py` が解決できないため、この module の module-level
+    literal（`_AGE_MODE_BAND` / `_AGE_MODE_RANGE`）へ分岐してから `t()` へ渡す。
+    """
+    if mode == _AGE_MODE_BAND:
+        return t(_AGE_MODE_BAND)
+    return t(_AGE_MODE_RANGE)
+
 
 @st.cache_resource
 def _default_browser() -> ReferenceBrowser:
@@ -90,23 +176,24 @@ def _default_browser() -> ReferenceBrowser:
 
 def _render_filters() -> ReferenceFilter:
     """人種・性別・年齢の 3 軸。既定は未選択（= 絞り込まない、全件が対象）。"""
-    st.subheader("絞り込み")
-    st.caption(_FILTER_SCOPE_CAPTION, help=_FILTER_SCOPE_HELP)
+    st.subheader(t(_FILTERS_HEADING))
+    st.caption(t(_FILTER_SCOPE_CAPTION), help=t(_FILTER_SCOPE_HELP))
     race_column, gender_column = st.columns(2)
     selected_races = race_column.multiselect(
-        "人種",
+        t(_RACE_LABEL),
         options=list(RACE_LABELS),
-        placeholder=_MULTISELECT_PLACEHOLDER,
+        placeholder=t(_MULTISELECT_PLACEHOLDER),
     )
     selected_genders = gender_column.multiselect(
-        "性別",
+        t(_GENDER_LABEL),
         options=list(GENDER_LABELS),
-        placeholder=_MULTISELECT_PLACEHOLDER,
+        placeholder=t(_MULTISELECT_PLACEHOLDER),
     )
 
     age_mode = st.radio(
-        "年齢の指定方法",
+        t(_AGE_MODE_LABEL),
         options=(_AGE_MODE_BAND, _AGE_MODE_RANGE),
+        format_func=_age_mode_label,
         horizontal=True,
     )
     selected_age_bands: frozenset[str] = frozenset()
@@ -114,13 +201,13 @@ def _render_filters() -> ReferenceFilter:
     if age_mode == _AGE_MODE_BAND:
         selected_age_bands = frozenset(
             st.multiselect(
-                "年齢帯",
+                t(_AGE_BAND_LABEL),
                 options=list(AGE_BANDS),
-                placeholder=_MULTISELECT_PLACEHOLDER,
+                placeholder=t(_MULTISELECT_PLACEHOLDER),
             )
         )
     else:
-        age_range = st.slider("年齢の範囲（1歳刻み）", MIN_AGE, MAX_AGE, (MIN_AGE, MAX_AGE))
+        age_range = st.slider(t(_AGE_RANGE_LABEL), MIN_AGE, MAX_AGE, (MIN_AGE, MAX_AGE))
 
     return ReferenceFilter(
         races=frozenset(selected_races),
@@ -137,9 +224,10 @@ def _render_matched_cells(result: ReferenceQueryResult) -> None:
     への変換が、`AppTest` のスクリプト実行スレッドから呼ぶと segfault する環境が
     あるため、`ui` に前例のない依存を持ち込まず Markdown 表だけで表示する。
     """
-    with st.expander(f"一致したセル一覧（{len(result.matched_cells)} 件）"):
+    title = t(_MATCHED_CELLS_EXPANDER_TEMPLATE).format(count=len(result.matched_cells))
+    with st.expander(title):
         if not result.matched_cells:
-            st.caption("一致するセルがありません。")
+            st.caption(t(_NO_MATCHING_CELLS_CAPTION))
             return
         header = "| race | gender | age | count |\n|---|---|---|---|"
         rows = "\n".join(
@@ -149,37 +237,53 @@ def _render_matched_cells(result: ReferenceQueryResult) -> None:
         st.markdown(f"{header}\n{rows}")
 
 
+def _percent_metric_label(name: str) -> str:
+    """`_PERCENT_METRIC_LABELS` の値を表示言語（FR-043）へ揃える。
+
+    部位名は `ui.readings.part_label`（共有の訳付きアクセサ）へ委譲する。
+    以前はここで `PART_LABELS[part]` の値を literal として複製していたが、
+    `part_label` が同じ引き当てを既に提供しているため、複製をやめた。
+    """
+    if name == "symmetry_percent_overall":
+        return t(_OVERALL_LABEL)
+    part = name.removeprefix("symmetry_percent_")
+    if part in PART_LABELS:
+        return part_label(part)
+    return dict(_PERCENT_METRIC_LABELS).get(name, name)
+
+
 def _render_results(result: ReferenceQueryResult, *, min_group_for_ci: int) -> None:
     """§9.5: 件数を最初に見せ、しきい値未満では統計値を出さない（AC-REFERENCE-02）。"""
     aggregate = result.aggregate
     count = aggregate.count if aggregate is not None else 0
-    st.metric("一致した件数", f"{count:,}")
+    st.metric(t(_MATCHED_COUNT_LABEL), f"{count:,}")
 
     if aggregate is None:
-        st.info("条件に一致するデータがありません。人種・性別・年齢の条件を変更してください。")
+        st.info(t(_NO_MATCH_NOTICE))
     elif not aggregate.has_statistics:
-        st.info(
-            f"一致した件数が {min_group_for_ci} 件未満のため、平均・標準偏差は表示しません"
-            "（件数が少ない集計は誤差が大きく、参考になりません）。"
-        )
+        st.info(t(_INSUFFICIENT_COUNT_TEMPLATE).format(threshold=min_group_for_ci))
     else:
         score_summary = aggregate.metrics["score_points"]
         mean_column, sd_column = st.columns(2)
-        mean_column.metric("平均スコア（点）", f"{score_summary.mean:.2f}")
+        mean_column.metric(t(_MEAN_SCORE_LABEL), f"{score_summary.mean:.2f}")
         sd_column.metric(
-            "標準偏差（点）",
+            t(_SD_SCORE_LABEL),
             "—" if score_summary.sd is None else f"{score_summary.sd:.2f}",
         )
-        st.caption(_SCORE_SCALE_CAPTION, help=_SCORE_SCALE_HELP)
+        st.caption(t(_SCORE_SCALE_CAPTION), help=t(_SCORE_SCALE_HELP))
 
-        st.caption("部位別・全体の平均対称度（%）")
+        st.caption(t(_PART_BREAKDOWN_CAPTION))
         # **5 つを `st.metric` へ分けない。** `st.metric` の値は 36px・
         # `white-space: nowrap`・`text-overflow: ellipsis` なので、5 列に割ると
         # 1 列 99px になり「95.05%」（110px）の末尾の `%` が省略記号へ置き換わる
         # （実測、画面幅に関わらず 5 つとも）。見出しの 3 つは 1〜2 列なので
         # `st.metric` のままでよい。表なら列幅に合わせて縮み、切れない。
         # `_render_matched_cells` と同じく pandas は使わない（同関数の docstring）。
-        header = "| " + " | ".join(label for _, label in _PERCENT_METRIC_LABELS) + " |"
+        header = (
+            "| "
+            + " | ".join(_percent_metric_label(name) for name, _ in _PERCENT_METRIC_LABELS)
+            + " |"
+        )
         divider = "|" + "---|" * len(_PERCENT_METRIC_LABELS)
         values = (
             "| "
@@ -201,52 +305,49 @@ def _render_disclosures(metadata: ReferenceDatasetMetadata) -> None:
     まま）とは出所が違う。同じ体裁で並べると、どちらがアプリの言葉でどちらが
     引用なのかが読み取れなくなる。
     """
-    st.subheader("この画面についての注意")
+    st.subheader(t(_DISCLOSURES_HEADING))
     st.markdown(
-        "- この結果は探索値であり、"
-        "正常値・目標値・個人評価・人物間比較には使用できません。\n"
-        "- 群間の差は、撮影条件・注釈・構成比、"
-        "ランドマーク検出の群ごとの挙動差を含みうるため、原因を断定できません。\n"
-        "- 人種・性別・年齢は UTKFace の配布時の注釈であり、"
-        "本アプリやモデルの推定ではありません。\n"
-        "- この画面は平均と標準偏差だけを扱います。"
-        "中央値と 95% 信頼区間はセル集計から復元できないため、v1 では表示しません。\n"
-        f"- {metadata.dataset_name} は非商用研究限定のデータセットです"
-        f"（{metadata.license_scope} · {metadata.dataset_url}）。"
+        t(_DISCLOSURES_BODY)
+        + t(_DATASET_LICENSE_LINE_TEMPLATE).format(
+            name=metadata.dataset_name,
+            scope=metadata.license_scope,
+            url=metadata.dataset_url,
+        )
     )
-    st.caption("配布元の注意書き（原文）")
+    st.caption(t(_SOURCE_WARNING_CAPTION))
     st.text(metadata.warning)
 
 
 def _render_version_info(metadata: ReferenceDatasetMetadata) -> None:
     """FR-020 と同じ作法で版と sha256 を出す。"""
-    st.subheader("版とデータ出典")
+    st.subheader(t(_VERSION_INFO_HEADING))
     st.markdown(
-        f"- 指標の版: `{metadata.metric_version}`\n"
-        f"- 参照データの schema: `{metadata.schema_version}`\n"
-        f"- セル CSV の sha256: `{metadata.cells_sha256[:16]}…`\n"
-        f"- ランドマーク対応表の版: `{metadata.landmark_map_version}`"
+        "\n".join(
+            (
+                t(_METRIC_VERSION_LINE_TEMPLATE).format(value=metadata.metric_version),
+                t(_SCHEMA_VERSION_LINE_TEMPLATE).format(value=metadata.schema_version),
+                t(_CELLS_SHA256_LINE_TEMPLATE).format(value=metadata.cells_sha256[:16]),
+                t(_LANDMARK_MAP_VERSION_LINE_TEMPLATE).format(value=metadata.landmark_map_version),
+            )
+        )
     )
 
 
 def render_reference_page(browser: ReferenceBrowser | None = None) -> None:
     """参照統計ページ（FR-037）。`browser` は test 用の差し替え口。"""
-    st.title("参照統計ブラウザ（UTKFace）")
+    st.title(t(_PAGE_TITLE))
     # §5.3.1: 見出し直下は 1 行。3 文あった `st.info` を畳み、残りは `help` へ。
-    st.caption(
-        "探索的な記述統計です。正常値・目標値・個人評価・人物間比較には使えません。",
-        help=(
-            "事前に集計した参照データセット（UTKFace、非商用研究限定）を表示します。"
-            "この画面にはカメラ・画像の分析結果を表示しません。"
-        ),
-    )
+    st.caption(t(_PAGE_CAPTION), help=t(_PAGE_CAPTION_HELP))
 
     resolved = browser if browser is not None else _default_browser()
 
     if not resolved.is_available:
-        st.warning(
-            f"参照データを読み込めないため、この画面は利用できません（{resolved.unavailable_reason}）。"
-        )
+        # FR-043: 外枠の template は静的なので `t()` で訳す。埋め込む理由
+        # （`ReferenceDatasetError` の文言）は `translate_message`（UI 境界専用）
+        # で個別に訳を試みるが、値を埋め込んで組み立てられた文言は原文一致せず
+        # 訳せないまま残る（既知の穴、ADR-0010 Consequences）。
+        reason = resolved.unavailable_reason or ""
+        st.warning(t(_UNAVAILABLE_WARNING_TEMPLATE).format(reason=translate_message(reason)))
         return
 
     metadata = resolved.metadata
@@ -257,7 +358,7 @@ def render_reference_page(browser: ReferenceBrowser | None = None) -> None:
     if result is None:
         return
 
-    st.subheader("結果")
+    st.subheader(t(_RESULTS_HEADING))
     _render_results(result, min_group_for_ci=metadata.min_group_for_ci)
 
     st.divider()

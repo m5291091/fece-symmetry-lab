@@ -26,6 +26,7 @@ import streamlit as st
 from face_symmetry_lab.application.age_gate import AgeGateOutcome
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.ui.age_gate_notice import resolve_reference_age_view
+from face_symmetry_lab.ui.i18n import t, translate_message
 from face_symmetry_lab.ui.scores import DEMOGRAPHIC_RUNTIME_CAPTION, render_demographic_estimate
 
 #: モデル資産が無い環境。**最初に見る**——他のどの理由を述べても利用者は手を
@@ -35,8 +36,10 @@ MODEL_MISSING_NOTICE: Final[str] = "年齢・性別モデルが未配置のた�
 #: 利用者が自分で切っただけの状態。**ゲートの固定文言をここへ出さない**——
 #: 切っただけの状態を「表示できません」と説明すると、機能が失敗しているように
 #: 読める（FR-024）。Image はこの状態を持たない（表示設定を持たないため）。
+#: 2026-08-29（項目 29）: 「表示設定」はタブから映像直下のポップオーバーへ
+#: 移ったため、案内もそちらを指す。
 DISPLAY_OFF_NOTICE: Final[str] = (
-    "「表示設定」の「年齢・性別の参考値を表示」を入れると、ここに表示します。"
+    "映像の下の ⚙️ 表示設定で「年齢・性別の参考値を表示」を入れると、ここに表示します。"
 )
 
 
@@ -67,10 +70,10 @@ def render_demographic_panel(
     with st.container(border=True):
         st.caption(DEMOGRAPHIC_RUNTIME_CAPTION)
         if not available:
-            st.info(MODEL_MISSING_NOTICE)
+            st.info(t(MODEL_MISSING_NOTICE))
             return
         if not show_demographics:
-            st.info(DISPLAY_OFF_NOTICE)
+            st.info(t(DISPLAY_OFF_NOTICE))
             return
 
         view = resolve_reference_age_view(
@@ -83,7 +86,10 @@ def render_demographic_panel(
         elif view.notice:
             st.info(view.notice)
         elif error:
-            st.error(error)
+            # FR-043: `error` は呼び出し側が `str(exception)` として渡す実行時の
+            # 例外文言（`ui.image_section._maybe_estimate_image_demographics` 等）
+            # なので、UI 境界で `translate_message` を通す（`translations/_errors.py`）。
+            st.error(translate_message(error))
         else:
             st.info(pending_notice)
 

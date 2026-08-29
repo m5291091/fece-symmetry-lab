@@ -72,6 +72,7 @@ from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.demographic_panel import render_demographic_panel
 from face_symmetry_lab.ui.detail_panel import render_detail_panel
 from face_symmetry_lab.ui.export_panel import render_export_panel
+from face_symmetry_lab.ui.i18n import t, translate_message
 from face_symmetry_lab.ui.model_setup import (
     build_age_gate_service,
     landmark_asset,
@@ -330,7 +331,7 @@ def _maybe_estimate_image_demographics(
         st.session_state[DEMOGRAPHIC_ERROR_KEY] = (
             str(error)
             if isinstance(error, DemographicInferenceError)
-            else "年齢・性別を推定できませんでした。"
+            else t("年齢・性別を推定できませんでした。")
         )
     return True
 
@@ -375,8 +376,8 @@ def _render_image_export(
 
     render_export_panel(
         bundle,
-        heading="この画像の分析データをエクスポート",
-        warning="姿勢・左右差・参考年齢などの顔由来データを含みます。",
+        heading=t("この画像の分析データをエクスポート"),
+        warning=t("姿勢・左右差・参考年齢などの顔由来データを含みます。"),
         # 1 枚の写真は常にちょうど 1 件の記録になるので、件数を出しても
         # 情報が増えない。
         key_prefix="download_image",
@@ -411,13 +412,16 @@ def _render_image_symmetrization(
             warper=OpenCvPiecewiseWarper() if warp else None,
         )
     except SymmetrizationError as error:
-        st.info(str(error))
+        # FR-043: UI 境界で例外文言を訳す（`translations/_errors.py`）。
+        st.info(translate_message(str(error)))
         return None
 
     st.caption(
-        "写真の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
-        "実測点と重ねています。ズレの大きさを形で見るための表示で、"
-        "どちらが正しい・望ましいという意味はありません。"
+        t(
+            "写真の顔を正中線で折りたたみ、左右の対応点の中点を「左右対称にそろえた位置」として"
+            "実測点と重ねています。ズレの大きさを形で見るための表示で、"
+            "どちらが正しい・望ましいという意味はありません。"
+        )
     )
     render_symmetrization_view(view, warp_requested=warp)
     return view
@@ -447,9 +451,9 @@ def _render_image_demographic_detail(
         available=available,
         # 静止画は 1 枚で完結するので、待てば出るという言い方をしない。
         pending_notice=(
-            "単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。"
+            t("単一顔を検出できた写真でのみ、参考年齢・参考性別を推定できます。")
             if age_input is None
-            else "この写真からは参考年齢・参考性別を推定できませんでした。"
+            else t("この写真からは参考年齢・参考性別を推定できませんでした。")
         ),
         error=str(error_message) if error_message else None,
     )
@@ -502,7 +506,7 @@ def _render_preview_with_overlay(
     notice = "" if gate_outcome is None else age_gate_notice(gate_outcome.status)
     render_image_with_overlay(
         analysis.landmarks.preview,
-        caption="検出したランドマーク",
+        caption=t("検出したランドマーク"),
         overall=resolve_overall_distance(analysis.outcome),
         equal_weight=resolve_equal_weight_distance(analysis.outcome),
         parts={name: resolve_part_distance_3d(analysis.outcome, name) for name in PART_NAMES},
@@ -512,20 +516,25 @@ def _render_preview_with_overlay(
         gate=gate_color(analysis.outcome.state),
         baseline=resolve_baseline(estimate),
     )
-    render_tracking_status(analysis.landmarks.frame.status, _IMAGE_STATUS_MESSAGES)
+    render_tracking_status(
+        analysis.landmarks.frame.status,
+        {status: t(_IMAGE_STATUS_MESSAGES[status]) for status in _IMAGE_STATUS_MESSAGES},
+    )
 
 
 def render_image_section() -> None:
     """アップロードした写真 1 枚の分析セクション。同意の後にのみ呼ぶこと。"""
     uploaded = st.file_uploader(
-        "JPEG / PNG の顔写真",
+        t("JPEG / PNG の顔写真"),
         type=["jpg", "jpeg", "png"],
-        help="1 名だけが写る写真を想定しています。上限 10MB / 12MP。",
+        help=t("1 名だけが写る写真を想定しています。上限 10MB / 12MP。"),
         on_change=clear_session_result,
     )
     if uploaded is None:
         st.info(
-            "18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を写真の上の吹き出しへ表示します。"
+            t(
+                "18〜75歳の写真を選ぶと、左右差と年齢・性別の参考値を写真の上の吹き出しへ表示します。"
+            )
         )
         return
 
@@ -533,22 +542,23 @@ def render_image_section() -> None:
     try:
         decoded = decode_uploaded_image(uploaded_bytes)
     except ImageInputError as error:
-        st.error(str(error))
+        # FR-043: UI 境界で例外文言を訳す（`translations/_errors.py`）。
+        st.error(translate_message(str(error)))
         return
 
     rgb = np.asarray(decoded.rgb, dtype=np.uint8)
     input_fingerprint = sha256(uploaded_bytes).hexdigest()
-    st.subheader("静止画のランドマークと左右差")
+    st.subheader(t("静止画のランドマークと左右差"))
     model_path = resolve_ready_landmarker()
 
     recorder: SessionRecorder | None = None
     analysis: StillImageAnalysis | None = None
     if model_path is not None:
         show_midline = st.toggle(
-            "顔の中心線を表示",
+            t("顔の中心線を表示"),
             value=True,
             key="image_midline_enabled",
-            help="採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。",
+            help=t("採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。"),
         )
         try:
             recorder, analysis = _analyze_uploaded_image(
@@ -558,7 +568,8 @@ def render_image_section() -> None:
                 show_midline=show_midline,
             )
         except (LandmarkDetectionError, MetricConfigError) as error:
-            st.error(str(error))
+            # FR-043: UI 境界で例外文言を訳す（`translations/_errors.py`）。
+            st.error(translate_message(str(error)))
 
     age_input: np.ndarray | None = None
     if analysis is not None:
@@ -579,7 +590,7 @@ def render_image_section() -> None:
     age_gate_outcome = _evaluate_image_age_gate(analysis)
 
     if analysis is None:
-        st.info("ランドマークを表示できません。")
+        st.info(t("ランドマークを表示できません。"))
     else:
         _render_preview_with_overlay(analysis, age_gate_outcome)
 
@@ -590,7 +601,7 @@ def render_image_section() -> None:
         if analysis is None:
             render_detail_panel(
                 None,
-                empty_notice="この画像からは左右差を算出できませんでした。",
+                empty_notice=t("この画像からは左右差を算出できませんでした。"),
                 show_parts=True,
             )
             return
@@ -599,13 +610,16 @@ def render_image_section() -> None:
 
         def _diagnostics() -> None:
             st.caption(
-                f"入力 {rgb.shape[1]} × {rgb.shape[0]} · "
-                f"ランドマーク点数 {found.landmarks.landmark_count}"
+                t("入力 {width} × {height} · ランドマーク点数 {count}").format(
+                    width=rgb.shape[1],
+                    height=rgb.shape[0],
+                    count=found.landmarks.landmark_count,
+                )
             )
 
         render_detail_panel(
             found.outcome,
-            empty_notice="この画像からは左右差を算出できませんでした。",
+            empty_notice=t("この画像からは左右差を算出できませんでした。"),
             # AC-LAYOUT-01: Image は HUD を持たないため、部位別 4 つはここに残る。
             show_parts=True,
             diagnostics=_diagnostics,
@@ -614,7 +628,7 @@ def render_image_section() -> None:
     def _symmetry_tab() -> None:
         nonlocal symmetrization_view
         if analysis is None:
-            st.info("ランドマークが取れていないため、比較を作成できません。")
+            st.info(t("ランドマークが取れていないため、比較を作成できません。"))
         else:
             symmetrization_view = _render_image_symmetrization(rgb, analysis)
 
@@ -627,7 +641,7 @@ def render_image_section() -> None:
         # FR-042: 対称化タブより後に走る（`render_result_tabs` の並びがそれを
         # 保証する）ので、上で作ったビューをそのまま使い回せる。
         if recorder is None:
-            st.info("エクスポートできる分析結果がまだありません。")
+            st.info(t("エクスポートできる分析結果がまだありません。"))
         else:
             _render_image_export(
                 recorder,
@@ -641,8 +655,8 @@ def render_image_section() -> None:
     # スクロールだと、詳細結果・対称化・参考年齢を続けて積み上げた分だけ画像が
     # 押し上げられ、数値と写真を見比べられなくなる。
     # §5.1（2026-08-27）: 名前・順序・アイコンは `ui.result_tabs` が Camera と
-    # 共有する。Camera だけが持つ「表示設定」のタブは、Image に対応する設定を
-    # 持たないので渡さない。
+    # 共有する。2026-08-29（項目 33）: Image だけが持つ「左右対称との比較」を渡す
+    # ——Camera からは対称化と一発取り込みを削除した（FR-034）。
     render_result_tabs(
         ResultTabs(
             detail=_detail_tab,

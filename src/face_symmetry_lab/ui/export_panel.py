@@ -12,11 +12,13 @@ CSV / JSON を撤回した）。レポートの中身は入力モードごとに
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Final
 
 import streamlit as st
 
 from face_symmetry_lab.domain.export import SessionExport
-from face_symmetry_lab.ui.report import REPORT_SHARING_NOTE, report_filename
+from face_symmetry_lab.ui.i18n import t
+from face_symmetry_lab.ui.report import report_filename
 
 #: `include_figures` を受け取り、レポートの HTML を返す。図の符号化は呼び出し側の
 #: 責任である（この module は cv2 も画像も知らない）。
@@ -26,6 +28,20 @@ ReportBuilder = Callable[[bool], str]
 #: （2026-08-16）。安全側の既定を提案したが採られなかったので、代わりに操作の
 #: 直前とレポート本体の両方へ注意を置くことで補っている。
 FIGURE_TOGGLE_LABEL: str = "顔写真を含む図をレポートへ入れる"
+
+_FIGURE_TOGGLE_HELP: Final[str] = (
+    "ランドマークや対称化の図をレポートへ埋め込みます。数値と来歴は変わりません。"
+)
+_REPORT_DOWNLOAD_LABEL: Final[str] = "レポート（HTML）を保存"
+
+#: `ui.report.REPORT_SHARING_NOTE` と**同じ文面**。あちらは別 module の
+#: module-level 定数なので、この module から `t()` へそのまま渡せない
+#: （`t()` の引数は同じモジュール内の literal でなければならない、
+#: `tests/ui/test_i18n.py`）。値を複製し、`test_the_sharing_warning_is_shown_before_the_download`
+#: が両者の内容が一致することを担保する。
+_SHARING_NOTE: Final[str] = (
+    "このファイルには顔写真が含まれます。保存後の共有先はアプリからは制御できません。"
+)
 
 
 def render_export_panel(
@@ -99,15 +115,15 @@ def _render_report_download(
     include_figures = False
     if has_figures:
         include_figures = st.checkbox(
-            FIGURE_TOGGLE_LABEL,
+            t(FIGURE_TOGGLE_LABEL),
             value=True,
             key=f"{key_prefix}_report_figures",
-            help="ランドマークや対称化の図をレポートへ埋め込みます。数値と来歴は変わりません。",
+            help=t(_FIGURE_TOGGLE_HELP),
         )
         if include_figures:
-            st.caption(REPORT_SHARING_NOTE)
+            st.caption(t(_SHARING_NOTE))
     st.download_button(
-        "レポート（HTML）を保存",
+        t(_REPORT_DOWNLOAD_LABEL),
         data=builder(include_figures).encode("utf-8"),
         file_name=report_filename(bundle, mode=mode),
         mime="text/html",

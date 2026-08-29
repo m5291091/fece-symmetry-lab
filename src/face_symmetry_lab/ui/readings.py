@@ -1,14 +1,17 @@
 """画面に出る 1 つの数値を「どこから読み、どう整形するか」だけを決める層。
 
-**この module は何も描画しない。** Streamlit を import せず、`AnalysisOutcome`
-から表示値を取り出す関数と、値を文字列にする関数、そして状態→色・部位→ラベル
-の対応表だけを持つ。
+**この module は何も描画しない。** `AnalysisOutcome` から表示値を取り出す関数と、
+値を文字列にする関数、そして状態→色・部位→ラベルの対応表だけを持つ。表示言語
+（FR-043）に依存する語（部位名・性別・状態名・「平均」など）だけは
+`face_symmetry_lab.ui.i18n.t` を通す——`st.write` 等の描画 API は一切呼ばない。
 
 **分離した理由。** これを読む側は 4 つある——詳細パネル（`ui.scores`）、映像上の
 HUD（`ui.hud`）、静止画の吹き出し（`ui.still_overlay`）、Image の組み立て
 （`ui.image_section`）。同じ測定値に対して 2 つ目の表示規則が生まれると、画面上
 の別々の場所が別々の数字を出す。以前これらが `ui.scores`（描画 module）に同居
-していたため、HUD が値を整形するためだけに描画 module へ依存していた。
+していたため、HUD が値を整形するためだけに描画 module へ依存していた。**訳を
+ここへ集約する理由も同じ**——`t()` をこの module の関数の中で 1 度だけ通せば、
+HUD・吹き出し・詳細パネルのすべてが同じ訳を受け取る（FR-043、AC-I18N-01）。
 
 規則は 2 つだけである。
 
@@ -27,7 +30,12 @@ from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
 from face_symmetry_lab.domain.reference_baseline import BaselineReading
 from face_symmetry_lab.domain.score_scale import score_points
 from face_symmetry_lab.domain.score_scale import symmetry_percent as _symmetry_percent
+from face_symmetry_lab.ui.i18n import t
 
+#: §8.6.3 の部位ラベル。値は文字列リテラルのまま持つ——`t(PART_LABELS[name])`
+#: という形で、この module 自身だけでなく他の module（`ui.still_overlay` /
+#: `ui.report` 等）からも辞書の添字を経由して訳せるようにするため
+#: （`tests/ui/test_i18n.py` の辞書添字解決）。
 PART_LABELS: Final[dict[str, str]] = {
     "contour": "輪郭",
     "eyes": "目",
@@ -35,10 +43,25 @@ PART_LABELS: Final[dict[str, str]] = {
     "mouth": "口",
 }
 
+#: `PART_LABELS` と同じ理由で、値は文字列リテラルのまま持つ。
 GENDER_LABELS: Final[dict[GenderLabel, str]] = {
     GenderLabel.FEMALE: "女性",
     GenderLabel.MALE: "男性",
 }
+
+
+def part_label(name: str) -> str:
+    """`PART_LABELS[name]` を表示言語（FR-043）に合わせて訳す。"""
+    if name not in PART_LABELS:
+        return name
+    return t(PART_LABELS[name])
+
+
+def gender_label(gender: GenderLabel) -> str:
+    """`GENDER_LABELS[gender]` を表示言語（FR-043）に合わせて訳す。"""
+    if gender not in GENDER_LABELS:
+        return "—"
+    return t(GENDER_LABELS[gender])
 
 
 # --- 整形 --------------------------------------------------------------------
@@ -85,6 +108,10 @@ def score_points_value(value: float | None) -> float | None:
     return score_points(value)
 
 
+#: §8.6.7: 「全体のスコア」の単位。`{points}` は小数 1 桁で埋め込む。
+SCORE_POINTS_TEMPLATE: Final[str] = "{points:.1f} 点"
+
+
 def format_score(value: float | None) -> str:
     """§8.6.7: `s_3d` を「全体のスコア」の点として表示する。
 
@@ -96,7 +123,7 @@ def format_score(value: float | None) -> str:
     「ずれ 5.0% 以上」という測定結果である、不変条件 11）。
     """
     points = score_points(value)
-    return "—" if points is None else f"{points:.1f} 点"
+    return "—" if points is None else t(SCORE_POINTS_TEMPLATE).format(points=points)
 
 
 # --- 参照平均の併記（FR-039） -------------------------------------------------
@@ -129,6 +156,13 @@ def _signed(value: float, *, digits: int) -> str:
     return f"{rounded:+.{digits}f}"
 
 
+#: §10.7/AC-I18N-01: 差の括弧は日本語では全角、英語では半角にする
+#: （東アジア言語の慣用と、英語の慣用がそれぞれ異なるため）。差が無いときは
+#: 括弧なしの版を使う。
+BASELINE_SYMMETRY_TEMPLATE: Final[str] = "平均 {mean:.2f}%"
+BASELINE_SYMMETRY_WITH_DELTA_TEMPLATE: Final[str] = "平均 {mean:.2f}%（{delta}）"
+
+
 def format_baseline_symmetry(reading: BaselineReading | None) -> str:
     """対称度（%）に対する「平均 96.31%（+2.11）」。
 
@@ -139,10 +173,15 @@ def format_baseline_symmetry(reading: BaselineReading | None) -> str:
     """
     if reading is None:
         return ""
-    text = f"平均 {reading.mean:.2f}%"
     if reading.delta is None:
-        return text
-    return f"{text}（{_signed(reading.delta, digits=2)}）"
+        return t(BASELINE_SYMMETRY_TEMPLATE).format(mean=reading.mean)
+    return t(BASELINE_SYMMETRY_WITH_DELTA_TEMPLATE).format(
+        mean=reading.mean, delta=_signed(reading.delta, digits=2)
+    )
+
+
+BASELINE_SCORE_TEMPLATE: Final[str] = "平均 {mean:.1f} 点"
+BASELINE_SCORE_WITH_DELTA_TEMPLATE: Final[str] = "平均 {mean:.1f} 点（{delta}）"
 
 
 def format_baseline_score(reading: BaselineReading | None) -> str:
@@ -153,10 +192,16 @@ def format_baseline_score(reading: BaselineReading | None) -> str:
     """
     if reading is None:
         return ""
-    text = f"平均 {reading.mean:.1f} 点"
     if reading.delta is None:
-        return text
-    return f"{text}（{_signed(reading.delta, digits=1)}）"
+        return t(BASELINE_SCORE_TEMPLATE).format(mean=reading.mean)
+    return t(BASELINE_SCORE_WITH_DELTA_TEMPLATE).format(
+        mean=reading.mean, delta=_signed(reading.delta, digits=1)
+    )
+
+
+BASELINE_NOTE_TEMPLATE: Final[str] = (
+    "平均: 参照統計の {age} 歳・{gender}（人種で絞り込まず {count:,} 件）。{caveat}"
+)
 
 
 def baseline_note(*, age: int, gender: GenderLabel, count: int) -> str:
@@ -166,8 +211,12 @@ def baseline_note(*, age: int, gender: GenderLabel, count: int) -> str:
     後者はアプリが人種を推定しないこと（不変条件 7）を画面から読み取れるように
     するためである。
     """
-    label = GENDER_LABELS.get(gender, "—")
-    return f"平均: 参照統計の {age} 歳・{label}（人種で絞り込まず {count:,} 件）。{BASELINE_CAVEAT}"
+    return t(BASELINE_NOTE_TEMPLATE).format(
+        age=age,
+        gender=gender_label(gender),
+        count=count,
+        caveat=t(BASELINE_CAVEAT),
+    )
 
 
 # --- 値の解決 ----------------------------------------------------------------
@@ -262,7 +311,8 @@ def gate_color(state: AnalysisState | None) -> str:
 #: §5.2/§5.4: 枠色と同じ情報をテキストでも持つ。**述べるのは「何が起きているか」
 #: だけで、良し悪しではない**（「良好」「不良」を使わない）。詳細結果タブの
 #: `render_guidance` が出す行動可能な指示文（§6.3）とは役割が違う——こちらは
-#: HUD の 1 行に収まる状態名であり、指示文の置き換えではない。
+#: HUD の 1 行に収まる状態名であり、指示文の置き換えではない。値は文字列
+#: リテラルのまま持つ（`t(GATE_LABELS[status])` という辞書添字解決のため）。
 GATE_LABELS: Final[dict[Status, str]] = {
     Status.OK: "計測中",
     Status.HOLD: "調整中",
@@ -277,10 +327,10 @@ _UNKNOWN_GATE_LABEL: Final[str] = "待機中"
 
 
 def gate_label(state: AnalysisState | None) -> str:
-    """ゲート状態 1 つに対する §5.4 のテキスト表示。"""
-    if state is None:
-        return _UNKNOWN_GATE_LABEL
-    return GATE_LABELS.get(state.status, _UNKNOWN_GATE_LABEL)
+    """ゲート状態 1 つに対する §5.4 のテキスト表示（表示言語に従って訳す）。"""
+    if state is None or state.status not in GATE_LABELS:
+        return t(_UNKNOWN_GATE_LABEL)
+    return t(GATE_LABELS[state.status])
 
 
 def display_signature(outcome: AnalysisOutcome | None) -> tuple[object, ...]:
@@ -305,6 +355,9 @@ def display_signature(outcome: AnalysisOutcome | None) -> tuple[object, ...]:
     )
 
 
+DISPLAY_HOLD_TEMPLATE: Final[str] = "更新 {seconds:.1f} 秒ごと"
+
+
 def format_display_hold(hold_seconds: float | None) -> str:
     """FR-041: いま有効な表示の更新間隔を、HUD と設定 UI が共有する形で表示する。
 
@@ -314,7 +367,10 @@ def format_display_hold(hold_seconds: float | None) -> str:
     """
     if hold_seconds is None or hold_seconds <= 0.0:
         return ""
-    return f"更新 {hold_seconds:.1f} 秒ごと"
+    return t(DISPLAY_HOLD_TEMPLATE).format(seconds=hold_seconds)
+
+
+SMOOTHING_WINDOW_TEMPLATE: Final[str] = "平滑化 {seconds:.1f} 秒"
 
 
 def format_smoothing_window(tau_seconds: float | None) -> str:
@@ -326,4 +382,4 @@ def format_smoothing_window(tau_seconds: float | None) -> str:
     """
     if tau_seconds is None:
         return ""
-    return f"平滑化 {tau_seconds:.1f} 秒"
+    return t(SMOOTHING_WINDOW_TEMPLATE).format(seconds=tau_seconds)

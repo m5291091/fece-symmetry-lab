@@ -33,12 +33,13 @@ from face_symmetry_lab.domain.score_scale import (
     POINTS_PER_DEVIATION_PERCENT,
 )
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
+from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.readings import (
-    GENDER_LABELS,
-    PART_LABELS,
     format_distance,
     format_score,
     format_symmetry,
+    gender_label,
+    part_label,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
@@ -75,6 +76,10 @@ DISTANCE_UNIT_HELP: Final[str] = (
 #: 自由パラメータには当たらない（§8.6.3「表示語としてのスコア」・§8.6.5）。
 #: 採点・評価ではないことは help（`PART_EQUAL_WEIGHT_HELP`）で明示する。
 PART_EQUAL_WEIGHT_LABEL: Final[str] = "全体のスコア"
+
+#: 計算過程の `st.expander` の見出し。`{label}` へ `t(PART_EQUAL_WEIGHT_LABEL)`
+#: を渡す（f-string を `t()` へ渡さないため、テンプレート定数へ切り出す）。
+SCORE_CALCULATION_EXPANDER_TITLE_TEMPLATE: Final[str] = "{label}の計算過程を見る"
 
 #: §8.6.3/§8.6.5/§8.6.7: 「全体のスコア」の help。全体の対称度（対応点を 1 票ずつ
 #: 数える `d_3d`）とは重みも目盛りも異なる並列の総合量であることと、採点でも順位
@@ -115,10 +120,14 @@ SCORE_SCALE_HELP: Final[str] = (
 READING_LIMITS_HEADING: Final[str] = "この数値の読み方"
 
 #: §5.3.1: 3 本の長文から 1 行へ。**残したのは「何に使えないか」だけ**で、
-#: 式の内訳（部位別を平均しても全体にならない等）は About が持つ。
-READING_LIMITS: Final[tuple[str, ...]] = (
-    "同一人物・同一環境の中で傾向を見るための値です。他人との比較や医学的評価には使えません。",
+#: 式の内訳（部位別を平均しても全体にならない等）は About が持つ。名前を付けて
+#: 単独の定数にしてあるのは、`READING_LIMITS[0]`（タプルの添字）は `t()` の
+#: AST 走査（`tests/ui/test_i18n.py`）が解決できる形ではないため——名前を経由
+#: すれば `t(READING_LIMITS_NOTE)` として訳せる。
+READING_LIMITS_NOTE: Final[str] = (
+    "同一人物・同一環境の中で傾向を見るための値です。他人との比較や医学的評価には使えません。"
 )
+READING_LIMITS: Final[tuple[str, ...]] = (READING_LIMITS_NOTE,)
 
 #: §5.3・§14.7（同 docs）: 部位別の値は同一条件で撮り直すだけでも動く幅がある。
 #: この注記は 4 部位すべてに等しく掛かる形にし、特定の部位（鼻など）だけを
@@ -144,10 +153,17 @@ PART_LEVEL_VARIATION_CAPTION: Final[str] = (
 # （「◯%以上なら対称」）も書かない。§5.2 が禁じる進捗バー・ゲージ・達成度の
 # 演出も用いず、目盛りの端点は数値と文章で示す。
 
+#: `SCORE_STEP_TITLES`（タプル）の添字は `t()` の AST 走査が解決できる形では
+#: ないため、各見出しに名前を付けておく——訳す箇所は `t(SCORE_STEP_TITLE_*)` を
+#: 使う。タプル自体は既存の呼び出し側（テストを含む）のために残す。
+SCORE_STEP_TITLE_DEVIATIONS: Final[str] = "ステップ 1 — 4 つの部位それぞれの「ずれ」を読む"
+SCORE_STEP_TITLE_COMBINE: Final[str] = "ステップ 2 — 4 つのずれを 1 つにまとめる"
+SCORE_STEP_TITLE_SCALE: Final[str] = "ステップ 3 — まとめたずれを「点」へ置き換える"
+
 SCORE_STEP_TITLES: Final[tuple[str, str, str]] = (
-    "ステップ 1 — 4 つの部位それぞれの「ずれ」を読む",
-    "ステップ 2 — 4 つのずれを 1 つにまとめる",
-    "ステップ 3 — まとめたずれを「点」へ置き換える",
+    SCORE_STEP_TITLE_DEVIATIONS,
+    SCORE_STEP_TITLE_COMBINE,
+    SCORE_STEP_TITLE_SCALE,
 )
 
 SCORE_CALCULATION_DEVIATION_INTRO: Final[str] = (
@@ -178,10 +194,19 @@ SCORE_CALCULATION_SCALE_INTRO: Final[str] = (
 #: §8.6.7: 目盛りの傾き。数値は `domain.score_scale` の凍結アンカーから導く
 #: （`POINTS_PER_DEVIATION_PERCENT`）。UI 側に `25` を直書きすると、アンカーを
 #: 差し替えた版で注記だけが黙って嘘になる。
-SCORE_CALCULATION_SLOPE_NOTE: Final[str] = (
+#:
+#: `{points}` を含むテンプレートにしてあるのは、f-string で値を埋め込んだ
+#: 定数は AST 上 `JoinedStr` になり、`t()` の走査が「同じモジュールの
+#: module-level で文字列リテラルへ束縛された名前」として解決できないため
+#: （`tests/ui/test_i18n.py`）。`SCORE_CALCULATION_SLOPE_NOTE` は表示に使う
+#: 完成形の文字列として、既存の呼び出し側のためにそのまま残す。
+SCORE_CALCULATION_SLOPE_NOTE_TEMPLATE: Final[str] = (
     "この目盛りでは、ずれが1ポイント（両眼間隔の1%）動くと点が"
-    f"{POINTS_PER_DEVIATION_PERCENT:.0f}点動きます。"
+    "{points:.0f}点動きます。"
     "点の細かさは、測定の細かさではありません。"
+)
+SCORE_CALCULATION_SLOPE_NOTE: Final[str] = SCORE_CALCULATION_SLOPE_NOTE_TEMPLATE.format(
+    points=POINTS_PER_DEVIATION_PERCENT
 )
 
 #: §8.6.5・不変条件 11: 部位が 1 つでも欠測すると `s_3d` は欠測になる。そのとき
@@ -265,13 +290,19 @@ def _deviation_row(label: str, deviation: str, square: str) -> str:
 
 
 def _step_deviations_block(explanation: ScoreExplanation) -> str:
-    """ステップ 1: 部位ごとのずれと二乗を 1 行ずつ並べる。"""
+    """ステップ 1: 部位ごとのずれと二乗を 1 行ずつ並べる。
+
+    見出し語（`t("部位")` 等）・部位ラベル（`part_label`）の英訳は、いずれも
+    `_PART_COLUMN_CELLS` / `_VALUE_COLUMN_CELLS` の桁数に収まるよう選んである
+    （`_display_width` は East Asian Width を見るため、半角の英語ラベルでも
+    行の桁は揃う）。
+    """
     return "\n".join(
         [
-            _deviation_row("部位", "ずれ", "ずれ²"),
+            _deviation_row(t("部位"), t("ずれ"), t("ずれ²")),
             *(
                 _deviation_row(
-                    PART_LABELS[part.name],
+                    part_label(part.name),
                     format_distance(part.distance),
                     _square_percent(part.square),
                 )
@@ -288,21 +319,37 @@ SCORE_FORMULA_COMBINE: Final[str] = (
 )
 
 
+#: ステップ 2 の途中経過。実数値は `.format()` で埋め込む（f-string を `t()` へ
+#: 渡さないため、テンプレート定数へ切り出す）。
+STEP_COMBINE_SUM_TEMPLATE: Final[str] = "  ずれ² の合計 = {squares} = {total}"
+STEP_COMBINE_MEAN_TEMPLATE: Final[str] = "  {count} 部位で平均 = {total} ÷ {count} = {mean}"
+STEP_COMBINE_SQRT_TEMPLATE: Final[str] = "  平方根をとる = √{mean} = {combined}  ← まとめたずれ"
+
+
 def _step_combine_block(explanation: ScoreExplanation) -> str:
     """ステップ 2: 二乗和 → 平均 → 平方根の途中経過を、実数値で示す。"""
     squares = " + ".join(_square_percent(part.square) for part in explanation.parts)
+    total = _square_percent(explanation.square_sum)
+    count = len(explanation.parts)
+    mean = _square_percent(explanation.mean_square)
     return "\n".join(
         (
-            SCORE_FORMULA_COMBINE,
+            t(SCORE_FORMULA_COMBINE),
             "",
-            f"  ずれ² の合計 = {squares} = {_square_percent(explanation.square_sum)}",
-            f"  {len(explanation.parts)} 部位で平均 ="
-            f" {_square_percent(explanation.square_sum)}"
-            f" ÷ {len(explanation.parts)} = {_square_percent(explanation.mean_square)}",
-            f"  平方根をとる = √{_square_percent(explanation.mean_square)}"
-            f" = {format_distance(explanation.combined_distance)}  ← まとめたずれ",
+            t(STEP_COMBINE_SUM_TEMPLATE).format(squares=squares, total=total),
+            t(STEP_COMBINE_MEAN_TEMPLATE).format(count=count, total=total, mean=mean),
+            t(STEP_COMBINE_SQRT_TEMPLATE).format(
+                mean=mean, combined=format_distance(explanation.combined_distance)
+            ),
         )
     )
+
+
+#: ステップ 3 の式そのもの（実数値を代入する前）。`{label}` は `PART_EQUAL_WEIGHT_LABEL`
+#: を表示言語に訳した文字列を渡す。
+SCORE_FORMULA_SCALE_TEMPLATE: Final[str] = (
+    "{label} = 100 × ({zero_anchor} - まとめたずれ) ÷ ({zero_anchor} - {full_anchor})"
+)
 
 
 def _score_formula_scale(*, zero_anchor: float, full_anchor: float) -> str:
@@ -311,9 +358,10 @@ def _score_formula_scale(*, zero_anchor: float, full_anchor: float) -> str:
     アンカーは `domain.score_scale` の版付き定数から組み立てる（UI 側に写しを
     作らない）。
     """
-    return (
-        f"{PART_EQUAL_WEIGHT_LABEL} = 100 × ({format_distance(zero_anchor)} - まとめたずれ)"
-        f" ÷ ({format_distance(zero_anchor)} - {format_distance(full_anchor)})"
+    return t(SCORE_FORMULA_SCALE_TEMPLATE).format(
+        label=t(PART_EQUAL_WEIGHT_LABEL),
+        zero_anchor=format_distance(zero_anchor),
+        full_anchor=format_distance(full_anchor),
     )
 
 
@@ -327,8 +375,10 @@ def _step_scale_block(explanation: ScoreExplanation) -> str:
         full_anchor=explanation.distance_at_full_score,
     )
     # 続く 2 行の `=` を 1 行目の `=` の真下へ置く。ラベルは全角なので、文字数
-    # ではなく表示桁で詰める（`_display_width`）。
-    padding = " " * (_display_width(PART_EQUAL_WEIGHT_LABEL) + 1)
+    # ではなく表示桁で詰める（`_display_width`）。英語表示ではラベルが半角に
+    # なり桁数も変わるため、**訳した後のラベル**の表示幅で詰める
+    # （`PART_EQUAL_WEIGHT_LABEL` の生の日本語幅では英語表示のとき揃わない）。
+    padding = " " * (_display_width(t(PART_EQUAL_WEIGHT_LABEL)) + 1)
     return "\n".join(
         (
             formula,
@@ -364,25 +414,27 @@ def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
 
     `s_3d` が欠測のときは式の形だけを示し、数値を当てはめない（不変条件 11）。
     """
-    with st.expander(f"{PART_EQUAL_WEIGHT_LABEL}の計算過程を見る"):
+    with st.expander(
+        t(SCORE_CALCULATION_EXPANDER_TITLE_TEMPLATE).format(label=t(PART_EQUAL_WEIGHT_LABEL))
+    ):
         explanation = _resolve_explanation(outcome)
 
-        st.markdown(f"**{SCORE_STEP_TITLES[0]}**")
-        st.caption(SCORE_CALCULATION_DEVIATION_INTRO)
+        st.markdown(f"**{t(SCORE_STEP_TITLE_DEVIATIONS)}**")
+        st.caption(t(SCORE_CALCULATION_DEVIATION_INTRO))
         if explanation is None:
-            st.info(SCORE_CALCULATION_UNAVAILABLE_NOTICE)
+            st.info(t(SCORE_CALCULATION_UNAVAILABLE_NOTICE))
         else:
             st.code(_step_deviations_block(explanation), language="text")
 
-        st.markdown(f"**{SCORE_STEP_TITLES[1]}**")
-        st.caption(SCORE_CALCULATION_COMBINE_INTRO)
+        st.markdown(f"**{t(SCORE_STEP_TITLE_COMBINE)}**")
+        st.caption(t(SCORE_CALCULATION_COMBINE_INTRO))
         st.code(
-            SCORE_FORMULA_COMBINE if explanation is None else _step_combine_block(explanation),
+            t(SCORE_FORMULA_COMBINE) if explanation is None else _step_combine_block(explanation),
             language="text",
         )
 
-        st.markdown(f"**{SCORE_STEP_TITLES[2]}**")
-        st.caption(SCORE_CALCULATION_SCALE_INTRO)
+        st.markdown(f"**{t(SCORE_STEP_TITLE_SCALE)}**")
+        st.caption(t(SCORE_CALCULATION_SCALE_INTRO))
         st.code(
             _score_formula_scale(
                 zero_anchor=DISTANCE_AT_ZERO_SCORE,
@@ -393,16 +445,16 @@ def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
             language="text",
         )
         st.caption(
-            SCORE_CALCULATION_SLOPE_NOTE,
+            t(SCORE_CALCULATION_SLOPE_NOTE_TEMPLATE).format(points=POINTS_PER_DEVIATION_PERCENT),
             # §5.3.1（2026-08-16）: ここには 5 本の caption が並んでいた。手順を
             # 読み終えた直後に注記の壁が続くと、手順そのものまで読まれなくなる。
             # 「採点ではない」「順位ではない」「アンカー 2 点」は §8.6.3 の要求
             # なので**内容は削らず**、`help` へまとめて移した。
             help="\n\n".join(
                 (
-                    PART_EQUAL_WEIGHT_HELP,
-                    SCORE_CALCULATION_HIGH_VALUE_NOTE,
-                    SCORE_CALCULATION_MEASURED_RANGE_CAPTION,
+                    t(PART_EQUAL_WEIGHT_HELP),
+                    t(SCORE_CALCULATION_HIGH_VALUE_NOTE),
+                    t(SCORE_CALCULATION_MEASURED_RANGE_CAPTION),
                 )
             ),
         )
@@ -410,12 +462,15 @@ def _render_score_calculation_detail(outcome: AnalysisOutcome) -> None:
         st.divider()
         # 2 つの総合量が一致しない理由だけは常時出す。数字が 2 つ並んでいる場所で
         # 「なぜ違うのか」が読めないと、どちらかが誤りだと受け取られる。
-        st.caption(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION)
+        st.caption(t(SCORE_CALCULATION_WEIGHT_DIFFERENCE_CAPTION))
 
 
 # --- 状態と姿勢 ---------------------------------------------------------------
 
 
+#: 値は文字列リテラルのまま持つ（`t(_STATUS_HEADLINE[status])` という辞書
+#: 添字解決のため、`tests/ui/test_i18n.py`）。`Status` の全メンバーを網羅する
+#: ので、素の添字（`.get()` ではなく）で安全に引ける。
 _STATUS_HEADLINE: Final[dict[Status, str]] = {
     Status.OK: "計測中です。",
     Status.HOLD: "撮影条件を調整してください。",
@@ -433,7 +488,7 @@ def render_guidance(outcome: AnalysisOutcome) -> None:
     二通りに説明することはない。品質ゲートへ理由コードを追加したときに、
     ここで黙って何も表示されなくなることも防げる。
     """
-    st.write(_STATUS_HEADLINE.get(outcome.state.status, ""))
+    st.write(t(_STATUS_HEADLINE[outcome.state.status]))
     for code in outcome.state.reason_codes:
         guidance = REASON_GUIDANCE.get(code)
         if guidance:
@@ -462,19 +517,22 @@ def render_tracking_status(
         st.info(message)
 
 
+POSE_UNAVAILABLE_CAPTION: Final[str] = "姿勢: 取得できません"
+POSE_CAPTION_TEMPLATE: Final[str] = "姿勢 yaw {yaw:.1f}° / pitch {pitch:.1f}° / roll {roll:.1f}°"
+POSE_FACE_AREA_RATIO_TEMPLATE: Final[str] = " · 顔面積比 {ratio:.2f}"
+
+
 def render_pose(outcome: AnalysisOutcome) -> None:
     pose = outcome.pose
     if pose is None:
-        st.caption("姿勢: 取得できません")
+        st.caption(t(POSE_UNAVAILABLE_CAPTION))
         return
-    st.caption(
-        f"姿勢 yaw {pose.yaw_deg:.1f}° / pitch {pose.pitch_deg:.1f}° / roll {pose.roll_deg:.1f}°"
-        + (
-            f" · 顔面積比 {outcome.face_area_ratio:.2f}"
-            if outcome.face_area_ratio is not None
-            else ""
-        )
+    caption = t(POSE_CAPTION_TEMPLATE).format(
+        yaw=pose.yaw_deg, pitch=pose.pitch_deg, roll=pose.roll_deg
     )
+    if outcome.face_area_ratio is not None:
+        caption += t(POSE_FACE_AREA_RATIO_TEMPLATE).format(ratio=outcome.face_area_ratio)
+    st.caption(caption)
 
 
 # --- 詳細結果 -----------------------------------------------------------------
@@ -493,20 +551,35 @@ def _render_part_breakdown(outcome: AnalysisOutcome, *, show_smoothed: bool) -> 
     # §5.3.1: 揺れ幅の注記は `help` へ移した。部位別を見ている人だけが必要とする
     # 情報であり、常時表示だと詳細タブの灰色の文がもう 1 本増える。
     st.caption(
-        "部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）",
-        help=PART_LEVEL_VARIATION_CAPTION,
+        t("部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）"),
+        help=t(PART_LEVEL_VARIATION_CAPTION),
     )
     symmetry_3d = outcome.symmetry_3d
     for column, name in zip(st.columns(len(PART_NAMES)), PART_NAMES, strict=True):
         distance = resolve_part_distance_3d(outcome, name)
         column.metric(
-            PART_LABELS[name],
+            part_label(name),
             format_symmetry(distance),
-            help=f"ずれ {format_distance(distance)}",
+            help=t(PART_METRIC_DEVIATION_HELP_TEMPLATE).format(deviation=format_distance(distance)),
         )
         if show_smoothed:
             raw = symmetry_3d.distance(name) if symmetry_3d is not None else None
-            column.caption(f"生値 {format_symmetry(raw)}")
+            column.caption(t(RAW_VALUE_CAPTION_TEMPLATE).format(value=format_symmetry(raw)))
+
+
+PART_METRIC_DEVIATION_HELP_TEMPLATE: Final[str] = "ずれ {deviation}"
+RAW_VALUE_CAPTION_TEMPLATE: Final[str] = "生値 {value}"
+
+SKIN_QUALITY_HEADING: Final[str] = "#### 撮影補正後の肌表面参考値（実験値）"
+SKIN_QUALITY_METRIC_LABEL: Final[str] = "肌表面参考値"
+SKIN_TONE_UNIFORMITY_LABEL: Final[str] = "色調均一性"
+SKIN_TEXTURE_UNIFORMITY_LABEL: Final[str] = "テクスチャ均一性"
+SKIN_QUALITY_CAPTION: Final[str] = (
+    "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
+    "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。"
+)
+SKIN_QUALITY_GAIN_TEMPLATE: Final[str] = "補正gain RGB {r:.2f} / {g:.2f} / {b:.2f}"
+SKIN_QUALITY_VERSION_TEMPLATE: Final[str] = "skin metric {version} · 未校正"
 
 
 def _render_skin_quality(outcome: AnalysisOutcome) -> None:
@@ -515,25 +588,33 @@ def _render_skin_quality(outcome: AnalysisOutcome) -> None:
     if skin is None:
         return
     st.divider()
-    st.markdown("#### 撮影補正後の肌表面参考値（実験値）")
-    st.metric("肌表面参考値", "—" if skin.score is None else f"{skin.score:.1f}")
+    st.markdown(t(SKIN_QUALITY_HEADING))
+    st.metric(t(SKIN_QUALITY_METRIC_LABEL), "—" if skin.score is None else f"{skin.score:.1f}")
     tone_column, texture_column = st.columns(2)
     tone_column.metric(
-        "色調均一性",
+        t(SKIN_TONE_UNIFORMITY_LABEL),
         "—" if skin.tone_uniformity is None else f"{skin.tone_uniformity:.1f}",
     )
     texture_column.metric(
-        "テクスチャ均一性",
+        t(SKIN_TEXTURE_UNIFORMITY_LABEL),
         "—" if skin.texture_uniformity is None else f"{skin.texture_uniformity:.1f}",
     )
-    st.caption(
-        "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
-        "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。"
-    )
+    st.caption(t(SKIN_QUALITY_CAPTION))
     if skin.correction is not None:
         gains = skin.correction.gains
-        st.caption(f"補正gain RGB {gains[0]:.2f} / {gains[1]:.2f} / {gains[2]:.2f}")
-    st.caption(f"skin metric {skin.metric_version} · 未校正")
+        st.caption(t(SKIN_QUALITY_GAIN_TEMPLATE).format(r=gains[0], g=gains[1], b=gains[2]))
+    st.caption(t(SKIN_QUALITY_VERSION_TEMPLATE).format(version=skin.metric_version))
+
+
+#: §5.3/§8.6.3: ずれを併記する 1 行。`{deviation}` は `format_distance` の出力
+#: （既に整形済みの文字列）を差し込む。
+OVERALL_DEVIATION_CAPTION_TEMPLATE: Final[str] = (
+    "全体の対称度のずれ {deviation}（対称度との和は 100%）"
+)
+RAW_OVERALL_CAPTION_TEMPLATE: Final[str] = "平滑化前の生値 {symmetry}（ずれ {deviation}）"
+METRIC_VERSION_CAPTION_TEMPLATE: Final[str] = (
+    "metric {metric_3d} · 2D 診断 {metric_2d} · landmark map {landmark_map}"
+)
 
 
 def render_score_details(
@@ -565,10 +646,10 @@ def render_score_details(
     は §8.6.6 の構造的な欠陥を持つため画面には出さず、エクスポートの
     `distance_*_raw` としてのみ残る。
     """
-    st.subheader(SCORE_HEADING, help=DISTANCE_UNIT_HELP)
+    st.subheader(t(SCORE_HEADING), help=t(DISTANCE_UNIT_HELP))
     # §5.3.1: 見出し直下の注意は 1 行。「試験中の指標」であることは不変条件 8 が
     # 求めるが、以前の 2 文はその下に並ぶ 4 本の注意と合わせて灰色の壁になっていた。
-    st.caption("試験中の指標です。" + DISTANCE_UNIT_CAPTION)
+    st.caption(t("試験中の指標です。") + t(DISTANCE_UNIT_CAPTION))
 
     # 何か描画できるものがあるか（= 品質ゲートが開いているか）は 2D の有無で
     # 判定する。2D は品質ゲート直後に無条件で算出されるのに対し、3D は `z` の
@@ -585,16 +666,19 @@ def render_score_details(
     # 見出し結果の削除（2026-08-12）で吹き出しだけが総合値を出すようになったが、
     # 吹き出しには併記を置く場所が無い。この行がその唯一の受け皿である。
     st.caption(
-        f"全体の対称度のずれ {format_distance(resolve_overall_distance(outcome))}"
-        "（対称度との和は 100%）"
+        t(OVERALL_DEVIATION_CAPTION_TEMPLATE).format(
+            deviation=format_distance(resolve_overall_distance(outcome))
+        )
     )
 
     symmetry_3d = outcome.symmetry_3d
     if show_smoothed:
         overall_3d_raw = None if symmetry_3d is None else symmetry_3d.overall_distance
         st.caption(
-            f"平滑化前の生値 {format_symmetry(overall_3d_raw)}"
-            f"（ずれ {format_distance(overall_3d_raw)}）"
+            t(RAW_OVERALL_CAPTION_TEMPLATE).format(
+                symmetry=format_symmetry(overall_3d_raw),
+                deviation=format_distance(overall_3d_raw),
+            )
         )
 
     if show_parts:
@@ -611,8 +695,11 @@ def render_score_details(
     # セクションの締めとして分けて置く。
     metric_3d_label = symmetry_3d.metric_version if symmetry_3d is not None else "—"
     st.caption(
-        f"metric {metric_3d_label} · 2D 診断 {outcome.metric_version} · "
-        f"landmark map {outcome.landmark_map_version}"
+        t(METRIC_VERSION_CAPTION_TEMPLATE).format(
+            metric_3d=metric_3d_label,
+            metric_2d=outcome.metric_version,
+            landmark_map=outcome.landmark_map_version,
+        )
     )
 
 
@@ -623,7 +710,7 @@ def _render_reading_limits() -> None:
     あった。**読まれない注意文は、書いていないのと同じである。** 根拠と全文は
     About が持ち、ここからは `help` で到達させる。
     """
-    st.caption(" ".join(READING_LIMITS), help=SCORE_SCALE_HELP)
+    st.caption(t(READING_LIMITS_NOTE), help=t(SCORE_SCALE_HELP))
 
 
 # --- 参考年齢・参考性別 -------------------------------------------------------
@@ -636,6 +723,21 @@ DEMOGRAPHIC_RUNTIME_CAPTION: Final[str] = (
 )
 
 
+DEMOGRAPHIC_HEADING: Final[str] = "モデル推定の参考年齢・参考性別"
+REFERENCE_AGE_LABEL: Final[str] = "参考年齢"
+REFERENCE_AGE_VALUE_TEMPLATE: Final[str] = "{age:.1f}歳"
+REFERENCE_GENDER_LABEL: Final[str] = "外見由来の参考性別"
+GENDER_CONFIDENCE_CAPTION_TEMPLATE: Final[str] = (
+    "性別モデル確率 {confidence:.1%}・対象18〜75歳。"
+    "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
+)
+GENDER_PROBABILITIES_CAPTION_TEMPLATE: Final[str] = (
+    "モデル出力 female {female:.3f} / male {male:.3f}"
+)
+DEMOGRAPHIC_CACHED_CAPTION: Final[str] = "同一区間内の直近推論を再表示しています。"
+DEMOGRAPHIC_MODEL_INFO_EXPANDER_TITLE: Final[str] = "モデル情報"
+
+
 def render_demographic_estimate(estimate: DemographicEstimate) -> None:
     """§10.8 の年齢・性別参考パネルを描画する（Image と Camera で共有）。
 
@@ -644,19 +746,19 @@ def render_demographic_estimate(estimate: DemographicEstimate) -> None:
     モードによって別の見た目になっていた。同じ 2 つの数はすぐ下にテキストで
     出ており、図にすると参考値が左右差の結果より目立つ（§5.2）。
     """
-    st.subheader("モデル推定の参考年齢・参考性別")
+    st.subheader(t(DEMOGRAPHIC_HEADING))
     age_column, gender_column = st.columns(2)
-    age_column.metric("参考年齢", f"{estimate.estimated_age_years:.1f}歳")
-    gender_column.metric("外見由来の参考性別", GENDER_LABELS[estimate.gender])
-    st.caption(
-        f"性別モデル確率 {estimate.gender_confidence:.1%}・対象18〜75歳。"
-        "年齢や本人の自己認識・法的性別を断定せず、本人確認や人物評価には使用できません。"
+    age_column.metric(
+        t(REFERENCE_AGE_LABEL),
+        t(REFERENCE_AGE_VALUE_TEMPLATE).format(age=estimate.estimated_age_years),
     )
+    gender_column.metric(t(REFERENCE_GENDER_LABEL), gender_label(estimate.gender))
+    st.caption(t(GENDER_CONFIDENCE_CAPTION_TEMPLATE).format(confidence=estimate.gender_confidence))
     female, male = estimate.gender_probabilities
-    st.caption(f"モデル出力 female {female:.3f} / male {male:.3f}")
+    st.caption(t(GENDER_PROBABILITIES_CAPTION_TEMPLATE).format(female=female, male=male))
     if estimate.is_cached:
-        st.caption("同一区間内の直近推論を再表示しています。")
-    with st.expander("モデル情報"):
+        st.caption(t(DEMOGRAPHIC_CACHED_CAPTION))
+    with st.expander(t(DEMOGRAPHIC_MODEL_INFO_EXPANDER_TITLE)):
         st.code(
             f"version: {estimate.model_version}\n"
             f"sha256: {estimate.model_sha256}\n"

@@ -21,6 +21,21 @@ CSV / JSON（§9.2〜§9.4）は再現のための台帳で、列は機械可読
 文言は既存の定数を再利用する（`ui.scores` の留保、`ui.readings` のフォーマッタ、
 `ui.summary_panel` の要約の整形）。レポートだけが別の言い方・別の丸め方をすると、
 画面と保存物で違うことを言うことになる。
+
+**FR-043**: レポート本体も表示言語（`ui.i18n.t`）に従う（§9.6・AC-I18N-01）。
+`t()` は同じモジュール内で解決できる literal しか受け取れないため（`tests/ui/
+test_i18n.py`）、他 module が持つ定数（`ui.scores.PART_EQUAL_WEIGHT_LABEL`、
+`ui.summary_panel.REFERENCE_AGE_RATE_LABEL` など）はこの module から直接
+`t()` へ渡せない。値は変えずに**同じ文言をこの module 内の literal として複製し**、
+それを `t()` へ渡す（`_OVERALL_SCORE_LABEL` など）。部位名・性別だけは例外で、
+`ui.readings.part_label` / `gender_label` という**共有の訳付きアクセサ**が既に
+`t()` を内包しているため、この module は関数をそのまま呼ぶだけでよく、文言を
+複製しない（以前はここでも `_part_label` / `_gender_label` として複製していたが、
+2 か所が食い違う経路になるため寄せた）。foreign module の関数
+（`ui.readings.format_symmetry` / `format_score` / `baseline_note` /
+`format_baseline_symmetry` / `format_baseline_score`）が返す文字列は、実行時の
+関数呼び出し結果であって literal ではないため、この module からは訳せない
+——英語表示でも日本語のまま残る（ADR-0010 Consequences の「既知の穴」と同じ扱い）。
 """
 
 from __future__ import annotations
@@ -51,30 +66,29 @@ from face_symmetry_lab.domain.session_summary import (
     TrendSeries,
 )
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
+from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.readings import (
-    GENDER_LABELS,
-    PART_LABELS,
     baseline_note,
     format_baseline_score,
     format_baseline_symmetry,
     format_score,
     format_symmetry,
+    gender_label,
+    part_label,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
     score_points_value,
     symmetry_percent,
 )
-from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL
 from face_symmetry_lab.ui.summary_panel import (
-    REFERENCE_AGE_RATE_LABEL,
     SUMMARY_LIMITS_NOTE,
     SUMMARY_ROW_LABELS,
     SUMMARY_SEGMENT_NOTE,
-    SUMMARY_SPREAD_LABEL,
     format_summary_percent,
     format_summary_points,
     reading_for,
+    summary_row_label,
 )
 
 #: §9.6: レポートそのものの版。レコードスキーマ（`4.0.0`）とは別に数える——
@@ -139,6 +153,89 @@ _STYLE: Final[str] = (
     ".tile .v{display:block;font-size:1.5rem;font-weight:600;margin-top:2px;"
     "font-variant-numeric:tabular-nums}"
 )
+
+# --- FR-043: 他 module の定数を、この module 内で解決できる形へ複製する -------
+#
+# `t()` の引数は「文字列リテラル」か「同じモジュールの module-level で文字列
+# リテラルへ束縛された名前」でなければならない（`tests/ui/test_i18n.py`）。
+# ここに残る定数はどちらにも当たらない他 module の値なので、**値は変えずに
+# 同じ文言をここでも literal として持つ**。部位名・性別は `ui.readings.part_label`
+# / `gender_label` が既に訳付きアクセサとして共有しているため、ここでは複製しない
+# （上の import を参照）。
+
+_OVERALL_SYMMETRY_LABEL: Final[str] = "全体の対称度"
+_OVERALL_SCORE_LABEL: Final[str] = "全体のスコア"
+
+
+_CAMERA_REPORT_TITLE: Final[str] = "リアルタイム計測のまとめ"
+_IMAGE_REPORT_TITLE: Final[str] = "写真 1 枚の計測結果"
+_CAMERA_SUBTITLE_TEMPLATE: Final[str] = "{version} · 時刻はセッション開始からの相対値です。"
+_IMAGE_SUBTITLE_TEMPLATE: Final[str] = "{version} · この結果は 1 枚の写真だけから作られています。"
+
+_MEASUREMENT_HEADING: Final[str] = "測定結果"
+_SESSION_SUMMARY_HEADING: Final[str] = "このセッションの要約"
+_SEGMENT_BREAKDOWN_HEADING: Final[str] = "区間ごとの内訳"
+_SEGMENT_LABEL_TEMPLATE: Final[str] = "区間 {index}"
+_SEGMENT_LABEL_WITH_ID_TEMPLATE: Final[str] = "区間 {index}（{short}）"
+_HOLD_REASONS_HEADING: Final[str] = "計測条件を満たさなかった主な理由"
+_IMAGES_HEADING: Final[str] = "画像"
+_SCORE_CALCULATION_HEADING: Final[str] = "「全体のスコア」の求め方"
+_SCORE_CALCULATION_UNAVAILABLE_NOTE: Final[str] = (
+    "部位が 1 つでも欠測しているため、この画像では計算できません。"
+)
+_COMBINED_RMS_LABEL: Final[str] = "4 部位の二乗平均平方根"
+_SCALE_ANCHORS_TEMPLATE: Final[str] = (
+    "目盛りは 2 点で決まります。ずれ {full_score_pct:.2f}% が"
+    " 100 点、ずれ {zero_score_pct:.2f}% が 0 点です。"
+    "ずれが 1 ポイント動くと {points_per_deviation:.0f} 点動きます。"
+)
+_CAPTURE_STATE_HEADING: Final[str] = "撮影の状態"
+_YAW_LABEL: Final[str] = "顔の向き yaw"
+_PITCH_LABEL: Final[str] = "顔の向き pitch"
+_ROLL_LABEL: Final[str] = "顔の向き roll"
+_FACE_AREA_LABEL: Final[str] = "画面に占める顔の面積比"
+_SKIN_QUALITY_LABEL: Final[str] = "肌表面の参考値（実験値）"
+
+_VALUE_HEADER: Final[str] = "値"
+_MEDIAN_HEADER: Final[str] = "中央値"
+_RANGE_HEADER: Final[str] = "最小 〜 最大"
+_COUNT_HEADER: Final[str] = "件数"
+_BASELINE_MEAN_HEADER: Final[str] = "参照統計の平均"
+_ITEM_HEADER: Final[str] = "項目"
+_MEASURED_HEADER: Final[str] = "測定"
+_BASELINE_MEAN_DIFF_HEADER: Final[str] = "参照統計の平均（差）"
+_PART_HEADER: Final[str] = "部位"
+_DEVIATION_HEADER: Final[str] = "ずれ"
+
+#: `ui.summary_panel.SUMMARY_SPREAD_LABEL` と同じ文言。他 module の import なので
+#: `t()` へ直接渡せず、ここでも literal として複製する（上の FR-043 の節と同じ理由）。
+_SPREAD_LABEL: Final[str] = "変動幅（真ん中50%）"
+
+_VALID_RATE_LABEL: Final[str] = "計測条件を満たしたフレーム"
+_RECORDED_ROWS_LABEL: Final[str] = "記録した行数"
+_VALID_ROWS_LABEL: Final[str] = "うち有効な行数"
+_VALID_SPAN_LABEL: Final[str] = "有効だった長さ"
+_REFERENCE_AGE_RATE_LABEL: Final[str] = "参考年齢を表示できたフレーム"
+_SPAN_SECONDS_TEMPLATE: Final[str] = "{value:.1f} 秒"
+_POINTS_TEMPLATE: Final[str] = "{value:.1f} 点"
+_REASON_LINE_TEMPLATE: Final[str] = "{guidance}（{count:,} 回 · {share:.0%}）"
+
+_SYMMETRY_TREND_HEADING: Final[str] = "対称度の推移"
+_SCORE_TREND_HEADING: Final[str] = "全体のスコアの推移"
+_TREND_AXIS_NOTE: Final[str] = "横軸は記録された順序です。縦軸の範囲外は端に貼り付きます。"
+_SCORE_UNIT_SUFFIX: Final[str] = " 点"
+
+_AGE_SINGLE_TEMPLATE: Final[str] = "{median} 歳"
+_AGE_RANGE_TEMPLATE: Final[str] = "{median} 歳（真ん中50%: {low}〜{high} 歳）"
+_POPULATION_LINE_TEMPLATE: Final[str] = (
+    "平均: 参照統計の {span}・{genders}（人種で絞り込まず {count:,} 件）。探索値です。"
+)
+_SHOWN_COUNT_TEMPLATE: Final[str] = "表示できた判定 {count:,} 件"
+_SHOWN_RANGE_TEMPLATE: Final[str] = "真ん中50%: {low}〜{high} 歳 · {meta}"
+_AGE_YEARS_TEMPLATE: Final[str] = "{value:.0f} 歳"
+_MEDIAN_AGE_TILE_LABEL: Final[str] = "参考年齢（中央値）"
+_REFERENCE_AGE_TILE_LABEL: Final[str] = "参考年齢"
+_REFERENCE_GENDER_TILE_LABEL: Final[str] = "参考性別"
 
 
 class ReportError(ValueError):
@@ -229,10 +326,10 @@ def _demographic_section(
     """
     if not items:
         return f"<p class='note'>{_text(notice)}</p>" if notice else ""
-    block = f"<h2>{_text(DEMOGRAPHIC_HEADING)}</h2>" + _tiles(items)
+    block = f"<h2>{_text(t(DEMOGRAPHIC_HEADING))}</h2>" + _tiles(items)
     if meta:
         block += f"<p class='meta'>{_text(meta)}</p>"
-    return block + f"<p class='meta'>{_text(DEMOGRAPHIC_NOTE)}</p>"
+    return block + f"<p class='meta'>{_text(t(DEMOGRAPHIC_NOTE))}</p>"
 
 
 def _figures_section(figures: Sequence[ReportFigure]) -> str:
@@ -249,7 +346,7 @@ def _figures_section(figures: Sequence[ReportFigure]) -> str:
             f"{note}"
             "</figure>"
         )
-    return "<h2>画像</h2>" + "".join(blocks)
+    return f"<h2>{_text(t(_IMAGES_HEADING))}</h2>" + "".join(blocks)
 
 
 def _sharing_section(*, has_figures: bool) -> str:
@@ -264,7 +361,7 @@ def _sharing_section(*, has_figures: bool) -> str:
     """
     if not has_figures:
         return ""
-    return f"<p class='note'>{_text(REPORT_SHARING_NOTE)}</p>"
+    return f"<p class='note'>{_text(t(REPORT_SHARING_NOTE))}</p>"
 
 
 def _document(*, title: str, body: str) -> str:
@@ -292,7 +389,8 @@ def _summary_table(section: SummarySection, *, baseline: SessionBaselineSummary 
     """
     means = _session_baseline_rows(baseline)
     rows: list[list[str]] = []
-    for key, label in SUMMARY_ROW_LABELS:
+    for key, _label in SUMMARY_ROW_LABELS:
+        label = summary_row_label(key)
         reading = reading_for(section, key)
         fmt = format_summary_points if key == "score" else format_summary_percent
         if reading is None:
@@ -308,9 +406,15 @@ def _summary_table(section: SummarySection, *, baseline: SessionBaselineSummary 
         if means:
             row.append(means.get(key, "—"))
         rows.append(row)
-    headers = ["値", "中央値", SUMMARY_SPREAD_LABEL, "最小 〜 最大", "件数"]
+    headers = [
+        t(_VALUE_HEADER),
+        t(_MEDIAN_HEADER),
+        t(_SPREAD_LABEL),
+        t(_RANGE_HEADER),
+        t(_COUNT_HEADER),
+    ]
     if means:
-        headers.append("参照統計の平均")
+        headers.append(t(_BASELINE_MEAN_HEADER))
     return _table(headers, rows)
 
 
@@ -319,27 +423,34 @@ def _section_block(
     *,
     baseline: SessionBaselineSummary | None = None,
 ) -> str:
-    span = "—" if section.valid_span_ms is None else f"{section.valid_span_ms / 1000.0:.1f} 秒"
+    span = (
+        "—"
+        if section.valid_span_ms is None
+        else t(_SPAN_SECONDS_TEMPLATE).format(value=section.valid_span_ms / 1000.0)
+    )
     facts: list[list[str]] = [
-        ["計測条件を満たしたフレーム", f"{section.valid_rate * 100.0:.1f}%"],
-        ["記録した行数", f"{section.total_count:,}"],
-        ["うち有効な行数", f"{section.ok_count:,}"],
-        ["有効だった長さ", span],
+        [t(_VALID_RATE_LABEL), f"{section.valid_rate * 100.0:.1f}%"],
+        [t(_RECORDED_ROWS_LABEL), f"{section.total_count:,}"],
+        [t(_VALID_ROWS_LABEL), f"{section.ok_count:,}"],
+        [t(_VALID_SPAN_LABEL), span],
     ]
     # FR-021 (5): ゲートを呼んだセッションでだけ行を足す。§10.11-2 のとおり、
     # できなかった内訳は持たない。
     rate = section.reference_age_rate
     if rate is not None:
-        facts.append([REFERENCE_AGE_RATE_LABEL, f"{rate * 100.0:.0f}%"])
-    facts_table = _table(("項目", "値"), facts)
+        facts.append([t(_REFERENCE_AGE_RATE_LABEL), f"{rate * 100.0:.0f}%"])
+    facts_table = _table((t(_ITEM_HEADER), t(_VALUE_HEADER)), facts)
     reasons = ""
     if section.reason_counts:
         lines = [
-            f"{REASON_GUIDANCE.get(code, code.value)}"
-            f"（{count:,} 回 · {count / section.total_count if section.total_count else 0:.0%}）"
+            t(_REASON_LINE_TEMPLATE).format(
+                guidance=t(REASON_GUIDANCE[code]),
+                count=count,
+                share=count / section.total_count if section.total_count else 0,
+            )
             for code, count in section.reason_counts
         ]
-        reasons = "<h3>計測条件を満たさなかった主な理由</h3>" + _bullets(lines)
+        reasons = f"<h3>{_text(t(_HOLD_REASONS_HEADING))}</h3>" + _bullets(lines)
     return facts_table + _summary_table(section, baseline=baseline) + reasons
 
 
@@ -414,9 +525,9 @@ def _trend_section(series: TrendSeries | None) -> str:
         return ""
     percent_chart = _chart(
         [
-            ("全体の対称度", series.symmetry, _TREND_COLORS["overall"]),
+            (t(_OVERALL_SYMMETRY_LABEL), series.symmetry, _TREND_COLORS["overall"]),
             *(
-                (PART_LABELS[name], series.parts.get(name, ()), _TREND_COLORS[name])
+                (part_label(name), series.parts.get(name, ()), _TREND_COLORS[name])
                 for name in PART_NAMES
             ),
         ],
@@ -425,17 +536,17 @@ def _trend_section(series: TrendSeries | None) -> str:
         unit="%",
     )
     score_chart = _chart(
-        [(PART_EQUAL_WEIGHT_LABEL, series.score, _TREND_COLORS["overall"])],
+        [(t(_OVERALL_SCORE_LABEL), series.score, _TREND_COLORS["overall"])],
         low=_SCORE_Y_MIN,
         high=_SCORE_Y_MAX,
-        unit=" 点",
+        unit=t(_SCORE_UNIT_SUFFIX),
     )
     blocks = ""
     if percent_chart:
-        blocks += "<h3>対称度の推移</h3>" + percent_chart
+        blocks += f"<h3>{_text(t(_SYMMETRY_TREND_HEADING))}</h3>" + percent_chart
     if score_chart:
-        blocks += f"<h3>{_text(PART_EQUAL_WEIGHT_LABEL)}の推移</h3>" + score_chart
-    return blocks + "<p class='meta'>横軸は記録された順序です。縦軸の範囲外は端に貼り付きます。</p>"
+        blocks += f"<h3>{_text(t(_SCORE_TREND_HEADING))}</h3>" + score_chart
+    return blocks + f"<p class='meta'>{_text(t(_TREND_AXIS_NOTE))}</p>"
 
 
 def _session_baseline_rows(baseline: SessionBaselineSummary | None) -> dict[str, str]:
@@ -462,24 +573,21 @@ def _baseline_mean(metrics: Mapping[str, object], name: str, *, points: bool) ->
     mean = getattr(summary, "mean", None)
     if mean is None:
         return "—"
-    return f"{mean:.1f} 点" if points else f"{mean:.2f}%"
+    return t(_POINTS_TEMPLATE).format(value=mean) if points else f"{mean:.2f}%"
 
 
 def _population_line(baseline: SessionBaselineSummary | None) -> str:
     """§10.12-5: 母集団が何であるかを、平均と同じ場所へ 1 行で書く。"""
     if baseline is None:
         return ""
-    genders = "・".join(GENDER_LABELS.get(gender, "—") for gender in baseline.genders)
+    genders = "・".join(gender_label(gender) for gender in baseline.genders)
     ages = baseline.ages
     span = (
-        f"{ages.median} 歳"
+        t(_AGE_SINGLE_TEMPLATE).format(median=ages.median)
         if ages.low == ages.high
-        else f"{ages.median} 歳（真ん中50%: {ages.low}〜{ages.high} 歳）"
+        else t(_AGE_RANGE_TEMPLATE).format(median=ages.median, low=ages.low, high=ages.high)
     )
-    return (
-        f"平均: 参照統計の {span}・{genders}"
-        f"（人種で絞り込まず {baseline.count:,} 件）。探索値です。"
-    )
+    return t(_POPULATION_LINE_TEMPLATE).format(span=span, genders=genders, count=baseline.count)
 
 
 def _session_demographic_section(
@@ -499,12 +607,15 @@ def _session_demographic_section(
     if overview is None:
         return _demographic_section((), notice=notice)
     ages = overview.ages
-    genders = "・".join(GENDER_LABELS.get(gender, "—") for gender in overview.genders)
-    meta = f"表示できた判定 {ages.sample_count:,} 件"
+    genders = "・".join(gender_label(gender) for gender in overview.genders)
+    meta = t(_SHOWN_COUNT_TEMPLATE).format(count=ages.sample_count)
     if ages.low != ages.high:
-        meta = f"真ん中50%: {ages.low}〜{ages.high} 歳 · {meta}"
+        meta = t(_SHOWN_RANGE_TEMPLATE).format(low=ages.low, high=ages.high, meta=meta)
     return _demographic_section(
-        (("参考年齢（中央値）", f"{ages.median} 歳"), ("参考性別", genders)),
+        (
+            (t(_MEDIAN_AGE_TILE_LABEL), t(_AGE_SINGLE_TEMPLATE).format(median=ages.median)),
+            (t(_REFERENCE_GENDER_TILE_LABEL), genders),
+        ),
         meta=meta,
     )
 
@@ -540,30 +651,36 @@ def build_camera_report(
         raise ReportError("記録が 1 件も無いセッションのレポートは作れません。")
 
     body = _header(
-        "リアルタイム計測のまとめ",
-        f"{REPORT_VERSION} · 時刻はセッション開始からの相対値です。",
+        t(_CAMERA_REPORT_TITLE),
+        t(_CAMERA_SUBTITLE_TEMPLATE).format(version=REPORT_VERSION),
     )
-    body += "<h2>測定結果</h2><h3>このセッションの要約</h3>"
+    body += (
+        f"<h2>{_text(t(_MEASUREMENT_HEADING))}</h2><h3>{_text(t(_SESSION_SUMMARY_HEADING))}</h3>"
+    )
     body += _section_block(summary.overall, baseline=baseline)
     if baseline is not None:
         body += f"<p class='meta'>{_text(_population_line(baseline))}</p>"
-    body += f"<p class='meta'>{_text(SUMMARY_LIMITS_NOTE)}</p>"
+    body += f"<p class='meta'>{_text(t(SUMMARY_LIMITS_NOTE))}</p>"
     body += _trend_section(series)
 
     if len(summary.segments) > 1:
-        body += "<h3>区間ごとの内訳</h3>"
-        body += f"<p class='meta'>{_text(SUMMARY_SEGMENT_NOTE)}</p>"
+        body += f"<h3>{_text(t(_SEGMENT_BREAKDOWN_HEADING))}</h3>"
+        body += f"<p class='meta'>{_text(t(SUMMARY_SEGMENT_NOTE))}</p>"
         for index, section in enumerate(summary.segments, start=1):
             # 区間の見出しは太字の段落にする。`<h3>` にすると「区間ごとの内訳」と
             # 同じ深さになり、どちらが親なのか読めなくなる。画面（`ui.summary_panel`）
             # も同じく `**区間 N**` で出しているので、見出しの深さが両者で揃う。
             short = (section.segment_id or "")[:8]
-            label = f"区間 {index}（{short}）" if short else f"区間 {index}"
+            label = (
+                t(_SEGMENT_LABEL_WITH_ID_TEMPLATE).format(index=index, short=short)
+                if short
+                else t(_SEGMENT_LABEL_TEMPLATE).format(index=index)
+            )
             body += f"<p><strong>{_text(label)}</strong></p>" + _section_block(section)
 
     body += _session_demographic_section(overview, notice=notice)
 
-    return _document(title="リアルタイム計測のまとめ", body=body)
+    return _document(title=t(_CAMERA_REPORT_TITLE), body=body)
 
 
 # --- Image（§9.6.2） ----------------------------------------------------------
@@ -609,23 +726,20 @@ def _score_calculation(parts: Mapping[str, float | None]) -> str:
     explanation = explain_score(parts)
     if explanation is None:
         return (
-            "<h3>「全体のスコア」の求め方</h3>"
-            "<p class='meta'>部位が 1 つでも欠測しているため、この画像では計算できません。</p>"
+            f"<h3>{_text(t(_SCORE_CALCULATION_HEADING))}</h3>"
+            f"<p class='meta'>{_text(t(_SCORE_CALCULATION_UNAVAILABLE_NOTE))}</p>"
         )
-    rows = [
-        [PART_LABELS.get(part.name, part.name), f"{part.distance * 100.0:.2f}%"]
-        for part in explanation.parts
-    ]
-    rows.append(["4 部位の二乗平均平方根", f"{explanation.combined_distance * 100.0:.2f}%"])
-    rows.append([PART_EQUAL_WEIGHT_LABEL, f"{explanation.points:.1f} 点"])
-    anchors = (
-        f"目盛りは 2 点で決まります。ずれ {explanation.distance_at_full_score * 100.0:.2f}% が"
-        f" 100 点、ずれ {explanation.distance_at_zero_score * 100.0:.2f}% が 0 点です。"
-        f"ずれが 1 ポイント動くと {explanation.points_per_deviation_percent:.0f} 点動きます。"
+    rows = [[part_label(part.name), f"{part.distance * 100.0:.2f}%"] for part in explanation.parts]
+    rows.append([t(_COMBINED_RMS_LABEL), f"{explanation.combined_distance * 100.0:.2f}%"])
+    rows.append([t(_OVERALL_SCORE_LABEL), t(_POINTS_TEMPLATE).format(value=explanation.points)])
+    anchors = t(_SCALE_ANCHORS_TEMPLATE).format(
+        full_score_pct=explanation.distance_at_full_score * 100.0,
+        zero_score_pct=explanation.distance_at_zero_score * 100.0,
+        points_per_deviation=explanation.points_per_deviation_percent,
     )
     return (
-        "<h3>「全体のスコア」の求め方</h3>"
-        + _table(("部位", "ずれ"), rows)
+        f"<h3>{_text(t(_SCORE_CALCULATION_HEADING))}</h3>"
+        + _table((t(_PART_HEADER), t(_DEVIATION_HEADER)), rows)
         + f"<p class='meta'>{_text(anchors)}</p>"
     )
 
@@ -663,21 +777,21 @@ def build_image_report(
     # 失敗している」と読まれる（HUD が `:empty` で行を畳むのと同じ理由）。
     annotated = any(annotations.values())
     rows: list[list[str]] = [
-        ["全体の対称度", format_symmetry(overall)],
-        [PART_EQUAL_WEIGHT_LABEL, format_score(equal_weight)],
-        *([PART_LABELS[name], format_symmetry(parts[name])] for name in PART_NAMES),
+        [t(_OVERALL_SYMMETRY_LABEL), format_symmetry(overall)],
+        [t(_OVERALL_SCORE_LABEL), format_score(equal_weight)],
+        *([part_label(name), format_symmetry(parts[name])] for name in PART_NAMES),
     ]
-    headers: tuple[str, ...] = ("値", "測定")
+    headers: tuple[str, ...] = (t(_VALUE_HEADER), t(_MEASURED_HEADER))
     if annotated:
-        headers = ("値", "測定", "参照統計の平均（差）")
+        headers = (t(_VALUE_HEADER), t(_MEASURED_HEADER), t(_BASELINE_MEAN_DIFF_HEADER))
         keys = ["symmetry", "score", *PART_NAMES]
         rows = [[*row, annotations.get(key, "")] for row, key in zip(rows, keys, strict=True)]
 
     body = _header(
-        "写真 1 枚の計測結果",
-        f"{REPORT_VERSION} · この結果は 1 枚の写真だけから作られています。",
+        t(_IMAGE_REPORT_TITLE),
+        t(_IMAGE_SUBTITLE_TEMPLATE).format(version=REPORT_VERSION),
     )
-    body += "<h2>測定結果</h2>" + _table(headers, rows)
+    body += f"<h2>{_text(t(_MEASUREMENT_HEADING))}</h2>" + _table(headers, rows)
     if baseline is not None and show_demographics:
         body += (
             "<p class='meta'>"
@@ -687,20 +801,20 @@ def build_image_report(
     body += _score_calculation(parts)
 
     pose = outcome.pose
-    body += "<h3>撮影の状態</h3>" + _table(
-        ("項目", "値"),
+    body += f"<h3>{_text(t(_CAPTURE_STATE_HEADING))}</h3>" + _table(
+        (t(_ITEM_HEADER), t(_VALUE_HEADER)),
         [
-            ["顔の向き yaw", "—" if pose is None else f"{pose.yaw_deg:.1f}°"],
-            ["顔の向き pitch", "—" if pose is None else f"{pose.pitch_deg:.1f}°"],
-            ["顔の向き roll", "—" if pose is None else f"{pose.roll_deg:.1f}°"],
+            [t(_YAW_LABEL), "—" if pose is None else f"{pose.yaw_deg:.1f}°"],
+            [t(_PITCH_LABEL), "—" if pose is None else f"{pose.pitch_deg:.1f}°"],
+            [t(_ROLL_LABEL), "—" if pose is None else f"{pose.roll_deg:.1f}°"],
             [
-                "画面に占める顔の面積比",
+                t(_FACE_AREA_LABEL),
                 "—"
                 if outcome.face_area_ratio is None
                 else f"{outcome.face_area_ratio * 100.0:.1f}%",
             ],
             [
-                "肌表面の参考値（実験値）",
+                t(_SKIN_QUALITY_LABEL),
                 "—"
                 if outcome.skin_quality is None or outcome.skin_quality.score is None
                 else f"{outcome.skin_quality.score:.1f}",
@@ -714,12 +828,15 @@ def build_image_report(
         ()
         if shown is None
         else (
-            ("参考年齢", f"{shown.estimated_age_years:.0f} 歳"),
-            ("参考性別", GENDER_LABELS.get(shown.gender, "—")),
+            (
+                t(_REFERENCE_AGE_TILE_LABEL),
+                t(_AGE_YEARS_TEMPLATE).format(value=shown.estimated_age_years),
+            ),
+            (t(_REFERENCE_GENDER_TILE_LABEL), gender_label(shown.gender)),
         ),
         notice=notice,
     )
 
     body += _figures_section(figures)
     body += _sharing_section(has_figures=bool(figures))
-    return _document(title="写真 1 枚の計測結果", body=body)
+    return _document(title=t(_IMAGE_REPORT_TITLE), body=body)

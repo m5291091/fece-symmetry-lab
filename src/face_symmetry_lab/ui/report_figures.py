@@ -21,6 +21,7 @@ from face_symmetry_lab.adapters.imaging.image_encoding import (
     encode_data_uri,
 )
 from face_symmetry_lab.application.symmetrization import SymmetrizationView
+from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.report import ReportFigure
 
 LANDMARK_CAPTION: Final[str] = "検出したランドマークを重ねたプレビュー"
@@ -77,8 +78,16 @@ def build_report_figures(
     if not include_figures:
         return ()
     candidates = [
-        _figure(preview, caption=LANDMARK_CAPTION),
-        _figure(None if view is None else view.overlay, caption=OVERLAY_CAPTION, note=OVERLAY_NOTE),
-        _figure(None if view is None else view.warped, caption=WARPED_CAPTION, note=WARPED_NOTE),
+        _figure(preview, caption=t(LANDMARK_CAPTION)),
+        _figure(
+            None if view is None else view.overlay,
+            caption=t(OVERLAY_CAPTION),
+            note=t(OVERLAY_NOTE),
+        ),
+        _figure(
+            None if view is None else view.warped,
+            caption=t(WARPED_CAPTION),
+            note=t(WARPED_NOTE),
+        ),
     ]
     return tuple(figure for figure in candidates if figure is not None)

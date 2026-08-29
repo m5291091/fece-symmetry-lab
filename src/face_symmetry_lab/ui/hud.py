@@ -43,6 +43,7 @@ from face_symmetry_lab.ui.hud_assets import (
     HUD_STYLESHEET,
     VIDEO_CHROME_CSS,
 )
+from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.readings import (
     GENDER_LABELS,
     baseline_note,
@@ -113,6 +114,12 @@ HUD_CHART_Y_MAX: Final[float] = 100.0
 #: 両方へ渡す。
 HUD_CHART_WIDTH_PX: Final[int] = 220
 HUD_CHART_HEIGHT_PX: Final[int] = 64
+
+#: FR-043: `demo` 行はもともと f-string だった。`t()` は f-string を受け付けない
+#: ため（鍵が実行のたび変わり永久に訳せない）、テンプレートへ切り出してから
+#: `t()` に通し、その後で `.format()` する。
+_HUD_AGE_TEMPLATE: Final[str] = "{age:.0f} 歳"
+_HUD_DEMOGRAPHIC_TEMPLATE: Final[str] = "参考年齢 {age} · 参考性別 {gender}"
 
 
 def build_baseline_payload(
@@ -218,11 +225,11 @@ def build_hud_payload(
     visible = position != HUD_HIDDEN and position in HUD_PLACEMENTS
     demo = ""
     if show_demographics and estimate is not None:
-        age = f"{estimate.estimated_age_years:.0f} 歳"
+        age = t(_HUD_AGE_TEMPLATE).format(age=estimate.estimated_age_years)
         # `DemographicEstimate` は `gender` が `gender_probabilities` の argmax
         # であることを検証済みなので、ここで導出し直さずラベルへ変換する。
         gender = GENDER_LABELS.get(estimate.gender, "—")
-        demo = f"参考年齢 {age} · 参考性別 {gender}"
+        demo = t(_HUD_DEMOGRAPHIC_TEMPLATE).format(age=age, gender=gender)
     elif notice:
         demo = notice
     part_readings = {name: format_symmetry(parts.get(name)) for name in PART_NAMES}
@@ -232,7 +239,7 @@ def build_hud_payload(
     return {
         "visible": visible,
         "symmetry": format_symmetry(overall),
-        "label": "対称度（実験値）",
+        "label": t("対称度（実験値）"),
         # §8.6.7: 「全体のスコア」だけは点の目盛りである。`format_symmetry` を
         # 使うと HUD だけが 98% 前後の別の目盛りを出し、見出しと食い違う。
         "score": format_score(equal_weight),
@@ -390,6 +397,12 @@ def hud_bridge_script(*, fullscreen: bool, position: str) -> str:
     HUD をページの `<body>` へ付けることが、全画面表示で生き残る条件でもある。
     `<body>` 直下なら Streamlit のどのコンテナにもクリップされず、包含ブロック
     にもされないため、`position: fixed` が期待どおりに振る舞う。
+
+    FR-043: `ui.hud_assets.HUD_RUNTIME_JS` は骨格を 1 度だけ作る静的な文字列
+    なので、画面に出る日本語（部位ラベル・凡例・「全体のスコア」・grip の文言）
+    を直接焼き込むと言語切替が効かない。ここで `t()` を通した文字列を CFG へ
+    載せ、runtime 側は骨格を作り直さず `textContent` を CFG の値で書き換える
+    （bridge が再実行されるたびに、そのときの表示言語を反映する）。
     """
     config = json.dumps(
         {
@@ -400,8 +413,17 @@ def hud_bridge_script(*, fullscreen: bool, position: str) -> str:
             "css": HUD_STYLESHEET,
             "videoCss": VIDEO_CHROME_CSS,
             "intervalMs": HUD_REFRESH_MS,
-            "badgeText": FULLSCREEN_BADGE,
-            "hintText": FULLSCREEN_HINT,
+            "badgeText": t(FULLSCREEN_BADGE),
+            "hintText": t(FULLSCREEN_HINT),
+            "scoreLabel": t("全体のスコア"),
+            "partLabels": {
+                "contour": t("輪郭"),
+                "eyes": t("目"),
+                "nose": t("鼻"),
+                "mouth": t("口"),
+            },
+            "legendOverallLabel": t("全体"),
+            "gripText": t("ドラッグで移動"),
             "chartWidth": HUD_CHART_WIDTH_PX,
             "chartHeight": HUD_CHART_HEIGHT_PX,
             "chartCapacity": HUD_CHART_CAPACITY,

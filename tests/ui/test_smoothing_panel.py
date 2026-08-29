@@ -170,7 +170,9 @@ def test_the_reset_behaviour_is_reachable_without_being_always_on_screen() -> No
     source = inspect.getsource(smoothing_panel.render_smoothing_control)
 
     assert "区間" in SMOOTHING_RESET_NOTE
-    assert 'help=f"{SMOOTHING_RESET_NOTE}' in source
+    # FR-043: `t()` で包んでも、同じ定数が同じ `help=` の f-string 内に留まる
+    # ことは変わらない（訳が無ければ原文のまま、AC-I18N-03 の fail-open）。
+    assert 'help=f"{t(SMOOTHING_RESET_NOTE)}' in source
     assert SMOOTHING_RESET_NOTE not in _all_text(_run()), "常時表示からは外す"
 
 

@@ -456,6 +456,35 @@ def test_step_three_aligns_its_continuation_lines_under_the_first_equals() -> No
     assert len(columns) == 1, f"`=` の位置が揃っていない: {step_three}"
 
 
+def test_step_one_and_step_three_stay_aligned_in_english_mode() -> None:
+    """FR-043/AC-I18N-01: `_display_width` は East Asian Width を見るため、
+    英語ラベル（半角）でも `_cell` の桁は揃うはずである。
+
+    罠: 部位ラベルや見出し語を英訳しただけで、`_score_formula_scale` の
+    `padding` 計算が訳す前の日本語ラベル幅のままだと、英語表示でだけ
+    ステップ 3 の `=` がずれる（日本語表示のテストでは検出できない）。
+    """
+    at = AppTest.from_string(
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
+        "from face_symmetry_lab.ui.scores import render_score_details\n" + _STEP_SAMPLE
+    )
+    at.session_state["ui_language"] = "en"
+    at.run()
+
+    assert not at.exception
+    blocks = [element.value for element in at.code]
+
+    step_one = next(block for block in blocks if "Dev²" in block and "Contour" in block)
+    rows = step_one.splitlines()
+    assert len(rows) == 5  # heading + 4 regions
+    widths = {_cells(row) for row in rows}
+    assert len(widths) == 1, f"columns do not line up: {[(_cells(row), row) for row in rows]}"
+
+    step_three = next(block for block in blocks if "Overall score" in block)
+    columns = {_cells(row.split("=")[0]) for row in step_three.splitlines()}
+    assert len(columns) == 1, f"`=` does not line up: {step_three}"
+
+
 def test_step_two_shows_the_sum_the_mean_and_the_square_root() -> None:
     """ステップ 2: 途中経過を出す。**読者が電卓で追える形にする。**
 

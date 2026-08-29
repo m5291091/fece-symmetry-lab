@@ -11,6 +11,14 @@ fragment へ入れると、最大 3,000 行の要約を毎秒 5 回計算する�
 順序への写像ではない。「偏差値」「順位」「パーセンタイル」「合否」「平均より上」「平均より下」
 と価値判断語を使わない。四分位範囲は「変動幅（真ん中 50%）」と呼ぶ——「分位」は
 §10.12 が順位化の語として名指ししているため、同じ語で別のものを指さない。
+
+**FR-043**: `SUMMARY_ROW_LABELS` の表示側ラベルは `ui.readings.PART_LABELS`
+（他エージェントの担当ファイル）を経由した値であり、この module から直接
+`t()` へ渡せない（`t()` の引数は同じモジュールの module-level literal か文字列
+リテラルでなければならない、`tests/ui/test_i18n.py`）。`summary_row_label` が
+`key`（`"symmetry"` / `"score"` / `domain.metrics.PART_NAMES` の要素、いずれも
+言語に依存しない固定識別子）から現在の表示言語のラベルを引き、`ui.report`
+（同じ訳表 `_report.py` を共有する）もこの関数越しに読む。
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ from face_symmetry_lab.domain.session_summary import (
     SummarySection,
 )
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
+from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.readings import PART_LABELS
 
 SUMMARY_HEADING: Final[str] = "##### このセッションの要約"
@@ -50,13 +59,54 @@ REFERENCE_AGE_RATE_HELP: Final[str] = (
     "顔が写っていないフレームは数えていません。"
 )
 
-#: 表の行の並び。画面に出る 6 つと同じ順・同じラベルにそろえる。FR-042 の
-#: レポートも同じ並びを読む（画面と保存物で行の順が違わないように）。
+#: 表の行の並び（キーの列挙のためだけに使う）。画面に出る 6 つと同じ順に
+#: そろえる。FR-042 のレポートも同じ並びを読む（画面と保存物で行の順が違わない
+#: ように）。**2 番目の要素（日本語ラベル）は表示に使わない**——実際に出す
+#: ラベルは必ず `summary_row_label(key)` を経由し、そちらが表示言語（FR-043）
+#: へ訳す。ここへ英訳を足す必要はない。
 SUMMARY_ROW_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("symmetry", "全体の対称度"),
     ("score", "全体のスコア"),
     *tuple((name, PART_LABELS[name]) for name in PART_LABELS),
 )
+
+_VALID_RATE_LABEL: Final[str] = "計測条件を満たしたフレーム"
+_VALID_RATE_HELP: Final[str] = "記録した全フレームのうち、品質ゲートを通った割合です。"
+_VALID_SPAN_LABEL: Final[str] = "有効だった長さ"
+_VALID_SPAN_HELP: Final[str] = (
+    "最初と最後の有効フレームの間隔です。連続して有効だった時間ではありません。"
+)
+_HOLD_REASONS_CAPTION: Final[str] = "計測条件を満たさなかった主な理由"
+
+_SPAN_SECONDS_TEMPLATE: Final[str] = "{value:.1f} 秒"
+_RECORD_COUNTS_TEMPLATE: Final[str] = "記録 {total:,} 行 · うち有効 {ok:,} 行"
+_REASON_LINE_TEMPLATE: Final[str] = "- {guidance}（{count:,} 回 · {share:.0%}）"
+_SEGMENT_BREAKDOWN_EXPANDER_TEMPLATE: Final[str] = "区間ごとの内訳（{count} 区間）"
+_SEGMENT_HEADING_WITH_ID_TEMPLATE: Final[str] = "**区間 {index}**（`{short}`）"
+_SEGMENT_HEADING_TEMPLATE: Final[str] = "**区間 {index}**"
+
+
+def summary_row_label(key: str) -> str:
+    """`SUMMARY_ROW_LABELS` の鍵から、現在の表示言語での見出しを引く。
+
+    値（`PART_LABELS[name]` の日本語）ではなく鍵で分岐するのは、鍵が言語に
+    依存しない固定の識別子（`"symmetry"` / `"score"` / `domain.metrics.PART_NAMES`
+    の要素）だからである。`ui.report` も同じ関数を読み、レポートと画面のラベルが
+    ここ 1 か所からそろう。
+    """
+    if key == "symmetry":
+        return t("全体の対称度")
+    if key == "score":
+        return t("全体のスコア")
+    if key == "contour":
+        return t("輪郭")
+    if key == "eyes":
+        return t("目")
+    if key == "nose":
+        return t("鼻")
+    if key == "mouth":
+        return t("口")
+    return dict(SUMMARY_ROW_LABELS).get(key, key)
 
 
 def format_summary_percent(value: float | None) -> str:
@@ -104,10 +154,14 @@ def _render_reading_table(section: SummarySection) -> None:
     置き換わる（`ui.reference_page` が実測で確認済みの罠）。表なら列幅に合わせて
     縮む。`st.dataframe`/pandas を使わないのも同じ module の前例に従う。
     """
-    header = f"| 値 | 中央値 | {SUMMARY_SPREAD_LABEL} | 最小 〜 最大 | 件数 |"
+    header = (
+        f"| {t('値')} | {t('中央値')} | {t(SUMMARY_SPREAD_LABEL)} | "
+        f"{t('最小 〜 最大')} | {t('件数')} |"
+    )
     divider = "|---|---:|---:|---:|---:|"
     rows = []
-    for key, label in SUMMARY_ROW_LABELS:
+    for key, _label in SUMMARY_ROW_LABELS:
+        label = summary_row_label(key)
         reading = reading_for(section, key)
         median, spread, extremes = _cells(reading, points=key == "score")
         count = "—" if reading is None else f"{reading.sample_count:,}"
@@ -123,37 +177,38 @@ def _render_reasons(section: SummarySection) -> None:
     """
     if not section.reason_counts:
         return
-    st.caption("計測条件を満たさなかった主な理由")
+    st.caption(t(_HOLD_REASONS_CAPTION))
     lines = []
     for code, count in section.reason_counts:
         share = count / section.total_count if section.total_count else 0.0
-        guidance = REASON_GUIDANCE.get(code, code.value)
-        lines.append(f"- {guidance}（{count:,} 回 · {share:.0%}）")
+        guidance = t(REASON_GUIDANCE[code])
+        lines.append(t(_REASON_LINE_TEMPLATE).format(guidance=guidance, count=count, share=share))
     st.markdown("\n".join(lines))
 
 
 def _render_section(section: SummarySection) -> None:
     valid, span = st.columns(2)
     valid.metric(
-        "計測条件を満たしたフレーム",
+        t(_VALID_RATE_LABEL),
         f"{section.valid_rate * 100.0:.1f}%",
-        help="記録した全フレームのうち、品質ゲートを通った割合です。",
+        help=t(_VALID_RATE_HELP),
     )
-    span.metric(
-        "有効だった長さ",
-        "—" if section.valid_span_ms is None else f"{section.valid_span_ms / 1000.0:.1f} 秒",
-        help="最初と最後の有効フレームの間隔です。連続して有効だった時間ではありません。",
+    span_text = (
+        "—"
+        if section.valid_span_ms is None
+        else t(_SPAN_SECONDS_TEMPLATE).format(value=section.valid_span_ms / 1000.0)
     )
+    span.metric(t(_VALID_SPAN_LABEL), span_text, help=t(_VALID_SPAN_HELP))
     rate = section.reference_age_rate
     if rate is not None:
         # FR-021 (5): ゲートを呼んだセッションでだけ出す。呼んでいないセッション
         # へ 0% と書くと、測っていないことと「0% だった」が混ざる。
         st.metric(
-            REFERENCE_AGE_RATE_LABEL,
+            t(REFERENCE_AGE_RATE_LABEL),
             f"{rate * 100.0:.0f}%",
-            help=REFERENCE_AGE_RATE_HELP,
+            help=t(REFERENCE_AGE_RATE_HELP),
         )
-    st.caption(f"記録 {section.total_count:,} 行 · うち有効 {section.ok_count:,} 行")
+    st.caption(t(_RECORD_COUNTS_TEMPLATE).format(total=section.total_count, ok=section.ok_count))
     _render_reading_table(section)
     _render_reasons(section)
 
@@ -167,21 +222,27 @@ def render_session_summary(summary: SessionSummary) -> None:
     if summary.overall is None:
         return
 
-    st.markdown(SUMMARY_HEADING)
+    st.markdown(t(SUMMARY_HEADING))
     _render_section(summary.overall)
-    st.caption(SUMMARY_LIMITS_NOTE)
+    st.caption(t(SUMMARY_LIMITS_NOTE))
 
     # 区間が 1 つだけのセッション（設定を変えなかった場合）は、全体と同じ表を
     # もう一度出すことになるので畳んでおく。
     if len(summary.segments) <= 1:
         return
-    with st.expander(f"区間ごとの内訳（{len(summary.segments)} 区間）"):
-        st.caption(SUMMARY_SEGMENT_NOTE)
+    expander_title = t(_SEGMENT_BREAKDOWN_EXPANDER_TEMPLATE).format(count=len(summary.segments))
+    with st.expander(expander_title):
+        st.caption(t(SUMMARY_SEGMENT_NOTE))
         for index, section in enumerate(summary.segments, start=1):
             # 区間の見出しは通し番号で出す。`segment_id` は UUID なので人には
             # 読めないが、**先頭 8 桁だけは添える**——エクスポートした CSV の
             # `segment_id` 列と突き合わせる唯一の手掛かりになる（`ui.export_panel`
             # が config fingerprint を先頭 12 桁で示すのと同じ作法）。
             short = (section.segment_id or "")[:8]
-            st.markdown(f"**区間 {index}**（`{short}`）" if short else f"**区間 {index}**")
+            heading = (
+                t(_SEGMENT_HEADING_WITH_ID_TEMPLATE).format(index=index, short=short)
+                if short
+                else t(_SEGMENT_HEADING_TEMPLATE).format(index=index)
+            )
+            st.markdown(heading)
             _render_section(section)

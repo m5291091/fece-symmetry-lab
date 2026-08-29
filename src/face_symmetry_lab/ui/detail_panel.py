@@ -23,6 +23,7 @@ from typing import Final
 import streamlit as st
 
 from face_symmetry_lab.application.analyzer import AnalysisOutcome
+from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.scores import render_score_details
 
 #: §14.3f: 実行時の数値を入れる折りたたみの見出し。Camera と Image で同じ語に
@@ -59,5 +60,5 @@ def render_detail_panel(
 
         if diagnostics is not None:
             st.divider()
-            with st.expander(DIAGNOSTICS_LABEL):
+            with st.expander(t(DIAGNOSTICS_LABEL)):
                 diagnostics()

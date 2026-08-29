@@ -20,6 +20,7 @@ from typing import Final
 
 from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus
 from face_symmetry_lab.domain.models import DemographicEstimate
+from face_symmetry_lab.ui.i18n import t
 
 #: `IN_RANGE`（表示してよい）と `NOT_EVALUATED`（呼んでいない）は何も言わない。
 #: 通過を成功として祝わず、呼んでいないことについて言及もしない（§10.7）。
@@ -51,8 +52,17 @@ AGE_GATE_NOTICE: Final[Mapping[AgeGateStatus, str]] = {
 
 
 def age_gate_notice(status: AgeGateStatus) -> str:
-    """状態に応じた固定文言を返す。未知の状態は安全側で空文字にする。"""
-    return AGE_GATE_NOTICE.get(status, _NO_NOTICE)
+    """状態に応じた固定文言を返す。未知の状態は安全側で空文字にする。
+
+    `t()` はここで呼ぶ（`AGE_GATE_NOTICE` の辞書リテラルへ直接 `t()` を仕込むと、
+    このモジュールが最初に import された瞬間の言語で値が固まってしまい、以後の
+    言語切替に追従しない）。この関数は呼ばれるたびに評価されるので、`_HIDDEN_NOTICE`
+    という同じモジュール内のリテラル束縛を経由して都度訳す。
+    """
+    text = AGE_GATE_NOTICE.get(status, _NO_NOTICE)
+    if text == _HIDDEN_NOTICE:
+        return t(_HIDDEN_NOTICE)
+    return text
 
 
 @dataclass(frozen=True, slots=True)

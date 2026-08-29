@@ -332,26 +332,33 @@ HUD_RUNTIME_JS: Final[str] = """
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
       '<div class="fsl-hud-baseline" id="fsl-hud-baseline-symmetry"></div>' +
+      // FR-043: ラベルは空のまま作り、直後（骨格を作った・作らないに関わらず
+      // 常に実行される節）で CFG.* から textContent を書き込む。骨格へ日本語を
+      // 直接焼き込むと、5Hz の tick とは別経路である言語切替が反映されない。
       '<div id="fsl-hud-score-row">' +
-        '<span id="fsl-hud-score-label">全体のスコア</span>' +
+        '<span id="fsl-hud-score-label"></span>' +
         '<span id="fsl-hud-score-value"></span>' +
         '<span class="fsl-hud-baseline" id="fsl-hud-baseline-score"></span>' +
       '</div>' +
       '<div id="fsl-hud-parts">' +
         '<span class="fsl-hud-part">' +
-          '<span><b>輪郭</b><span id="fsl-hud-part-contour"></span></span>' +
+          '<span><b id="fsl-hud-part-label-contour"></b>' +
+            '<span id="fsl-hud-part-contour"></span></span>' +
           '<span class="fsl-hud-baseline" id="fsl-hud-baseline-contour"></span>' +
         '</span>' +
         '<span class="fsl-hud-part">' +
-          '<span><b>目</b><span id="fsl-hud-part-eyes"></span></span>' +
+          '<span><b id="fsl-hud-part-label-eyes"></b>' +
+            '<span id="fsl-hud-part-eyes"></span></span>' +
           '<span class="fsl-hud-baseline" id="fsl-hud-baseline-eyes"></span>' +
         '</span>' +
         '<span class="fsl-hud-part">' +
-          '<span><b>鼻</b><span id="fsl-hud-part-nose"></span></span>' +
+          '<span><b id="fsl-hud-part-label-nose"></b>' +
+            '<span id="fsl-hud-part-nose"></span></span>' +
           '<span class="fsl-hud-baseline" id="fsl-hud-baseline-nose"></span>' +
         '</span>' +
         '<span class="fsl-hud-part">' +
-          '<span><b>口</b><span id="fsl-hud-part-mouth"></span></span>' +
+          '<span><b id="fsl-hud-part-label-mouth"></b>' +
+            '<span id="fsl-hud-part-mouth"></span></span>' +
           '<span class="fsl-hud-baseline" id="fsl-hud-baseline-mouth"></span>' +
         '</span>' +
       '</div>' +
@@ -376,17 +383,17 @@ HUD_RUNTIME_JS: Final[str] = """
           '</polyline>' +
       '</svg>' +
       '<div id="fsl-hud-legend">' +
-        '<span class="fsl-legend fsl-legend-overall">全体</span>' +
-        '<span class="fsl-legend fsl-legend-contour">輪郭</span>' +
-        '<span class="fsl-legend fsl-legend-eyes">目</span>' +
-        '<span class="fsl-legend fsl-legend-nose">鼻</span>' +
-        '<span class="fsl-legend fsl-legend-mouth">口</span>' +
+        '<span class="fsl-legend fsl-legend-overall" id="fsl-hud-legend-overall"></span>' +
+        '<span class="fsl-legend fsl-legend-contour" id="fsl-hud-legend-contour"></span>' +
+        '<span class="fsl-legend fsl-legend-eyes" id="fsl-hud-legend-eyes"></span>' +
+        '<span class="fsl-legend fsl-legend-nose" id="fsl-hud-legend-nose"></span>' +
+        '<span class="fsl-legend fsl-legend-mouth" id="fsl-hud-legend-mouth"></span>' +
       '</div>' +
       // grip を但し書きより先に置く。HUD は `pointer-events: none` かつ
       // `max-height: min(90vh, 720px)` なので、あふれた分は読むことも掴むことも
       // できない。長い但し書きを grip の前に置くと、縦に短い窓で grip が箱の外へ
       // 押し出され、HUD を退ける手段そのものが失われる。
-      '<div id="fsl-hud-grip">⠿ ドラッグで移動</div>' +
+      '<div id="fsl-hud-grip">⠿ <span id="fsl-hud-grip-label"></span></div>' +
       '<div id="fsl-hud-baseline-note"></div>';
     document.body.appendChild(hud);
 
@@ -427,6 +434,20 @@ HUD_RUNTIME_JS: Final[str] = """
     grip.addEventListener('pointerup', stop);
     grip.addEventListener('pointercancel', stop);
   }
+
+  // FR-043: 骨格は 1 度しか作らないが、表示言語はいつでも切り替わりうる。
+  // 骨格の有無に関わらず、bridge が呼ばれるたびに CFG の現在値で書き換える。
+  document.getElementById('fsl-hud-score-label').textContent = CFG.scoreLabel;
+  document.getElementById('fsl-hud-part-label-contour').textContent = CFG.partLabels.contour;
+  document.getElementById('fsl-hud-part-label-eyes').textContent = CFG.partLabels.eyes;
+  document.getElementById('fsl-hud-part-label-nose').textContent = CFG.partLabels.nose;
+  document.getElementById('fsl-hud-part-label-mouth').textContent = CFG.partLabels.mouth;
+  document.getElementById('fsl-hud-legend-overall').textContent = CFG.legendOverallLabel;
+  document.getElementById('fsl-hud-legend-contour').textContent = CFG.partLabels.contour;
+  document.getElementById('fsl-hud-legend-eyes').textContent = CFG.partLabels.eyes;
+  document.getElementById('fsl-hud-legend-nose').textContent = CFG.partLabels.nose;
+  document.getElementById('fsl-hud-legend-mouth').textContent = CFG.partLabels.mouth;
+  document.getElementById('fsl-hud-grip-label').textContent = CFG.gripText;
 
   // プリセットを選び直すとドラッグ位置は破棄する。ラジオが既知の角へ戻る
   // 手段であり続けるようにするためである。

@@ -19,7 +19,8 @@ from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import GenderLabel
 from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.hud import build_hud_payload
-from face_symmetry_lab.ui.scores import PART_LABELS, format_score, format_symmetry
+from face_symmetry_lab.ui.readings import PART_LABELS
+from face_symmetry_lab.ui.scores import format_score, format_symmetry
 from face_symmetry_lab.ui.still_overlay import (
     STILL_OVERLAY_CONTAINER_KEY,
     still_overlay_html,
@@ -684,3 +685,34 @@ def test_the_bubble_footprint_includes_its_padding_and_border() -> None:
 
     assert "box-sizing: border-box;" in rule
     assert "max-width: min(320px, 64%);" in rule
+
+
+# --- FR-043: UI 表示言語の切替 -------------------------------------------------
+
+
+def test_the_drag_grip_label_defaults_to_japanese() -> None:
+    markup = _overlay()
+
+    assert "⠿ ドラッグで移動</div>" in markup
+
+
+def test_the_drag_grip_label_translates_to_english() -> None:
+    """HUD（`ui.hud_assets`）の grip 文言と対になる訳語を、静止画側でも使う。"""
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from face_symmetry_lab.ui.still_overlay import still_overlay_html\n"
+        "markup = still_overlay_html(\n"
+        "    overall=0.0215, equal_weight=0.031,\n"
+        "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
+        "    estimate=None, show_demographics=False, gate='#2E9E5B',\n"
+        ")\n"
+        "st.session_state['markup'] = markup\n"
+    )
+    at.session_state["ui_language"] = "en"
+    at.run()
+
+    assert not at.exception
+    markup = at.session_state["markup"]
+    # 「⠿」は移動を示す装飾記号であり、訳の対象に含めない。
+    assert "⠿ Drag to move</div>" in markup
+    assert "ドラッグで移動" not in markup
