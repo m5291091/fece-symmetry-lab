@@ -40,11 +40,12 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-# research/ の notebook は測定手順の再現性の正本であり、アプリの runtime ではない。
-# ruff は v0.6 以降 *.ipynb を既定の探索対象に含めるが、notebook を本体と同じ規約
-# （行長・import 順・B/SIM/N/RUF）へ合わせると、Colab で実行した記録そのものが
-# 書き換わって再現性が崩れる。lint と format の対象から外す。
-extend-exclude = ["*.ipynb"]
+# research/ は測定手順の再現性の正本であり、アプリの runtime ではない。notebook も
+# frll-symmetry/measure_frll.py のような計測スクリプトも Colab で実行した記録そのもの
+# であり、本体と同じ規約（行長・import 順・B/SIM/N/RUF）へ合わせると記録が書き換わって
+# 再現性が崩れる。ruff は v0.6 以降 *.ipynb を既定の探索対象に含めるため *.ipynb も明示し、
+# research/ 配下全体を lint と format の対象から外す。
+extend-exclude = ["*.ipynb", "research/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N", "RUF"]
