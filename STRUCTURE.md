@@ -173,7 +173,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `040b89b4fae282d607192cce560dc958776718c44f7ab8940667332668ebf9c7`_
+_File-list SHA-256: `a6a981522e78c2e6f0c9ce3070580ae6afe0dd5cf3bef6c2c2c077e4c5cda97b`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -225,6 +225,7 @@ face-symmetry-lab/
     - `0007-user-adjustable-display-smoothing.md`
     - `0008-display-hold-for-live-readings.md`
     - `0009-report-export-with-embedded-images.md`
+    - `0010-ui-display-language.md`
   - `model-cards/`
     - `age-gate-v1-evaluation.json`
     - `age-gate-v1.md`
