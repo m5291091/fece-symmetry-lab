@@ -124,6 +124,19 @@ HUD_STYLESHEET: Final[str] = """
     overflow-wrap: anywhere;
 }
 .fsl-hud-guidance:empty { display: none; }
+/* FR-031/§6.2: 非ブロッキングの助言バナー（照度警告など）。
+   阻害指示（guidance）の直後に置き、視覚的に区別する——琥珀/アンバー系の
+   左ボーダーと `⚠` で「助言」であることを示す。分析を止めない warning_codes
+   を §6.3 の同じ表へ通した文言。折り返し可。空文字は `:empty` が畳む。 */
+.fsl-hud-warning {
+    font-size: clamp(.64rem, min(.88vw, 1.52vh), .80rem);
+    font-weight: 500; color: #F5C842;
+    border-left: 2px solid #D9A21B;
+    padding-left: 7px; margin-bottom: .4em;
+    overflow-wrap: anywhere;
+}
+.fsl-hud-warning::before { content: '⚠ '; }
+.fsl-hud-warning:empty { display: none; }
 #fsl-hud-value {
     font-size: clamp(1.5rem, min(3.6vw, 6.4vh), 3.2rem);
     font-weight: 700; line-height: 1;
@@ -343,6 +356,8 @@ HUD_RUNTIME_JS: Final[str] = """
       '</div>' +
       // FR-031: 主要因 1 件の指示バナー。空文字なら `:empty` が畳む。`—` を入れない。
       '<div class="fsl-hud-guidance" id="fsl-hud-guidance"></div>' +
+      // §6.2: 非ブロッキングの助言（照度警告など）。空文字なら `:empty` が畳む。`—` を入れない。
+      '<div class="fsl-hud-warning" id="fsl-hud-warning"></div>' +
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
       '<div class="fsl-hud-baseline" id="fsl-hud-baseline-symmetry"></div>' +
@@ -611,6 +626,8 @@ HUD_RUNTIME_JS: Final[str] = """
     setText('fsl-hud-hold', data.hold || '');
     // FR-031: 主要因 1 件の指示文。空文字なら `:empty` が畳む。`—` を入れない。
     setText('fsl-hud-guidance', data.guidance || '');
+    // §6.2: 非ブロッキングの助言。空文字なら `:empty` が畳む。`—` を入れない。
+    setText('fsl-hud-warning', data.warning || '');
 
     var baseline = data.baseline || {};
     var baselineParts = baseline.parts || {};

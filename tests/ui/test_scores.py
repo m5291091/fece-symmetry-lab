@@ -106,7 +106,66 @@ def test_the_detail_panel_words_reasons_from_the_shared_guidance_table() -> None
     assert REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW] in rendered
 
 
-# --- §5.3 の文言 --------------------------------------------------------------
+def test_render_guidance_shows_warning_caption_for_low_light() -> None:
+    """§6.2/§8.2: warning_codes=(LOW_LIGHT,) のとき REASON_GUIDANCE[LOW_LIGHT] が
+    `st.caption` として出力される（阻害理由とは視覚的に区別）。"""
+    at = AppTest.from_string(
+        "from face_symmetry_lab.application.analyzer import AnalysisOutcome\n"
+        "from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status\n"
+        "from face_symmetry_lab.ui.scores import render_guidance\n"
+        "from face_symmetry_lab.ui.guidance import REASON_GUIDANCE\n"
+        "render_guidance(\n"
+        "    AnalysisOutcome(\n"
+        "        frame_id=1,\n"
+        "        state=AnalysisState(\n"
+        "            status=Status.OK,\n"
+        "            warning_codes=(ReasonCode.LOW_LIGHT,),\n"
+        "        ),\n"
+        "        symmetry=None,\n"
+        "        overall_distance_smooth=None,\n"
+        "        pose=None,\n"
+        "        face_area_ratio=None,\n"
+        "        metric_version='metric/test',\n"
+        "        landmark_map_version='map/test',\n"
+        "    )\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    captions = " ".join(element.value for element in at.caption)
+    assert REASON_GUIDANCE[ReasonCode.LOW_LIGHT] in captions
+
+
+def test_render_guidance_reason_codes_still_appear_after_i18n_fix() -> None:
+    """i18n 修正で回帰しないこと: reason_codes の文言は従来どおり出る。"""
+    at = AppTest.from_string(
+        "from face_symmetry_lab.application.analyzer import AnalysisOutcome\n"
+        "from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status\n"
+        "from face_symmetry_lab.ui.scores import render_guidance\n"
+        "from face_symmetry_lab.ui.guidance import REASON_GUIDANCE\n"
+        "render_guidance(\n"
+        "    AnalysisOutcome(\n"
+        "        frame_id=1,\n"
+        "        state=AnalysisState(\n"
+        "            status=Status.HOLD,\n"
+        "            reason=ReasonCode.TOO_FAR,\n"
+        "            reason_codes=(ReasonCode.TOO_FAR,),\n"
+        "        ),\n"
+        "        symmetry=None,\n"
+        "        overall_distance_smooth=None,\n"
+        "        pose=None,\n"
+        "        face_area_ratio=None,\n"
+        "        metric_version='metric/test',\n"
+        "        landmark_map_version='map/test',\n"
+        "    )\n"
+        ")\n"
+    )
+    at.run()
+
+    assert not at.exception
+    rendered = " ".join(element.value for element in at.markdown)
+    assert REASON_GUIDANCE[ReasonCode.TOO_FAR] in rendered
 
 
 def test_the_detail_panel_states_the_deviation_beside_the_symmetry() -> None:

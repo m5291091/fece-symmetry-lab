@@ -13,6 +13,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from face_symmetry_lab.application.quality import QualityGate, QualityThresholds
+from face_symmetry_lab.domain.capture_quality import exposure_warnings
+from face_symmetry_lab.domain.frame_adjustments import FrameAdjustmentError
 from face_symmetry_lab.domain.landmarks import (
     LandmarkError,
     LandmarkFrame,
@@ -261,6 +263,20 @@ class FrameAnalyzer:
             except SkinQualityError:
                 # 撮影条件で補正した参考値は独立している（§8.6.1）。
                 skin_quality = None
+
+        # §6.2/§6.3/§8.2: 非ブロッキック照度警告。採点・品質ゲート・検出には
+        # 影響しない。品質ゲートの状態に関わらず算出する（NO_FACE でも「暗い」
+        # と言えるように）。失敗分離（不変条件 12）のため try/except で包み、
+        # 失敗時は警告なし（`()`）。`FrameAdjustmentError` は `mean_luminance`
+        # が不正 shape 等で送出する例外で、`exposure_warnings` が外へ伝播させる。
+        warning_codes: tuple[ReasonCode, ...] = ()
+        if rgb_image is not None:
+            try:
+                warning_codes = exposure_warnings(rgb_image)
+            except FrameAdjustmentError:
+                warning_codes = ()  # 失敗分離（不変条件 12）: 照度判定の失敗は分析を止めない
+        if warning_codes:
+            state = state.model_copy(update={"warning_codes": warning_codes})
 
         return AnalysisOutcome(
             frame_id=frame.frame_id,

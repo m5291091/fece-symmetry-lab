@@ -928,3 +928,25 @@ def test_hud_html_guidance_defaults_to_empty_string() -> None:
     html = hud_html(**_payload_kwargs())
     payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
     assert payload["guidance"] == ""
+
+
+# --- FR-031/§6.2: warning フィールド（非ブロッキング助言）---------------------
+
+
+def test_the_payload_carries_a_warning_field() -> None:
+    """§6.2: `warning` キーが payload に存在し、渡した値をそのまま運ぶ。"""
+    payload = _payload(warning="X")
+    assert payload["warning"] == "X"
+
+
+def test_the_payload_warning_defaults_to_empty_string() -> None:
+    """§6.2: 省略時は空文字。`—` ではない（`:empty` で畳む）。"""
+    payload = _payload()
+    assert payload["warning"] == ""
+
+
+def test_hud_html_carries_the_warning_text_in_the_json_payload() -> None:
+    """§6.2: `hud_html` が `warning` を JSON payload に含めて直列化する。"""
+    html = hud_html(**{**_payload_kwargs(), "warning": "暗い助言"})
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["warning"] == "暗い助言"

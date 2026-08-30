@@ -56,6 +56,7 @@ from face_symmetry_lab.ui.readings import (
     gate_color,
     gate_guidance,
     gate_label,
+    gate_warning,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
@@ -185,6 +186,7 @@ def build_hud_payload(
     smoothing: str = "",
     hold: str = "",
     guidance: str = "",
+    warning: str = "",
 ) -> dict[str, object]:
     """§14.3e の HUD が表示する値（H1 で内容を拡張し、H3 で映像隣の
     「ライブ解析」パネルを削除して表示をこの HUD へ一本化した）。
@@ -228,6 +230,10 @@ def build_hud_payload(
     （`ui.readings.gate_guidance` が生成）。状態名チップ（``state``）の下・数値の上
     に出して「何を直せば測定値が出るか」を映像上で示す。空文字なら `:empty` が畳む。
     測定値の整形（``symmetry``/``score``/``parts``/``chart``）へは混ざらない。
+
+    ``warning``（§6.2）は非ブロッキングの助言。空文字は `:empty` で畳む。
+    測定値・阻害理由の指示文（``guidance``）とは別行であり、分析を止めない
+    `warning_codes`（例: `LOW_LIGHT`/`OVEREXPOSED`）を同じ §6.3 の表へ通したもの。
     """
     visible = position != HUD_HIDDEN and position in HUD_PLACEMENTS
     demo = ""
@@ -257,6 +263,7 @@ def build_hud_payload(
         "smoothing": smoothing,
         "hold": hold,
         "guidance": guidance,
+        "warning": warning,
         "gen": generation,
         "chart": chart,
         "baseline": build_baseline_payload(
@@ -284,6 +291,7 @@ def hud_html(
     smoothing: str = "",
     hold: str = "",
     guidance: str = "",
+    warning: str = "",
 ) -> str:
     """payload を bridge が読む隠し要素へ直列化する。
 
@@ -308,6 +316,7 @@ def hud_html(
         smoothing=smoothing,
         hold=hold,
         guidance=guidance,
+        warning=warning,
     )
     encoded = json.dumps(payload, ensure_ascii=False)
     return f'<div id="{HUD_DATA_ELEMENT_ID}" style="display:none">{encoded}</div>'
@@ -389,6 +398,7 @@ def render_hud_payload(
             smoothing=format_smoothing_window(smoothing_tau_seconds),
             hold=format_display_hold(display_hold_seconds),
             guidance=gate_guidance(analysis.state if analysis is not None else None),
+            warning=gate_warning(analysis.state if analysis is not None else None),
             position=st.session_state.get(HUD_POSITION_STATE_KEY, HUD_POSITION_OPTIONS[0]),
             generation=snapshot.segment_id or "",
         ),

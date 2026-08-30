@@ -896,3 +896,88 @@ def test_a_missing_part_does_not_update_that_parts_smoothing_while_others_advanc
     assert recovered_eyes is not None
     assert recovered_eyes != pytest.approx(raw_eyes_recovered, abs=1e-9)
     assert before_missing_eyes < recovered_eyes < raw_eyes_recovered
+
+
+# --- §6.2/§6.3/§8.2 照度警告（非ブロッキック） --------------------------------
+
+
+def _dark_rgb_image() -> np.ndarray:
+    """mean < LOW_LIGHT_MEAN_MAX の暗い画像。"""
+    return np.full((10, 10, 3), 20, dtype=np.uint8)
+
+
+def _normal_rgb_image() -> np.ndarray:
+    """中間の明るさ（警告なし）の画像。"""
+    return np.full((10, 10, 3), 128, dtype=np.uint8)
+
+
+def test_dark_rgb_image_sets_low_light_warning() -> None:
+    """暗い `rgb_image` を渡すと `warning_codes == (LOW_LIGHT,)`。"""
+    analyzer = _analyzer()
+    outcome = _drive_to_ok(analyzer, rgb_image=_dark_rgb_image())
+
+    assert ReasonCode.LOW_LIGHT in outcome.state.warning_codes
+
+
+def test_exposure_warning_is_non_blocking() -> None:
+    """非ブロッキック: 暗いフレームでも status/reason/reason_codes は変わらない。"""
+    analyzer_with_warning = _analyzer()
+    analyzer_without = _analyzer()
+
+    outcome_dark = _drive_to_ok(analyzer_with_warning, rgb_image=_dark_rgb_image())
+    outcome_normal = _drive_to_ok(analyzer_without, rgb_image=_normal_rgb_image())
+
+    # 警告は status/reason/reason_codes に影響しない
+    assert outcome_dark.state.status == outcome_normal.state.status
+    assert outcome_dark.state.reason == outcome_normal.state.reason
+    assert outcome_dark.state.reason_codes == outcome_normal.state.reason_codes
+    # 警告コードだけが違う
+    assert ReasonCode.LOW_LIGHT in outcome_dark.state.warning_codes
+    assert outcome_normal.state.warning_codes == ()
+
+
+def test_rgb_image_none_gives_no_warning_codes() -> None:
+    """`rgb_image=None` では `warning_codes == ()`。"""
+    analyzer = _analyzer()
+    outcome = _drive_to_ok(analyzer, rgb_image=None)
+
+    assert outcome.state.warning_codes == ()
+
+
+def test_no_face_frame_with_dark_image_still_gets_low_light_warning() -> None:
+    """品質ゲートに関わらず算出: NO_FACE フレームでも暗ければ LOW_LIGHT が付く。"""
+    analyzer = _analyzer()
+    dark = _dark_rgb_image()
+
+    # 顔なしフレームを1枚送る（ゲートが閉じている状態）
+    outcome = analyzer.analyze(_frame(frame_id=1, face_count=0), at=0.0, rgb_image=dark)
+
+    assert outcome.state.status is Status.NO_FACE
+    assert ReasonCode.LOW_LIGHT in outcome.state.warning_codes
+
+
+def test_exposure_warning_failure_isolation() -> None:
+    """失敗分離: exposure_warnings が例外になっても analyze は完走する。
+
+    `exposure_warnings` を `FrameAdjustmentError` 送出にしても
+    `warning_codes==()` かつ他の出力が通常どおりであることを確かめる。
+    """
+    from unittest.mock import patch
+
+    from face_symmetry_lab.domain.frame_adjustments import FrameAdjustmentError
+
+    analyzer = _analyzer()
+    dark = _dark_rgb_image()
+
+    with patch(
+        "face_symmetry_lab.application.analyzer.exposure_warnings",
+        side_effect=FrameAdjustmentError("bad shape"),
+    ):
+        outcome = analyzer.analyze(_frame(frame_id=1), at=0.0, rgb_image=dark)
+
+    # 例外が伝播せず完走する
+    assert outcome is not None
+    # warning_codes は空（失敗分離）
+    assert outcome.state.warning_codes == ()
+    # status が壊れていない（品質ゲートの判断は変わらない）
+    assert outcome.state.status is Status.HOLD  # まだゲートが開いていない

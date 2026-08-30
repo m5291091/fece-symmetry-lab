@@ -487,12 +487,16 @@ def render_guidance(outcome: AnalysisOutcome) -> None:
     バナーが読むのと同じ §6.3 の表なので、詳細パネルとバナーが 1 つの条件を
     二通りに説明することはない。品質ゲートへ理由コードを追加したときに、
     ここで黙って何も表示されなくなることも防げる。
+    阻害理由（`reason_codes`）は `st.markdown` で箇条書き、非ブロッキック警告
+    （`warning_codes`）は `st.caption` で視覚的に区別する（§6.2/§8.2）。
     """
     st.write(t(_STATUS_HEADLINE[outcome.state.status]))
     for code in outcome.state.reason_codes:
-        guidance = REASON_GUIDANCE.get(code)
-        if guidance:
-            st.markdown(f"- {guidance}")
+        if code in REASON_GUIDANCE:
+            st.markdown(f"- {t(REASON_GUIDANCE[code])}")
+    for code in outcome.state.warning_codes:
+        if code in REASON_GUIDANCE:
+            st.caption(f"⚠ {t(REASON_GUIDANCE[code])}")
 
 
 def render_tracking_status(

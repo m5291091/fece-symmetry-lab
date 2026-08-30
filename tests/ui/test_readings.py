@@ -34,6 +34,7 @@ from face_symmetry_lab.ui.readings import (
     gate_color,
     gate_guidance,
     gate_label,
+    gate_warning,
     resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
@@ -520,3 +521,51 @@ def test_gate_guidance_always_returns_empty_or_a_known_guidance_string() -> None
         )
         result = gate_guidance(state)
         assert result in known or result == "", f"{code}: 未知の戻り値 {result!r}"
+
+
+# --- FR-031/§6.2: gate_warning — 非ブロッキング助言の HUD 表示 ---------------
+
+
+def test_gate_warning_is_empty_when_there_is_no_analysis_yet() -> None:
+    """`None`（待機中）は空文字を返す。CSS の `:empty` が行ごと畳む。"""
+    assert gate_warning(None) == ""
+
+
+def test_gate_warning_is_empty_when_warning_codes_is_empty() -> None:
+    """`warning_codes` が空のとき、status に関わらず空文字を返す。"""
+    assert gate_warning(AnalysisState(status=Status.OK)) == ""
+
+
+def test_gate_warning_returns_low_light_instruction_when_ok_with_warning() -> None:
+    """`Status.OK` 中でも `warning_codes=(LOW_LIGHT,)` があれば助言を返す。
+
+    `gate_guidance` と違い、status 判定を行わない——OK 中でも暗ければ助言を出す。
+    """
+    state = AnalysisState(status=Status.OK, warning_codes=(ReasonCode.LOW_LIGHT,))
+    assert gate_warning(state) == REASON_GUIDANCE[ReasonCode.LOW_LIGHT]
+
+
+def test_gate_warning_returns_overexposed_instruction_for_overexposed() -> None:
+    """`warning_codes=(OVEREXPOSED,)` → `REASON_GUIDANCE[OVEREXPOSED]`（既定 JA で素通し）。"""
+    state = AnalysisState(status=Status.OK, warning_codes=(ReasonCode.OVEREXPOSED,))
+    assert gate_warning(state) == REASON_GUIDANCE[ReasonCode.OVEREXPOSED]
+
+
+def test_gate_warning_does_not_show_blocking_reason_as_warning() -> None:
+    """罠: HOLD かつ `reason=OFF_AXIS_PITCH`・`warning_codes=()` のとき
+    `gate_warning` は空文字——阻害理由を警告として出さない。"""
+    state = AnalysisState(
+        status=Status.HOLD,
+        reason=ReasonCode.OFF_AXIS_PITCH,
+        reason_codes=(ReasonCode.OFF_AXIS_PITCH,),
+        warning_codes=(),
+    )
+    assert gate_warning(state) == ""
+
+
+def test_gate_warning_and_gate_guidance_are_independent_for_ok_with_low_light() -> None:
+    """罠: OK かつ `warning_codes=(LOW_LIGHT,)` のとき——`gate_guidance` は空文字
+    だが `gate_warning` は非空。2 つの関数が独立していることを固定する。"""
+    state = AnalysisState(status=Status.OK, warning_codes=(ReasonCode.LOW_LIGHT,))
+    assert gate_guidance(state) == ""
+    assert gate_warning(state) != ""

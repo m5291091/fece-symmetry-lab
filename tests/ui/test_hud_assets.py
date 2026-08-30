@@ -549,3 +549,34 @@ def test_the_stylesheet_collapses_empty_guidance() -> None:
             )
         ]
     )
+
+
+# --- FR-031/§6.2: fsl-hud-warning の DOM 要素・CSS・tick ---------------------
+
+
+def test_the_runtime_js_contains_the_warning_element_id() -> None:
+    """§6.2: 骨格に `fsl-hud-warning` 要素が含まれること。"""
+    assert "fsl-hud-warning" in HUD_RUNTIME_JS
+
+
+def test_the_runtime_js_updates_warning_in_the_tick() -> None:
+    """§6.2: tick 関数が `data.warning` を要素へ書き込む。"""
+    assert "data.warning" in HUD_RUNTIME_JS
+
+
+def test_the_stylesheet_contains_the_warning_rule() -> None:
+    """§6.2: `.fsl-hud-warning` の CSS 規則が HUD_STYLESHEET に含まれること。"""
+    assert ".fsl-hud-warning" in HUD_STYLESHEET
+
+
+def test_the_stylesheet_collapses_empty_warning() -> None:
+    """§6.2: 警告が無いとき（空文字）は `:empty` で行ごと畳まれる。"""
+    assert ".fsl-hud-warning:empty" in HUD_STYLESHEET
+    assert (
+        "display: none"
+        in HUD_STYLESHEET[
+            HUD_STYLESHEET.index(".fsl-hud-warning:empty") : HUD_STYLESHEET.index(
+                "}", HUD_STYLESHEET.index(".fsl-hud-warning:empty")
+            )
+        ]
+    )

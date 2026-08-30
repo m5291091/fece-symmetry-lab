@@ -356,6 +356,23 @@ def gate_guidance(state: AnalysisState | None) -> str:
     return t(REASON_GUIDANCE[code])
 
 
+def gate_warning(state: AnalysisState | None) -> str:
+    """FR-031/§6.2: ライブ映像上 HUD へ併記する、非ブロッキングの助言（照度など）。
+
+    `gate_guidance` が「測定値を出すために直す阻害理由」を返すのに対し、こちらは
+    分析を止めない `warning_codes`（§6.2、例: `LOW_LIGHT`/`OVEREXPOSED`）を、同じ
+    §6.3 の表（`ui.guidance.REASON_GUIDANCE`）へ通して助言として返す。警告が無ければ
+    空文字（`—` ではない。CSS の `:empty` が畳む）。**品質ゲートの阻害理由とは別物**で、
+    警告があっても測定値の表示は止まらない。複数あるときは先頭 1 件だけを出す。
+    """
+    if state is None or not state.warning_codes:
+        return ""
+    code = state.warning_codes[0]
+    if code not in REASON_GUIDANCE:
+        return ""
+    return t(REASON_GUIDANCE[code])
+
+
 def display_signature(outcome: AnalysisOutcome | None) -> tuple[object, ...]:
     """FR-041: 表示ラッチ（`domain.display_hold`）へ渡す「値が届いているかの型」。
 

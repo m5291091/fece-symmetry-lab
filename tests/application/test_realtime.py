@@ -163,6 +163,10 @@ class StubAnalyzer:
         #: ているとき `analyzer.config_3d` を読む。ここでは実際に触れられる場面
         #: が無い限り値そのものは意味を持たないダミーでよい。
         self.config_3d = object()
+        #: 露出警告（`domain.capture_quality`）は analyze が受け取る frame から
+        #: 計算されるため、それが**生フレーム**（検出器へ渡す明るくした frame では
+        #: ない）であることを検証できるよう記録する。
+        self.received_images: list[NDArray[np.uint8]] = []
 
     def analyze(
         self,
@@ -171,6 +175,8 @@ class StubAnalyzer:
         at: float,
         rgb_image: np.ndarray | None = None,
     ) -> AnalysisOutcome:
+        if rgb_image is not None:
+            self.received_images.append(rgb_image)
         return AnalysisOutcome(
             frame_id=frame.frame_id,
             state=AnalysisState(status=Status.HOLD),
@@ -709,7 +715,21 @@ def test_brightness_gain_reaches_the_detector_but_never_the_display() -> None:
     assert np.all(painted == 100)
 
 
-def test_a_default_gain_of_one_leaves_frames_unchanged() -> None:
+def test_the_analyzer_receives_the_raw_frame_not_the_brightened_detection_input() -> None:
+    """露出警告（`domain.capture_quality`、§6.2/§8.2）は analyze が受け取る frame
+    から計算される。§14.3b は検出器へ渡す frame だけを明るくするので、analyzer へは
+    **生フレーム**を渡さないと、暗い環境でも補正後の明るい frame で `LOW_LIGHT` を
+    取りこぼす。検出器入力とアナライザ入力の分離を analyzer 側でも固定する
+    （回帰ガード、code-review 2026-08-30）。"""
+    landmarker = FakeLandmarker(face_count=1)
+    analyzer = StubAnalyzer()
+    pipeline = _pipeline(landmarker, analyzer=analyzer, brightness_gain=2.0)
+
+    pipeline.process(_flat_rgb(100))
+
+    assert np.all(landmarker.received_images[0] == 200)  # 検出器へは明るく（100 * 2.0）
+    assert analyzer.received_images, "analyzer が呼ばれていない"
+    assert np.all(analyzer.received_images[0] == 100)  # analyzer へは生フレーム
     landmarker = FakeLandmarker(face_count=0)
     pipeline = _pipeline(landmarker)
 
