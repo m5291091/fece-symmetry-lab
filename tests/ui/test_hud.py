@@ -899,3 +899,32 @@ def test_the_bridge_config_defaults_to_japanese_labels() -> None:
     assert config["scoreLabel"] == "全体のスコア"
     assert config["partLabels"]["contour"] == "輪郭"
     assert config["gripText"] == "ドラッグで移動"
+
+
+# --- FR-031: guidance フィールド -----------------------------------------------
+
+
+def test_the_payload_carries_a_guidance_field() -> None:
+    """FR-031: `guidance` キーが payload に存在し、渡した値をそのまま運ぶ。"""
+    payload = _payload(guidance="顔を正面（左右方向）に向けてください")
+    assert payload["guidance"] == "顔を正面（左右方向）に向けてください"
+
+
+def test_the_payload_guidance_defaults_to_empty_string() -> None:
+    """FR-031: 省略時は空文字。`—` ではない（設定の不在は測定の欠測ではない）。"""
+    payload = _payload()
+    assert payload["guidance"] == ""
+
+
+def test_hud_html_carries_the_guidance_text_in_the_json_payload() -> None:
+    """FR-031: `hud_html` が `guidance` を JSON payload に含めて直列化する。"""
+    html = hud_html(**{**_payload_kwargs(), "guidance": "調整の指示"})
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["guidance"] == "調整の指示"
+
+
+def test_hud_html_guidance_defaults_to_empty_string() -> None:
+    """FR-031: `guidance` 省略時も空文字が payload に含まれる。"""
+    html = hud_html(**_payload_kwargs())
+    payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
+    assert payload["guidance"] == ""

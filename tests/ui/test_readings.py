@@ -16,8 +16,9 @@ import re
 
 import pytest
 
-from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
+from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, ReasonCode, Status
 from face_symmetry_lab.domain.reference_baseline import BaselineReading
+from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.readings import (
     BASELINE_CAVEAT,
     GATE_COLORS,
@@ -31,6 +32,7 @@ from face_symmetry_lab.ui.readings import (
     format_smoothing_window,
     format_symmetry,
     gate_color,
+    gate_guidance,
     gate_label,
     resolve_equal_weight_distance,
     resolve_overall_distance,
@@ -436,3 +438,85 @@ def test_the_display_hold_is_shown_with_its_unit() -> None:
 def test_updating_every_frame_is_not_announced(value: float | None) -> None:
     """既定の挙動を書くと HUD に常時 1 行増えるだけで、何も伝わらない。"""
     assert format_display_hold(value) == ""
+
+
+# --- FR-031: gate_guidance — HUD へ出す主要因の指示文 -------------------------
+
+
+def test_gate_guidance_is_empty_when_there_is_no_analysis_yet() -> None:
+    """`None`（待機中）は空文字を返す。CSS の `:empty` が行ごと畳む。"""
+    assert gate_guidance(None) == ""
+
+
+def test_gate_guidance_is_empty_when_the_gate_is_satisfied() -> None:
+    """`Status.OK` 中は測定値が出るので指示文は出ない。`—` ではなく空文字。"""
+    assert gate_guidance(AnalysisState(status=Status.OK)) == ""
+
+
+def test_gate_guidance_returns_pitch_instruction_for_off_axis_pitch() -> None:
+    """HOLD + reason=OFF_AXIS_PITCH → REASON_GUIDANCE の対応文言（JA 既定で素通し）。"""
+    state = AnalysisState(
+        status=Status.HOLD,
+        reason=ReasonCode.OFF_AXIS_PITCH,
+        reason_codes=(ReasonCode.OFF_AXIS_PITCH,),
+    )
+    assert gate_guidance(state) == REASON_GUIDANCE[ReasonCode.OFF_AXIS_PITCH]
+
+
+def test_gate_guidance_returns_no_face_instruction_for_no_face_status() -> None:
+    """`Status.NO_FACE + reason=NO_FACE` → `REASON_GUIDANCE[NO_FACE]`。"""
+    state = AnalysisState(
+        status=Status.NO_FACE,
+        reason=ReasonCode.NO_FACE,
+        reason_codes=(ReasonCode.NO_FACE,),
+    )
+    assert gate_guidance(state) == REASON_GUIDANCE[ReasonCode.NO_FACE]
+
+
+def test_gate_guidance_falls_back_to_reason_codes_when_reason_is_none() -> None:
+    """HOLD + reason=None, reason_codes=(TOO_FAR,) → `reason_codes[0]` を使う。
+
+    品質ゲートが `reason` を省略しても `reason_codes` に記録を残す運用への対応。
+    """
+    state = AnalysisState(
+        status=Status.HOLD,
+        reason=None,
+        reason_codes=(ReasonCode.TOO_FAR,),
+    )
+    assert gate_guidance(state) == REASON_GUIDANCE[ReasonCode.TOO_FAR]
+
+
+def test_gate_guidance_returns_the_primary_reason_when_multiple_codes_exist() -> None:
+    """HOLD + reason=OFF_AXIS_YAW, reason_codes=(OFF_AXIS_YAW, OFF_AXIS_PITCH)
+    → yaw（`reason` フィールド）が主要因として選ばれる。
+    """
+    state = AnalysisState(
+        status=Status.HOLD,
+        reason=ReasonCode.OFF_AXIS_YAW,
+        reason_codes=(ReasonCode.OFF_AXIS_YAW, ReasonCode.OFF_AXIS_PITCH),
+    )
+    assert gate_guidance(state) == REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW]
+
+
+def test_gate_guidance_pitch_text_differs_from_yaw_text() -> None:
+    """罠: YAW と PITCH の文言を取り違えると写経実装でもこれが通ってしまう。"""
+    assert REASON_GUIDANCE[ReasonCode.OFF_AXIS_PITCH] != REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW]
+    state = AnalysisState(
+        status=Status.HOLD,
+        reason=ReasonCode.OFF_AXIS_PITCH,
+        reason_codes=(ReasonCode.OFF_AXIS_PITCH,),
+    )
+    assert gate_guidance(state) != REASON_GUIDANCE[ReasonCode.OFF_AXIS_YAW]
+
+
+def test_gate_guidance_always_returns_empty_or_a_known_guidance_string() -> None:
+    """返り値は `""` か `REASON_GUIDANCE` の値のいずれかだけ。第三の値を作らない。"""
+    known = set(REASON_GUIDANCE.values())
+    for code in ReasonCode:
+        state = AnalysisState(
+            status=Status.HOLD,
+            reason=code,
+            reason_codes=(code,),
+        )
+        result = gate_guidance(state)
+        assert result in known or result == "", f"{code}: 未知の戻り値 {result!r}"

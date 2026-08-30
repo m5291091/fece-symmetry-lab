@@ -30,6 +30,7 @@ from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
 from face_symmetry_lab.domain.reference_baseline import BaselineReading
 from face_symmetry_lab.domain.score_scale import score_points
 from face_symmetry_lab.domain.score_scale import symmetry_percent as _symmetry_percent
+from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.i18n import t
 
 #: §8.6.3 の部位ラベル。値は文字列リテラルのまま持つ——`t(PART_LABELS[name])`
@@ -331,6 +332,28 @@ def gate_label(state: AnalysisState | None) -> str:
     if state is None or state.status not in GATE_LABELS:
         return t(_UNKNOWN_GATE_LABEL)
     return t(GATE_LABELS[state.status])
+
+
+def gate_guidance(state: AnalysisState | None) -> str:
+    """FR-031: ライブ映像上 HUD へ併記する、主要因 1 件の行動可能な指示文。
+
+    `gate_label` が状態名(「調整中」等)を返すのに対し、こちらは「何を直せば
+    よいか」を返す。詳細結果タブ(`ui.scores.render_guidance`)が全阻害理由を
+    一覧で示す正本で、ここはその主要因 1 件だけを HUD の 1 行へ出す。判断は
+    一切足さず、品質ゲートが算出済みの `reason`(無ければ `reason_codes[0]`)を
+    §6.3 の同じ表(`ui.guidance.REASON_GUIDANCE`)へ通すだけである(FR-031)。
+
+    ゲートを満たしている間(`Status.OK`)と解析がまだ無い間(`None`)は空文字を
+    返す——CSS の `:empty` が行ごと畳み、代わりに測定値が出る。空文字であって
+    `—` ではない(状態の不在は測定の欠測ではない。`gate_label`/`format_*` と
+    同じ扱い)。
+    """
+    if state is None or state.status is Status.OK:
+        return ""
+    code = state.reason or (state.reason_codes[0] if state.reason_codes else None)
+    if code is None or code not in REASON_GUIDANCE:
+        return ""
+    return t(REASON_GUIDANCE[code])
 
 
 def display_signature(outcome: AnalysisOutcome | None) -> tuple[object, ...]:

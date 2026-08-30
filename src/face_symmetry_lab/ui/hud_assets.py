@@ -112,6 +112,18 @@ HUD_STYLESHEET: Final[str] = """
     font-size: clamp(.58rem, min(.78vw, 1.35vh), .7rem); letter-spacing: .02em;
 }
 .fsl-hud-chip:empty { display: none; }
+/* FR-031: 主要因 1 件の行動可能な指示バナー。状態チップの下・数値の上。
+   「何を直せばよいか」を映像上で 1 行にまとめる。折り返し可にして長い文言でも
+   HUD 幅内に収める。`—` を入れない（状態の不在は測定の欠測ではない）。
+   OK 中・待機中は空文字なので `:empty` が行ごと畳む。 */
+.fsl-hud-guidance {
+    font-size: clamp(.66rem, min(.9vw, 1.55vh), .82rem);
+    font-weight: 600; opacity: .9;
+    border-left: 2px solid rgba(255,255,255,.45);
+    padding-left: 7px; margin-bottom: .4em;
+    overflow-wrap: anywhere;
+}
+.fsl-hud-guidance:empty { display: none; }
 #fsl-hud-value {
     font-size: clamp(1.5rem, min(3.6vw, 6.4vh), 3.2rem);
     font-weight: 700; line-height: 1;
@@ -329,6 +341,8 @@ HUD_RUNTIME_JS: Final[str] = """
         '<span class="fsl-hud-chip" id="fsl-hud-smoothing"></span>' +
         '<span class="fsl-hud-chip" id="fsl-hud-hold"></span>' +
       '</div>' +
+      // FR-031: 主要因 1 件の指示バナー。空文字なら `:empty` が畳む。`—` を入れない。
+      '<div class="fsl-hud-guidance" id="fsl-hud-guidance"></div>' +
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
       '<div class="fsl-hud-baseline" id="fsl-hud-baseline-symmetry"></div>' +
@@ -595,6 +609,8 @@ HUD_RUNTIME_JS: Final[str] = """
     // FR-041: 数値が止まって見えるのが設定によるものか、測定が止まったのかを
     // 利用者が区別できるようにする。0 秒（毎回更新）のときは空文字で畳まれる。
     setText('fsl-hud-hold', data.hold || '');
+    // FR-031: 主要因 1 件の指示文。空文字なら `:empty` が畳む。`—` を入れない。
+    setText('fsl-hud-guidance', data.guidance || '');
 
     var baseline = data.baseline || {};
     var baselineParts = baseline.parts || {};

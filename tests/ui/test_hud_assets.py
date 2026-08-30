@@ -518,3 +518,34 @@ def test_the_runtime_no_longer_hardcodes_the_japanese_labels() -> None:
     assert "<b>輪郭</b>" not in HUD_RUNTIME_JS
     assert ">全体</span>" not in HUD_RUNTIME_JS
     assert '<div id="fsl-hud-grip">⠿ ドラッグで移動</div>' not in HUD_RUNTIME_JS
+
+
+# --- FR-031: fsl-hud-guidance の DOM 要素・CSS・tick -------------------------
+
+
+def test_the_runtime_js_contains_the_guidance_element_id() -> None:
+    """FR-031: 骨格に `fsl-hud-guidance` 要素が含まれること。"""
+    assert "fsl-hud-guidance" in HUD_RUNTIME_JS
+
+
+def test_the_runtime_js_updates_guidance_in_the_tick() -> None:
+    """FR-031: tick 関数が `data.guidance` を要素へ書き込む。"""
+    assert "data.guidance" in HUD_RUNTIME_JS
+
+
+def test_the_stylesheet_contains_the_guidance_rule() -> None:
+    """FR-031: `.fsl-hud-guidance` の CSS 規則が HUD_STYLESHEET に含まれること。"""
+    assert ".fsl-hud-guidance" in HUD_STYLESHEET
+
+
+def test_the_stylesheet_collapses_empty_guidance() -> None:
+    """FR-031: OK 中・待機中は空文字になり `:empty` で行ごと畳まれる。"""
+    assert ".fsl-hud-guidance:empty" in HUD_STYLESHEET
+    assert (
+        "display: none"
+        in HUD_STYLESHEET[
+            HUD_STYLESHEET.index(".fsl-hud-guidance:empty") : HUD_STYLESHEET.index(
+                "}", HUD_STYLESHEET.index(".fsl-hud-guidance:empty")
+            )
+        ]
+    )
