@@ -62,17 +62,21 @@ v3.0 の安全性・再現性方針を維持しつつ、創造工房セミナー
 
 33. **Camera（リアルタイム）から「左右対称との比較」を削除する（2026-08-29 の指示、H10）。** 対称化ビジュアライゼーション（FR-034）と対称化画像（FR-035）は Image（画像アップロード）だけの機能にし、Camera のタブ列から外す。**併せて、そのタブだけが使っていた一発取り込みの機構も削除する**——`RealtimeLandmarkPipeline` の `request_capture` / `take_capture` / `capture_pending` / `clear_capture` と `application/frame_capture.py` の `CaptureBuffer` / `CapturedFrame` である。残しても呼ぶ側が無く、§14.3g が誰も使わない機構を記述し続けることになる。**この削除は §10.4 を強める**——リアルタイム経路が生の `rgb_image` を 1 枚でも保持する仕組みはこれが唯一だったので、消すことで「生フレームを保持しない」が構成から成立する。Image 側の `domain.symmetrization` / `domain.warp_mesh` / `application.symmetrization` / `adapters.imaging.piecewise_warp` / `ui.symmetrization_panel` / `ui.report_figures` はそのまま残す（FR-035 と FR-042 の図が使い続ける）。この結果 Camera は 3 タブ、Image は 4 タブになり、§5.1 の「名前・順序・アイコンをそろえる」は共通する 3 つに対して適用する。
 
-### 0.1 現在の実装位置（2026-08-01）
+### 0.1 現在の実装位置（2026-08-30）
+
+**機能実装は MVP と P1 の範囲でほぼ完了し、アプリは端末内で end-to-end に動作する。** 以後の作業は主に検証・評価・ブラッシュアップであり、新規の中核機能実装は残っていない。
 
 | Milestone | 状態 | 現在地 |
 |---|---|---|
-| M0 | 未完 | OD-02、OD-04、OD-07 と実モデル互換性確認が未完。左右差は相対比較専用（OD-01 は §8.6 のスコア変換廃止により解消） |
-| M1 | 一部実装 | 静止画入力、品質判定、幾何左右差、年齢・性別境界、schema は実装中。固定評価と肌表面指標校正は未完 |
-| M2 | 一部実装 | WebRTC、latest-frame-wins、短時間overlay保持、Stop、年齢・性別の独立worker（capacity 1・独自cadence・segment単位の破棄）は実装中。E2E、cleanup実測は未完 |
-| M3 | 一部実装 | 同意、入力切替、CSV / JSON export、About は実装済み。trend、Session、設定UI、A11y実機確認は未完 |
-| M4 以降 | 未着手 | offline、3 OS、performance、soak、配布判定は未完 |
+| M0 | ほぼ完了 | 3 OS lock、model hash、OpenCV 1 provider、pose 規約、metric 定義は確定。実機型番（OD-02）・実写単軸での pose 符号確認（OD-04）・年齢/性別の parity gate 承認（OD-07）が未決として残る |
+| M1 | 完了 | 静止画入力、18〜75 歳の年齢・性別、補正後の肌表面参考値（未校正）、品質ゲート、4 部位＋全体の距離、対称化ビジュアライゼーション、レコードスキーマ v4.0、unit / property test が揃った。肌表面指標の校正（OD-08）は評価課題として残る |
+| M2 | 完了 | WebRTC、latest-frame-wins、年齢・性別の独立 worker（capacity 1・独自 cadence・segment 単位の破棄）、状態機械、映像上 HUD、追跡ズーム、Stop / cleanup が動作する |
+| M3 | 完了 | 初回フロー、レスポンシブレイアウト、推移グラフ、表示設定（映像直下ポップオーバー）、HTML レポート出力（FR-042）、About、日英切替（FR-043）が揃った |
+| M4 | 未完（リリースハードニング） | offline、security 監査、3 OS、performance / soak、license / SBOM、user test の検証が残る |
+| M5 | ほぼ完了 | セッション要約（FR-021）、主指標 3D 正規化（`symmetry-3d/1.0.0`）、日英切替は完了。照度・ぼけの非ブロッキング警告（§6.3 の `LOW_LIGHT` / `OVEREXPOSED` / `BLUR`）だけが未実装で残る |
+| M6 | 未着手 | 正面分類器、年齢・性別の別 architecture 比較、slice 改善（P2 Research Extensions） |
 
-したがって現時点は MVP Done ではない。M0 の未決事項を残した先行実装であり、§27 の release 条件を満たしていない。
+残るのは (1) リリースハードニングの検証（M4）、(2) 評価で確定する未決事項（OD-02 / 04 / 05 / 07 / 08、§25）、(3) 照度・ぼけ警告（M5 の残り）とブラッシュアップである。§27 の release 条件はこれらの完了をもって満たす。**したがって現時点はまだ MVP Done ではないが、残作業は検証・評価・仕上げが中心である。**
 
 ---
 
