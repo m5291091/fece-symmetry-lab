@@ -79,7 +79,7 @@ from face_symmetry_lab.ui.model_setup import (
     segmenter_asset,
     segmenter_status,
 )
-from face_symmetry_lab.ui.readings import GENDER_LABELS, display_signature
+from face_symmetry_lab.ui.readings import display_signature, format_gender_probabilities
 from face_symmetry_lab.ui.report import build_camera_report
 from face_symmetry_lab.ui.result_tabs import (
     ResultTabs,
@@ -169,6 +169,13 @@ STATUS_REFRESH_INTERVAL = "200ms"
 #: 推論しない（`DEFAULT_DEMOGRAPHIC_INTERVAL_MS`）ので、5 Hz で描き直しても
 #: 同じ値を 5 回描くだけである（§11 NFR-003 と同じ判断）。
 DEMOGRAPHIC_REFRESH_INTERVAL = "1s"
+
+#: §14.3 / 2026-08-31: 詳細タブ（計算過程・姿勢・診断）は二次表示なので 1 Hz で
+#: 描き直す。ライブの主表示は映像上 HUD（5 Hz、NFR-003/FR-013）が担う。詳細
+#: パネルを 5 Hz でフル再描画すると、ブラウザのメインスレッドで WebRTC 映像の
+#: デコード・描画と競合し、長いセッションで映像が次第に重くなり最後に止まる
+#: （利用者報告）。サーバ側の解析経路は有界であることを実測で確認済み。
+DETAIL_REFRESH_INTERVAL = "1s"
 
 VideoFrameCallback = Callable[[av.VideoFrame], av.VideoFrame]
 
@@ -385,9 +392,17 @@ def _detail_diagnostics(
     return _render
 
 
-@st.fragment(run_every=STATUS_REFRESH_INTERVAL)
+@st.fragment(run_every=DETAIL_REFRESH_INTERVAL)
 def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
-    """不変 snapshot を 5 Hz で読み、画面幅いっぱいの詳細ブロックを描画する。
+    """不変 snapshot を 1 Hz で読み、画面幅いっぱいの詳細ブロックを描画する。
+
+    **更新頻度を 5 Hz から 1 Hz へ落とした理由（2026-08-31 の利用者報告対応）。**
+    ライブの主表示は映像上の HUD（5 Hz、NFR-003/FR-013）が担う。詳細タブは
+    計算過程・姿勢・診断という二次表示であり、5 Hz でフル再描画する必要は無い。
+    5 Hz でのフル再描画（bordered container + 2×columns + metrics + expander）は
+    ブラウザのメインスレッドで WebRTC 映像のデコード・描画と競合し、長いセッション
+    で映像が次第に重くなり最後に止まる障害を起こした。サーバ側の解析経路は有界で
+    あることを実測で確認済み。詳細タブを 1 Hz にすることで競合を解消する。
 
     項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示する
     ため、`render_score_details` へ `show_parts=False` を渡して重複を避ける。
@@ -487,9 +502,11 @@ def _session_demographic_caption(overview: DemographicOverview) -> str:
 
     範囲が 1 歳へ収まったセッションでは「31〜31 歳」と書かない。同じ数を 2 度
     並べても幅は伝わらない（`ui.report._session_demographic_section` と同じ作法）。
+    参考性別は観測フレームのモデル性別確率の平均を「女性 X% ・ 男性 Y%」形式で
+    表示する（2026-08-31 の指示）。
     """
     ages = overview.ages
-    genders = "・".join(GENDER_LABELS.get(gender, "—") for gender in overview.genders)
+    genders = format_gender_probabilities(overview.gender_probabilities)
     span = (
         t(_AGE_SPAN_SINGLE_TEMPLATE).format(median=ages.median)
         if ages.low == ages.high
@@ -586,7 +603,7 @@ def _render_stopped_demographic_panel(pipeline: RealtimeLandmarkPipeline) -> Non
 
 
 def _render_detail_panel(pipeline: RealtimeLandmarkPipeline) -> None:
-    """HUD が持たない計算過程・姿勢・肌表面参考値などの詳細結果。
+    """HUD が持たない計算過程・姿勢などの詳細結果。
 
     常に動画の下へ画面幅いっぱいで表示する（FR-032, AC-LAYOUT-01）。
     """
@@ -739,7 +756,7 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
             format_func=_background_mode_label,
             key="camera_background_mode",
             horizontal=True,
-            help=t("人物以外を単色にします。左右差・年齢性別・肌表面参考値の判定には使いません。"),
+            help=t("人物以外を単色にします。左右差・年齢性別の判定には使いません。"),
         )
         pipeline.set_background_mode(background_mode)
     else:

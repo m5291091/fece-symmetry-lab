@@ -396,9 +396,10 @@ def test_the_headline_panel_and_its_wiring_are_fully_removed() -> None:
 def test_the_hud_is_published_from_a_single_existing_fragment() -> None:
     """HUD の payload は既存 fragment へ相乗りさせ、5 Hz の口を増やさない。
 
-    モジュール全体の `@st.fragment` はちょうど 3 個である——HUD publish 用・
-    詳細用（どちらも 5 Hz）と、参考年齢・参考性別用（2026-08-26 に追加、値が
-    最大でも 1 秒に 1 度しか変わらないので 1 Hz）。
+    モジュール全体の `@st.fragment` はちょうど 3 個である——HUD publish 用（5 Hz）と、
+    詳細用（1 Hz、2026-08-31 の利用者報告対応）と、参考年齢・参考性別用（1 Hz）。
+    詳細 fragment を 5 Hz でフル再描画するとブラウザのメインスレッドで WebRTC
+    映像と競合し、長いセッションで映像が次第に重くなり停止する（利用者報告）。
     """
     import inspect
 
@@ -406,6 +407,9 @@ def test_the_hud_is_published_from_a_single_existing_fragment() -> None:
 
     assert "render_hud_payload(" in inspect.getsource(camera._render_hud_fragment)
     assert inspect.getsource(camera).count("@st.fragment(") == 3
+    # 回帰: HUD は 5 Hz のまま、詳細タブは 1 Hz に抑える。
+    assert "run_every=STATUS_REFRESH_INTERVAL" in inspect.getsource(camera._render_hud_fragment)
+    assert "run_every=DETAIL_REFRESH_INTERVAL" in inspect.getsource(camera._render_detail_fragment)
 
 
 def test_the_hud_fragment_only_publishes_and_never_renders_a_panel() -> None:
@@ -877,19 +881,20 @@ def test_the_camera_panel_is_fed_the_gate_and_the_worker_state() -> None:
 def test_the_camera_panel_reports_the_range_it_showed_this_session() -> None:
     """§9.6.1 と同じ材料を画面にも出す（保存物だけが知っている状態にしない）。"""
     from face_symmetry_lab.application.demographic_observations import DemographicOverview
-    from face_symmetry_lab.domain.models import GenderLabel
     from face_symmetry_lab.domain.reference_baseline import ObservedAges
     from face_symmetry_lab.ui import camera
 
     caption = camera._session_demographic_caption(
         DemographicOverview(
             ages=ObservedAges(median=31, low=29, high=34, sample_count=42),
-            genders=(GenderLabel.MALE,),
+            gender_probabilities=(0.3, 0.7),
         )
     )
 
     assert "29〜34 歳" in caption
     assert "42" in caption
+    assert "70%" in caption
+    assert "男性" in caption
 
 
 def test_the_detail_tab_no_longer_carries_the_reference_age() -> None:
