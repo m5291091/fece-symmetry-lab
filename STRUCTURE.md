@@ -172,7 +172,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `dd3bdd716aeee627bb78b44e17fa535f363a9f14772b46d581cb7fd7acec940a`_
+_File-list SHA-256: `2fcc4b79b06ae702ec6572d91efba05bf1871c052616a270426ffff3507e3182`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -233,10 +233,7 @@ face-symmetry-lab/
     - `openvino-age-gender-retail-0013.md`
     - `symmetry-2d-v1.md`
     - `symmetry-3d-v1.md`
-  - `HANDOFF.md`
-  - `beauty-page-plan.md`
   - `capture-protocol.md`
-  - `implementation-prompts.md`
   - `symmetry-metric-analysis.md`
   - `symmetry-metric-level3.md`
   - `symmetry-metric-measurements.md`

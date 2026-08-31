@@ -530,7 +530,7 @@ def self_test() -> int:
     """`domain.symmetry_3d.compute_symmetry_3d` と同じ数字を出すか確かめる。
 
     合成顔は**非対称かつ奥行きが平坦でない**ものを使う。「常に 0 を返す実装」が
-    通ってしまう入力では意味がない（HANDOFF §9 の教訓）。
+    通ってしまう入力では意味がない。
     """
     root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root / "src"))
