@@ -59,7 +59,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
 | 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
 | 対称化画像のピクセルワーピング | `src/face_symmetry_lab/adapters/imaging/piecewise_warp.py` |
-| Camera correction / skin-surface metric | `src/face_symmetry_lab/domain/skin_quality.py` |
 | Quality gate / hysteresis | `src/face_symmetry_lab/application/quality.py` |
 | Frame analysis orchestration | `src/face_symmetry_lab/application/analyzer.py` |
 | Landmark model card | `docs/model-cards/mediapipe-face-landmarker-v1.md` |
@@ -102,7 +101,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
 | 変形メッシュ・安全ガード | `domain/warp_mesh.py` | `tests/domain/test_warp_mesh.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
-| Skin-surface reference scoring | `domain/skin_quality.py` | `tests/domain/test_skin_quality.py` | FR-025, AC-APPEARANCE-01 |
 | Head pose | `domain/pose.py` | `tests/domain/test_pose.py` | FR-009, §8.2.1 |
 | Display smoothing（時定数の値域・段・導出値を含む） | `domain/smoothing.py` | `tests/domain/test_smoothing.py` | FR-012, FR-040, §8.7, §8.8 |
 | 表示の落ち着きの選択 UI | `ui/smoothing_panel.py` | `tests/ui/test_smoothing_panel.py` | FR-040, FR-041, §8.7, §15.1, AC-SMOOTH-01, AC-HOLD-01 |
@@ -174,7 +172,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `0e90b4ac0bb982a1139118dab46230b75a19e381ac023950e1e3972834a7b83e`_
+_File-list SHA-256: `dd3bdd716aeee627bb78b44e17fa535f363a9f14772b46d581cb7fd7acec940a`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -279,7 +277,7 @@ face-symmetry-lab/
     - `application/`
       - … (18 files)
     - `domain/`
-      - … (26 files)
+      - … (25 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
@@ -340,7 +338,6 @@ face-symmetry-lab/
     - `test_score_explanation.py`
     - `test_score_scale.py`
     - `test_session_summary.py`
-    - `test_skin_quality.py`
     - `test_smoothing.py`
     - `test_symmetrization.py`
     - `test_symmetry.py`

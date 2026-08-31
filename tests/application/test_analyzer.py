@@ -103,7 +103,6 @@ def _analyzer(**kwargs) -> FrameAnalyzer:
     return FrameAnalyzer(
         config=_config(),
         config_3d=_config_3d(),
-        skin_pairs=((7, 8), (9, 10), (11, 12)),
         **kwargs,
     )
 
@@ -388,29 +387,6 @@ def test_custom_thresholds_change_how_quickly_the_gate_opens() -> None:
     assert outcome.state.status is Status.OK
 
 
-def test_skin_surface_reference_is_separate_from_the_geometry_overall() -> None:
-    mirrored = np.full((480, 640, 3), (150, 120, 105), dtype=np.uint8)
-    analyzer = _analyzer()
-
-    baseline = _drive_to_ok(analyzer, rgb_image=mirrored)
-    changed_image = mirrored.copy()
-    rng = np.random.default_rng(42)
-    changed_image[250:290, 180:220] = rng.integers(
-        0,
-        256,
-        size=(40, 40, 3),
-        dtype=np.uint8,
-    )
-    changed = analyzer.analyze(_frame(frame_id=6), at=0.7, rgb_image=changed_image)
-
-    assert baseline.skin_quality is not None
-    assert baseline.skin_quality.score == pytest.approx(100.0, abs=1e-6)
-    assert changed.skin_quality is not None
-    assert changed.skin_quality.score is not None
-    assert changed.skin_quality.score < baseline.skin_quality.score
-    assert changed.overall_distance_raw == pytest.approx(baseline.overall_distance_raw, abs=1e-6)
-
-
 # --------------------------------------------------------------------------
 # 推定奥行き z の中立性（§8.1.1）
 # --------------------------------------------------------------------------
@@ -555,7 +531,7 @@ def test_the_outcome_carries_the_three_dimensional_result_and_its_smoothed_dista
 
 def test_missing_depth_leaves_only_the_three_dimensional_side_missing() -> None:
     """回帰（AC-SCORE-09）: z 欠測のフレームは 3D 側だけを欠測にし、2D の距離・
-    EMA・state・肌表面参考値は z のあるフレームと完全に一致する。
+    EMA・state は z のあるフレームと完全に一致する。
     """
     rgb_image = np.full((480, 640, 3), (150, 120, 105), dtype=np.uint8)
     depths = _depths(SYMMETRIC_POINTS)
@@ -580,7 +556,6 @@ def test_missing_depth_leaves_only_the_three_dimensional_side_missing() -> None:
     assert with_depth.state == without_depth.state
     assert with_depth.symmetry == without_depth.symmetry
     assert with_depth.overall_distance_smooth == without_depth.overall_distance_smooth
-    assert with_depth.skin_quality == without_depth.skin_quality
     assert with_depth.face_area_ratio == without_depth.face_area_ratio
 
 
@@ -833,9 +808,7 @@ def test_a_missing_part_does_not_update_that_parts_smoothing_while_others_advanc
     """
     depths = _depths(SYMMETRIC_POINTS)
     config_3d = _sparse_config_3d()
-    analyzer = FrameAnalyzer(
-        config=_config(), config_3d=config_3d, skin_pairs=((7, 8), (9, 10), (11, 12))
-    )
+    analyzer = FrameAnalyzer(config=_config(), config_3d=config_3d)
 
     def _frame_with(points, depths_, *, frame_id):
         return build_landmark_frame(

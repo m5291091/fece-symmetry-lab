@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from math import isfinite
 
@@ -38,3 +39,18 @@ def build_demographic_estimate(
         model_sha256=model_sha256,
         observed_at=observed_at,
     )
+
+
+def mean_gender_probabilities(
+    probabilities: Sequence[tuple[float, float]],
+) -> tuple[float, float] | None:
+    """観測された (女性, 男性) 確率の要素ごと平均。空なら None。
+
+    各 estimate の `gender_probabilities` は正規化済み（和 1）なので、平均も和 1 に近い。
+    """
+    if not probabilities:
+        return None
+    n = len(probabilities)
+    female = sum(p[0] for p in probabilities) / n
+    male = sum(p[1] for p in probabilities) / n
+    return (female, male)

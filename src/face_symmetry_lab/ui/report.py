@@ -71,6 +71,7 @@ from face_symmetry_lab.ui.readings import (
     baseline_note,
     format_baseline_score,
     format_baseline_symmetry,
+    format_gender_probabilities,
     format_score,
     format_symmetry,
     gender_label,
@@ -194,7 +195,6 @@ _YAW_LABEL: Final[str] = "顔の向き yaw"
 _PITCH_LABEL: Final[str] = "顔の向き pitch"
 _ROLL_LABEL: Final[str] = "顔の向き roll"
 _FACE_AREA_LABEL: Final[str] = "画面に占める顔の面積比"
-_SKIN_QUALITY_LABEL: Final[str] = "肌表面の参考値（実験値）"
 
 _VALUE_HEADER: Final[str] = "値"
 _MEDIAN_HEADER: Final[str] = "中央値"
@@ -598,8 +598,8 @@ def _session_demographic_section(
     """§9.6.1（2026-08-26）: Image と同じ形で、そのセッションの参考年齢・参考性別。
 
     リアルタイムは 1 点を持たないため、**実際に表示できた判定**の中央値と真ん中
-    50% の範囲、観測した参考性別、件数を出す。丸めと範囲は参照平均の母集団と同じ
-    `observed_ages` から来る（§10.12-2）。
+    50% の範囲、観測フレームのモデル性別確率の平均、件数を出す。丸めと範囲は
+    参照平均の母集団と同じ `observed_ages` から来る（§10.12-2）。
 
     範囲が 1 歳に収まったセッションでは「31〜31 歳」と書かない——同じ数を 2 度
     並べても幅は伝わらない（`_population_line` と同じ作法）。
@@ -607,7 +607,7 @@ def _session_demographic_section(
     if overview is None:
         return _demographic_section((), notice=notice)
     ages = overview.ages
-    genders = "・".join(gender_label(gender) for gender in overview.genders)
+    genders = format_gender_probabilities(overview.gender_probabilities)
     meta = t(_SHOWN_COUNT_TEMPLATE).format(count=ages.sample_count)
     if ages.low != ages.high:
         meta = t(_SHOWN_RANGE_TEMPLATE).format(low=ages.low, high=ages.high, meta=meta)
@@ -812,12 +812,6 @@ def build_image_report(
                 "—"
                 if outcome.face_area_ratio is None
                 else f"{outcome.face_area_ratio * 100.0:.1f}%",
-            ],
-            [
-                t(_SKIN_QUALITY_LABEL),
-                "—"
-                if outcome.skin_quality is None or outcome.skin_quality.score is None
-                else f"{outcome.skin_quality.score:.1f}",
             ],
         ],
     )

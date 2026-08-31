@@ -19,7 +19,6 @@ from face_symmetry_lab.domain.models import (
     Status,
 )
 from face_symmetry_lab.domain.pose import FacePose
-from face_symmetry_lab.domain.skin_quality import CameraCorrection, SkinQualityResult
 from face_symmetry_lab.domain.symmetry import SymmetryResult
 from face_symmetry_lab.domain.symmetry_3d import AxisSplit, Symmetry3DResult
 
@@ -334,13 +333,6 @@ def test_analysis_records_keep_distances_and_reproducibility_metadata() -> None:
         face_area_ratio=frame.face_area_ratio,
         metric_version=config.metric_version,
         landmark_map_version=config.landmark_map_version,
-        skin_quality=SkinQualityResult(
-            score=72.0,
-            tone_uniformity=74.0,
-            texture_uniformity=70.0,
-            pair_count=12,
-            correction=CameraCorrection(0.9, 1.0, 1.1, 0.2, 0.8),
-        ),
         symmetry_3d=symmetry_3d,
         overall_distance_3d_smooth=0.21,
     )
@@ -373,9 +365,6 @@ def test_analysis_records_keep_distances_and_reproducibility_metadata() -> None:
     assert record.metric_version_2d == config.metric_version
     assert record.metric_version != record.metric_version_2d
 
-    assert record.skin_quality_score_raw == 72.0
-    assert record.skin_tone_uniformity_raw == 74.0
-    assert record.skin_metric_version == "skin-surface/0.1.0"
     assert (
         record.config_fingerprint
         == recorder.export_bundle().manifest.config_revisions[0].fingerprint

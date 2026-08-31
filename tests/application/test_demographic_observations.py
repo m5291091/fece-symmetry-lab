@@ -126,8 +126,8 @@ def test_the_overview_reads_the_same_rounding_as_the_population() -> None:
     assert overview.ages == observed_ages(observations.snapshot().ages)
 
 
-def test_the_overview_keeps_every_observed_gender_once() -> None:
-    """判定が途中で入れ替わったなら、その両方がそのセッションで表示された判定である。"""
+def test_the_overview_reports_mean_gender_probability() -> None:
+    """判定が途中で入れ替わったセッションは、確率の平均として出す（2026-08-31）。"""
     observations = DemographicObservations()
     observations.observe(_estimate(age=24.0, female=0.2), may_show=True)
     observations.observe(_estimate(age=25.0, female=0.9), may_show=True)
@@ -136,7 +136,7 @@ def test_the_overview_keeps_every_observed_gender_once() -> None:
     overview = summarize_observations(observations.snapshot())
 
     assert overview is not None
-    assert overview.genders == (GenderLabel.MALE, GenderLabel.FEMALE)
+    assert overview.gender_probabilities == pytest.approx((0.4333, 0.5667), abs=1e-3)
 
 
 def test_a_session_that_showed_nothing_has_no_overview() -> None:

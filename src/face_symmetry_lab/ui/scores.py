@@ -574,41 +574,6 @@ def _render_part_breakdown(outcome: AnalysisOutcome, *, show_smoothed: bool) -> 
 PART_METRIC_DEVIATION_HELP_TEMPLATE: Final[str] = "ずれ {deviation}"
 RAW_VALUE_CAPTION_TEMPLATE: Final[str] = "生値 {value}"
 
-SKIN_QUALITY_HEADING: Final[str] = "#### 撮影補正後の肌表面参考値（実験値）"
-SKIN_QUALITY_METRIC_LABEL: Final[str] = "肌表面参考値"
-SKIN_TONE_UNIFORMITY_LABEL: Final[str] = "色調均一性"
-SKIN_TEXTURE_UNIFORMITY_LABEL: Final[str] = "テクスチャ均一性"
-SKIN_QUALITY_CAPTION: Final[str] = (
-    "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
-    "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。"
-)
-SKIN_QUALITY_GAIN_TEMPLATE: Final[str] = "補正gain RGB {r:.2f} / {g:.2f} / {b:.2f}"
-SKIN_QUALITY_VERSION_TEMPLATE: Final[str] = "skin metric {version} · 未校正"
-
-
-def _render_skin_quality(outcome: AnalysisOutcome) -> None:
-    """§8.6.1: 幾何とは独立した、撮影補正後の肌表面参考値（実験値）。"""
-    skin = outcome.skin_quality
-    if skin is None:
-        return
-    st.divider()
-    st.markdown(t(SKIN_QUALITY_HEADING))
-    st.metric(t(SKIN_QUALITY_METRIC_LABEL), "—" if skin.score is None else f"{skin.score:.1f}")
-    tone_column, texture_column = st.columns(2)
-    tone_column.metric(
-        t(SKIN_TONE_UNIFORMITY_LABEL),
-        "—" if skin.tone_uniformity is None else f"{skin.tone_uniformity:.1f}",
-    )
-    texture_column.metric(
-        t(SKIN_TEXTURE_UNIFORMITY_LABEL),
-        "—" if skin.texture_uniformity is None else f"{skin.texture_uniformity:.1f}",
-    )
-    st.caption(t(SKIN_QUALITY_CAPTION))
-    if skin.correction is not None:
-        gains = skin.correction.gains
-        st.caption(t(SKIN_QUALITY_GAIN_TEMPLATE).format(r=gains[0], g=gains[1], b=gains[2]))
-    st.caption(t(SKIN_QUALITY_VERSION_TEMPLATE).format(version=skin.metric_version))
-
 
 #: §5.3/§8.6.3: ずれを併記する 1 行。`{deviation}` は `format_distance` の出力
 #: （既に整形済みの文字列）を差し込む。
@@ -632,7 +597,7 @@ def render_score_details(
     全体の対称度・全体のスコアの数値は、映像上の HUD（Camera）と画像上の
     吹き出し（Image）が出す。**見出し結果の区画はどちらの入力にも無い**
     （§5.1、2026-08-12）。こちらは吹き出しが持てないもの——ずれの併記・部位別の
-    内訳・計算過程・§5.3 の注記・姿勢・肌表面参考値——を、その下の画面幅いっぱい
+    内訳・計算過程・§5.3 の注記・姿勢——を、その下の画面幅いっぱい
     の詳細セクションへ描画する（§5.1, FR-013, AC-LAYOUT-01）。**総合値そのものを
     メトリクスとして重複表示しない。**
 
@@ -691,7 +656,6 @@ def render_score_details(
     _render_score_calculation_detail(outcome)
 
     render_pose(outcome)
-    _render_skin_quality(outcome)
 
     _render_reading_limits()
 

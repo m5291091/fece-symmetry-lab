@@ -240,7 +240,10 @@ def _observations(ages, genders):
         DemographicObservationSet,
     )
 
-    return DemographicObservationSet(ages=tuple(ages), genders=tuple(genders))
+    probs = tuple((0.3, 0.7) for _ in genders)
+    return DemographicObservationSet(
+        ages=tuple(ages), genders=tuple(genders), gender_probabilities=probs
+    )
 
 
 def test_a_session_resolves_one_population_from_the_observed_range() -> None:

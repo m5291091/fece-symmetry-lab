@@ -29,7 +29,6 @@ from face_symmetry_lab.domain.export import (
 from face_symmetry_lab.domain.landmarks import LandmarkFrame
 from face_symmetry_lab.domain.metrics import MetricConfig
 from face_symmetry_lab.domain.models import DemographicEstimate, ReasonCode, Status
-from face_symmetry_lab.domain.skin_quality import SKIN_METRIC_VERSION
 
 DEFAULT_HISTORY_CAPACITY = 3_000
 
@@ -70,8 +69,6 @@ def build_config_settings(
         "face_area_max": thresholds.face_area_max,
         "valid_frames_to_ok": thresholds.valid_frames_to_ok,
         "ema_tau_seconds": tau_seconds,
-        "skin_metric_version": SKIN_METRIC_VERSION,
-        "skin_quality_frozen": False,
     }
     if analysis_interval_ms is not None:
         settings["analysis_interval_ms"] = analysis_interval_ms
@@ -219,10 +216,6 @@ class SessionRecorder:
         symmetry = outcome.symmetry
         symmetry_3d = outcome.symmetry_3d
         pose = outcome.pose
-        skin = outcome.skin_quality
-        # §8.6.1: 使用可能な white balance 補正が無くても肌の結果は存在しうる
-        # ため、両者は互いに独立して欠測になる。
-        correction = skin.correction if skin is not None else None
         with self._lock:
             record = ExportRecord(
                 session_id=self._session_id,
@@ -273,14 +266,6 @@ class SessionRecorder:
                 distance3d_parts_equal_raw=(
                     symmetry_3d.equal_weight_distance if symmetry_3d is not None else None
                 ),
-                skin_quality_score_raw=skin.score if skin is not None else None,
-                skin_tone_uniformity_raw=skin.tone_uniformity if skin is not None else None,
-                skin_texture_uniformity_raw=skin.texture_uniformity if skin is not None else None,
-                skin_correction_gain_r=correction.gain_r if correction is not None else None,
-                skin_correction_gain_g=correction.gain_g if correction is not None else None,
-                skin_correction_gain_b=correction.gain_b if correction is not None else None,
-                skin_metric_version=skin.metric_version if skin is not None else None,
-                skin_quality_frozen=skin.frozen if skin is not None else None,
                 landmark_model_version=self._landmark_model_version,
                 landmark_model_sha256=self._landmark_model_sha256,
                 metric_version=self._metric_config_3d.metric_version,

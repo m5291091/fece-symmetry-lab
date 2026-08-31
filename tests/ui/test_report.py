@@ -546,12 +546,11 @@ def _overview():
     from face_symmetry_lab.application.demographic_observations import (
         DemographicOverview,
     )
-    from face_symmetry_lab.domain.models import GenderLabel
     from face_symmetry_lab.domain.reference_baseline import ObservedAges
 
     return DemographicOverview(
         ages=ObservedAges(median=31, low=29, high=34, sample_count=42),
-        genders=(GenderLabel.MALE,),
+        gender_probabilities=(0.2, 0.8),
     )
 
 
@@ -589,6 +588,9 @@ def test_the_camera_report_names_the_range_it_actually_showed() -> None:
     assert "31 歳" in html
     assert "29〜34 歳" in html
     assert "男性" in html
+    assert "女性" in html
+    assert "80%" in html
+    assert "20%" in html
     assert "42" in html
 
 
@@ -596,13 +598,12 @@ def test_a_single_year_session_is_written_without_a_range() -> None:
     from face_symmetry_lab.application.demographic_observations import (
         DemographicOverview,
     )
-    from face_symmetry_lab.domain.models import GenderLabel
     from face_symmetry_lab.domain.reference_baseline import ObservedAges
 
     html = _camera(
         overview=DemographicOverview(
             ages=ObservedAges(median=31, low=31, high=31, sample_count=3),
-            genders=(GenderLabel.FEMALE,),
+            gender_probabilities=(0.9, 0.1),
         )
     )
 

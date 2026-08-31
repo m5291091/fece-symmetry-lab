@@ -24,7 +24,9 @@ from face_symmetry_lab.domain.models import GenderLabel, ReasonCode, Status
 #: v4.0.0 は主指標を `symmetry-3d/1.0.0` へ切り替えた破壊的変更（§8.6.3, §8.6.5,
 #: §9.2）。`distance3d_*` 列を追加し、2D の EMA 列 `distance_overall_smooth` を
 #: 削除した。
-SCHEMA_VERSION: Final = "4.0.0"
+#: v5.0.0 は肌表面参考値列（`skin_*` 8 列）を削除した（FR-025 / §8.6.1 撤回、
+#: 2026-08-31）。
+SCHEMA_VERSION: Final = "5.0.0"
 
 
 class AgeGateDecisionLabel(StrEnum):
@@ -51,7 +53,7 @@ class ExportRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal["4.0.0"] = SCHEMA_VERSION
+    schema_version: Literal["5.0.0"] = SCHEMA_VERSION
     session_id: str
     segment_id: str
     frame_id: int = Field(ge=0)
@@ -88,14 +90,6 @@ class ExportRecord(BaseModel):
     distance3d_overall_raw: float | None = Field(default=None, ge=0)
     distance3d_overall_smooth: float | None = Field(default=None, ge=0)
     distance3d_parts_equal_raw: float | None = Field(default=None, ge=0)
-    skin_quality_score_raw: float | None = Field(default=None, ge=0, le=100)
-    skin_tone_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
-    skin_texture_uniformity_raw: float | None = Field(default=None, ge=0, le=100)
-    skin_correction_gain_r: float | None = Field(default=None, ge=0.5, le=2)
-    skin_correction_gain_g: float | None = Field(default=None, ge=0.5, le=2)
-    skin_correction_gain_b: float | None = Field(default=None, ge=0.5, le=2)
-    skin_metric_version: str | None = None
-    skin_quality_frozen: bool | None = None
     estimated_age_years: float | None = Field(default=None, ge=18, le=75)
     gender_label: GenderLabel | None = None
     gender_confidence: float | None = Field(default=None, ge=0, le=1)
@@ -159,14 +153,11 @@ class ExportRecord(BaseModel):
             self.distance3d_overall_raw,
             self.distance3d_overall_smooth,
             self.distance3d_parts_equal_raw,
-            self.skin_quality_score_raw,
-            self.skin_tone_uniformity_raw,
-            self.skin_texture_uniformity_raw,
         )
         if self.analysis_status is not Status.OK and any(
             value is not None for value in measured_values
         ):
-            raise ValueError("左右差の距離と肌表面参考値は OK レコードだけに保持できます。")
+            raise ValueError("左右差の距離は OK レコードだけに保持できます。")
         return self
 
     @model_validator(mode="after")
@@ -212,7 +203,7 @@ class ConfigRevision(BaseModel):
 class ExportManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["4.0.0"] = SCHEMA_VERSION
+    schema_version: Literal["5.0.0"] = SCHEMA_VERSION
     app_version: str = Field(min_length=1)
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     session_id: str

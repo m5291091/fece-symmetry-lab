@@ -19,6 +19,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 
+from face_symmetry_lab.domain.demographics import mean_gender_probabilities
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
 from face_symmetry_lab.domain.reference_baseline import ObservedAges, observed_ages
 
@@ -38,10 +39,14 @@ class DemographicOverview:
     **年齢の丸めと範囲の決め方は参照平均の母集団と同じもの**（`observed_ages`）を
     使う。ここで 2 つ目の数え方を作ると、同じセッションのレポートの中で「31 歳」と
     「30 歳の平均」が並ぶ（§10.12-2）。
+
+    **参考性別は観測フレームのモデル性別確率の平均**（女性・男性の確率）として持つ
+    （2026-08-31 の指示）。判定が途中で入れ替わったセッションで 2 つのラベルが並ぶ
+    と紛らわしいため、確率の平均に改めた。
     """
 
     ages: ObservedAges
-    genders: tuple[GenderLabel, ...]
+    gender_probabilities: tuple[float, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +55,7 @@ class DemographicObservationSet:
 
     ages: tuple[float, ...]
     genders: tuple[GenderLabel, ...]
+    gender_probabilities: tuple[tuple[float, float], ...]
 
     @property
     def is_empty(self) -> bool:
@@ -68,6 +74,7 @@ class DemographicObservations:
             raise ValueError("capacity は 1 以上である必要があります。")
         self._ages: deque[float] = deque(maxlen=capacity)
         self._genders: deque[GenderLabel] = deque(maxlen=capacity)
+        self._gender_probabilities: deque[tuple[float, float]] = deque(maxlen=capacity)
         self._lock = threading.Lock()
 
     def observe(self, estimate: DemographicEstimate | None, *, may_show: bool) -> None:
@@ -82,12 +89,14 @@ class DemographicObservations:
         with self._lock:
             self._ages.append(estimate.estimated_age_years)
             self._genders.append(estimate.gender)
+            self._gender_probabilities.append(estimate.gender_probabilities)
 
     def snapshot(self) -> DemographicObservationSet:
         with self._lock:
             return DemographicObservationSet(
                 ages=tuple(self._ages),
                 genders=tuple(self._genders),
+                gender_probabilities=tuple(self._gender_probabilities),
             )
 
     def reset(self) -> None:
@@ -95,6 +104,7 @@ class DemographicObservations:
         with self._lock:
             self._ages.clear()
             self._genders.clear()
+            self._gender_probabilities.clear()
 
 
 def summarize_observations(
@@ -108,13 +118,14 @@ def summarize_observations(
 
     年齢が 1 件も §9.5 の範囲（18〜75）に収まらないセッションでは `observed_ages`
     が `None` を返すので、ここも `None` になる——clamp して「18 歳」を作らない。
-    参考性別は**観測された順で重複を落とす**。判定が途中で入れ替わったなら、その
-    両方がそのセッションで表示された判定だからである。
+    参考性別は**観測フレームのモデル性別確率の平均**として持つ（2026-08-31 の指示）。
+    判定が途中で入れ替わったセッションで 2 つのラベルが並ぶと紛らわしいため、
+    確率の平均に改めた。
     """
     ages = observed_ages(observations.ages)
     if ages is None:
         return None
-    genders = tuple(dict.fromkeys(observations.genders))
-    if not genders:
+    probs = mean_gender_probabilities(observations.gender_probabilities)
+    if probs is None:
         return None
-    return DemographicOverview(ages=ages, genders=genders)
+    return DemographicOverview(ages=ages, gender_probabilities=probs)

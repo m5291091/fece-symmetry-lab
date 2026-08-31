@@ -204,29 +204,13 @@ EN: Final[dict[str, str]] = {
         "Pose yaw {yaw:.1f}° / pitch {pitch:.1f}° / roll {roll:.1f}°"
     ),
     " · 顔面積比 {ratio:.2f}": " · Face area ratio {ratio:.2f}",
-    # --- ui/scores.py: 部位別の内訳・肌表面参考値 -----------------------------
+    # --- ui/scores.py: 部位別の内訳 -------------------------------------------
     "部位別の対称度（全体値の内訳ではなく、ずれの分布を見るための独立した値です）": (
         "Per-region symmetry (an independent value for seeing how "
         "deviation is distributed, not a breakdown of the overall value)"
     ),
     "ずれ {deviation}": "Deviation {deviation}",
     "生値 {value}": "Raw value {value}",
-    "#### 撮影補正後の肌表面参考値（実験値）": (
-        "#### Skin-surface reference value (after capture normalisation, experimental)"
-    ),
-    "肌表面参考値": "Skin-surface reference value",
-    "色調均一性": "Tone uniformity",
-    "テクスチャ均一性": "Texture uniformity",
-    "ソフトウェアでwhite balanceと明度を補正した頬patchの独立参考値です。"
-    "camera、照明、化粧、髭、圧縮の影響を残し、肌質、疾患、健康、美しさを表しません。": (
-        "This is an independent reference value for a cheek patch after "
-        "software correction of white balance and brightness. It still "
-        "reflects camera, lighting, makeup, facial hair, and "
-        "compression, and does not represent skin quality, disease, "
-        "health, or beauty."
-    ),
-    "補正gain RGB {r:.2f} / {g:.2f} / {b:.2f}": "Correction gain RGB {r:.2f} / {g:.2f} / {b:.2f}",
-    "skin metric {version} · 未校正": "skin metric {version} · uncalibrated",
     # --- ui/scores.py: 総合値の併記・版 ---------------------------------------
     "全体の対称度のずれ {deviation}（対称度との和は 100%）": (
         "Overall symmetry deviation {deviation} (sums to 100% with symmetry)"
@@ -283,4 +267,5 @@ EN: Final[dict[str, str]] = {
     ),
     "更新 {seconds:.1f} 秒ごと": "Updates every {seconds:.1f}s",
     "平滑化 {seconds:.1f} 秒": "Smoothing {seconds:.1f}s",
+    "{female} {female_pct}% ・ {male} {male_pct}%": "{female} {female_pct}% / {male} {male_pct}%",
 }

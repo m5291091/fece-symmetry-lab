@@ -48,15 +48,14 @@ EN: Final[dict[str, str]] = {
     (
         "Face Symmetry Lab は、Web カメラまたは静止画から顔のランドマークを端末内で解析し、"
         "左右差をわかりやすく可視化する研究・セルフチェック用ツールです。"
-        "画像は外部へ送信・保存されず、同一人物・同一環境内での左右差と肌表面参考値の相対的な傾向、"
+        "画像は外部へ送信・保存されず、同一人物・同一環境内での左右差の相対的な傾向、"
         "およびモデル推定の参考年齢・参考性別を確認できます。"
     ): (
         "Face Symmetry Lab is a research and self-check tool that analyses facial "
         "landmarks on-device from a webcam or a still photo and visualises "
         "left-right differences. Images are never sent externally or stored; "
-        "you can review relative trends in symmetry and skin-surface reference "
-        "values within the same person and environment, along with a "
-        "model-estimated reference age and gender."
+        "you can review relative trends in symmetry within the same person "
+        "and environment, along with a model-estimated reference age and gender."
     ),
     (
         "試験中の指標です。撮影条件で値が動くため、"
@@ -203,32 +202,6 @@ EN: Final[dict[str, str]] = {
         "desirable face. Do not present or share it without stating that it "
         "is a processed image."
     ),
-    "肌表面参考値（実験値）": "Skin-surface reference value (experimental)",
-    (
-        "- 顔crop に対して、channel 平均をそろえる Gray-world ホワイトバランスと "
-        "5〜95 percentile を用いた明度正規化を端末内で適用します"
-        "（過補正を避ける範囲へ補正量をclamp）。\n"
-        "- 補正後、版管理された左右の頬 landmark 周辺を抽出し、輝度・色差の分散から色調均一性を、"
-        "局所勾配からテクスチャ均一性を算出します。\n"
-        "- ソフトウェア補正はカメラ固有の露出・HDR・レンズ・ISP処理までは復元できないため、"
-        "同一人物・同一端末・近い照明での相対比較の補助に限られます。"
-        "肌質、疾患、清潔さ、健康、美的品質は表しません。幾何の左右差には混合しません。"
-    ): (
-        "- On the face crop, we apply on-device Gray-world white balance "
-        "(which aligns the channel means) and brightness normalisation based "
-        "on the 5th-to-95th range of pixel values (the amount of adjustment "
-        "is clamped to a range that avoids overcorrection).\n"
-        "- After this adjustment, we extract the region around the "
-        "version-controlled left and right cheek landmarks, and compute "
-        "colour-tone uniformity from the variance of brightness and colour "
-        "difference, and texture uniformity from local gradients.\n"
-        "- Software adjustment cannot undo camera-specific exposure, HDR, "
-        "lens, or ISP processing, so this is limited to supporting relative "
-        "comparison for the same person, the same device, and similar "
-        "lighting. It does not represent skin quality, disease, cleanliness, "
-        "health, or aesthetic quality. It is not mixed into the geometric "
-        "left-right difference."
-    ),
     "参考年齢・参考性別": "Reference age & gender",
     (
         "- Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-0013` を、"
@@ -240,7 +213,7 @@ EN: Final[dict[str, str]] = {
         "公開ベンチマークでは年齢平均誤差 6.99 年、性別accuracy 95.80% ですが、"
         "内部validation datasetの値であり、実利用時の精度を保証しません。\n"
         "- 年齢は「モデル推定の参考年齢」、性別は「外見からのモデル推定の参考性別」であり、"
-        "本人の自己認識・法的性別・実年齢を表しません。左右差・肌表面参考値とは分離して扱います。"
+        "本人の自己認識・法的性別・実年齢を表しません。左右差とは分離して扱います。"
     ): (
         "- We run Open Model Zoo 2023.0 FP16 `age-gender-recognition-retail-"
         "0013` on-device, using the DNN feature of `opencv-contrib-python`, as "
@@ -257,8 +230,7 @@ EN: Final[dict[str, str]] = {
         '- Age is treated as "Reference age (model estimate)" and gender as '
         '"Reference gender (model estimate from appearance)"; neither '
         "represents self-identified gender, legal gender, or actual age. They "
-        "are handled separately from symmetry and the skin-surface reference "
-        "value."
+        "are handled separately from symmetry."
     ),
     "同年齢・同性別の参照平均（併記、FR-039）": (
         "Reference mean for the same age & gender (shown alongside, FR-039)"

@@ -34,14 +34,6 @@ def _record(**overrides: object) -> ExportRecord:
         "distance3d_overall_raw": 0.060,
         "distance3d_overall_smooth": 0.061,
         "distance3d_parts_equal_raw": 0.064,
-        "skin_quality_score_raw": 72.0,
-        "skin_tone_uniformity_raw": 74.0,
-        "skin_texture_uniformity_raw": 70.0,
-        "skin_correction_gain_r": 0.9,
-        "skin_correction_gain_g": 1.0,
-        "skin_correction_gain_b": 1.1,
-        "skin_metric_version": "skin-surface/0.1.0",
-        "skin_quality_frozen": False,
         "landmark_model_version": "landmark/1",
         "landmark_model_sha256": "a" * 64,
         "metric_version": "symmetry-3d/1.0.0",
@@ -60,15 +52,29 @@ def _record(**overrides: object) -> ExportRecord:
 def test_record_uses_the_breaking_distance_schema() -> None:
     record = _record()
 
-    assert record.schema_version == "4.0.0"
+    assert record.schema_version == "5.0.0"
     assert record.metric_version == "symmetry-3d/1.0.0"
     assert record.metric_version_2d == "symmetry-2d/2.0.0"
     assert record.config_fingerprint == "c" * 64
     assert record.distance_mouth_raw == pytest.approx(0.013)
     assert record.distance_overall_raw == pytest.approx(0.0115)
-    assert record.skin_quality_score_raw == pytest.approx(72.0)
-    assert record.skin_quality_frozen is False
     assert "age_band" not in ExportRecord.model_fields
+
+
+def test_the_v5_schema_has_no_skin_columns() -> None:
+    """2026-08-31 撤回: FR-025 の肌表面参考値列をスキーマから削除した（v5.0.0）。"""
+    skin_columns = [
+        "skin_quality_score_raw",
+        "skin_tone_uniformity_raw",
+        "skin_texture_uniformity_raw",
+        "skin_correction_gain_r",
+        "skin_correction_gain_g",
+        "skin_correction_gain_b",
+        "skin_metric_version",
+        "skin_quality_frozen",
+    ]
+    for col in skin_columns:
+        assert col not in ExportRecord.model_fields
 
 
 def test_the_schema_no_longer_carries_the_zero_to_hundred_score_columns() -> None:
@@ -152,14 +158,6 @@ def test_missing_values_are_null_not_zero_filled() -> None:
         distance3d_overall_raw=None,
         distance3d_overall_smooth=None,
         distance3d_parts_equal_raw=None,
-        skin_quality_score_raw=None,
-        skin_tone_uniformity_raw=None,
-        skin_texture_uniformity_raw=None,
-        skin_correction_gain_r=None,
-        skin_correction_gain_g=None,
-        skin_correction_gain_b=None,
-        skin_metric_version=None,
-        skin_quality_frozen=None,
     )
 
     assert record.distance_overall_raw is None

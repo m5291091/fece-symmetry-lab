@@ -4,7 +4,10 @@ from math import nan
 import pytest
 from pydantic import ValidationError
 
-from face_symmetry_lab.domain.demographics import build_demographic_estimate
+from face_symmetry_lab.domain.demographics import (
+    build_demographic_estimate,
+    mean_gender_probabilities,
+)
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
 
 
@@ -57,3 +60,17 @@ def test_demographic_estimate_requires_timezone_aware_observation() -> None:
             model_sha256="a" * 64,
             observed_at=datetime(2026, 8, 1),
         )
+
+
+# --- mean_gender_probabilities -----------------------------------------------
+
+
+def test_mean_gender_probabilities_returns_none_for_empty_input() -> None:
+    assert mean_gender_probabilities([]) is None
+
+
+def test_mean_gender_probabilities_averages_elementwise() -> None:
+    result = mean_gender_probabilities([(0.2, 0.8), (0.9, 0.1), (0.2, 0.8)])
+
+    assert result is not None
+    assert result == pytest.approx((0.4333, 0.5667), abs=1e-3)

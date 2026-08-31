@@ -65,6 +65,22 @@ def gender_label(gender: GenderLabel) -> str:
     return t(GENDER_LABELS[gender])
 
 
+#: §9.6.1（2026-08-31）: 観測された性別確率を「女性 X% ・ 男性 Y%」形式で整形する。
+GENDER_PROBABILITY_TEMPLATE: Final[str] = "{female} {female_pct}% ・ {male} {male_pct}%"
+
+
+def format_gender_probabilities(probabilities: tuple[float, float]) -> str:
+    """観測された性別確率を『女性 X% ・ 男性 Y%』へ整形する（和は 100% に丸める）。"""
+    female_pct = round(probabilities[0] * 100)
+    male_pct = 100 - female_pct
+    return t(GENDER_PROBABILITY_TEMPLATE).format(
+        female=gender_label(GenderLabel.FEMALE),
+        female_pct=female_pct,
+        male=gender_label(GenderLabel.MALE),
+        male_pct=male_pct,
+    )
+
+
 # --- 整形 --------------------------------------------------------------------
 
 

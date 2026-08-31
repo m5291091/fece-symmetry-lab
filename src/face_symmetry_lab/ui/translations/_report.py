@@ -114,7 +114,6 @@ EN: Final[dict[str, str]] = {
     "顔の向き pitch": "Face angle: pitch",
     "顔の向き roll": "Face angle: roll",
     "画面に占める顔の面積比": "Face area ratio of the frame",
-    "肌表面の参考値（実験値）": "Skin-surface reference value (experimental)",
     # --- ui/summary_panel.py -------------------------------------------------
     "撮り直すだけで中央値は数ポイント動きます（実測で全幅 6.8 点）。": (
         "Just retaking the shot can move the median by a few points (an observed range of 6.8 pts)."

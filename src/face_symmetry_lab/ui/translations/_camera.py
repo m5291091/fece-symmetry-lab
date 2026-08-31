@@ -99,10 +99,9 @@ EN: Final[dict[str, str]] = {
     "セッションデータのエクスポート": "Session data export",
     "プレビュー専用フレーム": "Preview-only frames",
     "ランドマーク点数": "Landmark point count",
-    "人物以外を単色にします。左右差・年齢性別・肌表面参考値の判定には使いません。": (
+    "人物以外を単色にします。左右差・年齢性別の判定には使いません。": (
         "Turns everything but the person into a flat "
-        "colour. Not used for symmetry, age/gender, "
-        "or skin-surface reference values."
+        "colour. Not used for symmetry or age/gender detection."
     ),
     "内訳: ": "Breakdown: ",
     "処理が続けて失敗しています。カメラを停止して再開してください。": (

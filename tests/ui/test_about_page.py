@@ -24,8 +24,8 @@ def test_about_page_explains_score_methodology() -> None:
 
     assert "左右差の算出方法" in headers
     assert any("幾何左右差" in text for text in subheaders)
-    assert any("肌表面参考値" in text for text in subheaders)
     assert any("参考年齢" in text for text in subheaders)
+    assert not any("肌表面参考値" in text for text in subheaders)
 
 
 def test_about_page_states_prohibited_uses() -> None:

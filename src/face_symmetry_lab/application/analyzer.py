@@ -24,12 +24,6 @@ from face_symmetry_lab.domain.landmarks import (
 from face_symmetry_lab.domain.metrics import PART_NAMES, MetricConfig
 from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
 from face_symmetry_lab.domain.pose import FacePose
-from face_symmetry_lab.domain.skin_quality import (
-    MEDIAPIPE_CHEEK_PAIRS,
-    SkinQualityError,
-    SkinQualityResult,
-    compute_skin_quality,
-)
 from face_symmetry_lab.domain.smoothing import (
     DEFAULT_TAU_SECONDS,
     TimeBasedEma,
@@ -63,7 +57,6 @@ class AnalysisOutcome:
     face_area_ratio: float | None
     metric_version: str
     landmark_map_version: str
-    skin_quality: SkinQualityResult | None = None
     #: §8.5.1 / §8.6.5 の並走指標（`symmetry-3d/1.0.0`, FR-036）。この版では
     #: `AnalysisOutcome` までは届くが、表示・エクスポートへは接続しない。
     symmetry_3d: Symmetry3DResult | None = None
@@ -105,7 +98,6 @@ class FrameAnalyzer:
         config_3d: MetricConfig,
         thresholds: QualityThresholds | None = None,
         tau_seconds: float = DEFAULT_TAU_SECONDS,
-        skin_pairs: tuple[tuple[int, int], ...] = MEDIAPIPE_CHEEK_PAIRS,
     ) -> None:
         self._config = config
         self._config_3d = config_3d
@@ -114,7 +106,6 @@ class FrameAnalyzer:
         # とも値を共有しない（`_replace_emas` が 3 種類をまとめて作る）。
         self._replace_emas(tau_seconds)
         self._lost_since: float | None = None
-        self._skin_pairs = skin_pairs
 
     @property
     def config(self) -> MetricConfig:
@@ -222,7 +213,7 @@ class FrameAnalyzer:
         # symmetry-3d/1.0.0（§8.5.1, §8.6.5, FR-036）は 2D と並走するだけで、
         # まだ誰も読まない。2D の失敗処理（Status.ERROR にしてゲートと EMA を
         # リセットする）をここへコピーしない —— 3D の失敗はこのフレームの 3D
-        # 側だけを欠測にし、state・品質ゲート・2D の距離・EMA・肌表面参考値の
+        # 側だけを欠測にし、state・品質ゲート・2D の距離・EMA の
         # いずれも変えない（不変条件 12 の失敗分離）。`quality_ok` は品質ゲート
         # 直後の判定であり、2D の算出が後から失敗して `state` が ERROR に変わっ
         # ても、3D はそれに引きずられない。
@@ -252,18 +243,6 @@ class FrameAnalyzer:
                     None if raw_part is None else self._ema_3d_parts[name].update(raw_part, at=at)
                 )
 
-        skin_quality: SkinQualityResult | None = None
-        if state.status is Status.OK and rgb_image is not None:
-            try:
-                skin_quality = compute_skin_quality(
-                    rgb_image,
-                    frame,
-                    pairs=self._skin_pairs,
-                )
-            except SkinQualityError:
-                # 撮影条件で補正した参考値は独立している（§8.6.1）。
-                skin_quality = None
-
         # §6.2/§6.3/§8.2: 非ブロッキック照度警告。採点・品質ゲート・検出には
         # 影響しない。品質ゲートの状態に関わらず算出する（NO_FACE でも「暗い」
         # と言えるように）。失敗分離（不変条件 12）のため try/except で包み、
@@ -287,7 +266,6 @@ class FrameAnalyzer:
             face_area_ratio=frame.face_area_ratio,
             metric_version=self._config.metric_version,
             landmark_map_version=self._config.landmark_map_version,
-            skin_quality=skin_quality,
             symmetry_3d=symmetry_3d,
             overall_distance_3d_smooth=smooth_3d,
             part_distances_3d_smooth=smooth_3d_parts,
