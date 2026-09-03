@@ -68,7 +68,6 @@ from face_symmetry_lab.ui.age_gate_notice import (
     age_gate_notice,
     resolve_reference_age_view,
 )
-from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.demographic_panel import render_demographic_panel
 from face_symmetry_lab.ui.detail_panel import render_detail_panel
 from face_symmetry_lab.ui.export_panel import render_export_panel
@@ -81,7 +80,6 @@ from face_symmetry_lab.ui.model_setup import (
 )
 from face_symmetry_lab.ui.readings import (
     gate_color,
-    resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
 )
@@ -351,7 +349,7 @@ def _render_image_export(
     §9.6.2 の内容は「画面に出ているもの」と同じでなければならない。そこで
     参考年齢・参考性別は、**吹き出しへ実際に渡したのと同じ解決**を通す——
     `_resolve_shown_estimate` を共有することで、年齢ゲートが隠した判断が
-    レポートの母集団から復元されることを防ぐ（§10.12-3）。
+    レポートから復元されることを防ぐ（§10.11-2）。
     """
     bundle = recorder.export_bundle()
     builder = None
@@ -368,7 +366,6 @@ def _render_image_export(
                     preview=analysis.landmarks.preview,
                     view=view,
                 ),
-                baseline=resolve_baseline(estimate),
                 estimate=estimate,
                 show_demographics=estimate is not None,
                 notice=notice,
@@ -465,9 +462,9 @@ def _render_image_demographic_detail(
 def _resolve_shown_estimate(gate_outcome: AgeGateOutcome | None) -> DemographicEstimate | None:
     """**実際に画面へ出す**参考年齢・参考性別を 1 か所で決める。
 
-    吹き出し（FR-039 の母集団もここから解決される）と FR-042 のレポートが同じ
-    関数を通る。片方が session state の推定をそのまま読むと、**年齢ゲートが
-    隠した判断が母集団の年齢から復元されてしまう**（§10.12-3）。
+    吹き出しと FR-042 のレポートが同じ関数を通る。片方が session state の
+    推定をそのまま読むと、**年齢ゲートが隠した判断がレポートから復元されて
+    しまう**（§10.11-2）。
 
     判定そのものは `ui.age_gate_notice.resolve_reference_age_view` が持つ
     （2026-08-26、§5.1）。Camera の HUD・専用タブと同じ 1 つの解決を通すことで、
@@ -489,18 +486,13 @@ def _render_preview_with_overlay(
     測定値が 2 か所へ出る」状態を Image でも作らないためである。画像は画面幅
     いっぱいを使う（横に並べる相手がもう無い）。
 
-    §8.6.3/§8.7: 全体の対称度・全体のスコア・部位別のいずれも、主指標
-    `symmetry-3d/1.0.0` から HUD と同じ解決（平滑値優先）を通す。静止画は平滑値
-    を持たない（`analyze_still_image` が明示的に欠測へ落とす）ため、自然に生値へ
-    落ちる。全体のスコアはもともと生値のみである（§8.6.5・§8.7）。
+    §8.6.3/§8.7: 全体の対称度・部位別のいずれも、主指標 `symmetry-3d/1.0.0` から
+    HUD と同じ解決（平滑値優先）を通す。静止画は平滑値を持たない
+    （`analyze_still_image` が明示的に欠測へ落とす）ため、自然に生値へ落ちる。
 
     FR-038: `gate_outcome.may_show_reference_age` が偽のときは推定値を吹き出し
     へ渡さず、代わりに `ui.age_gate_notice` の固定文言を出す。左右差（対称度・
-    全体のスコア・部位別）の描画は変えない（不変条件 12）。
-
-    FR-039: 参照平均は `estimate`——実際に吹き出しへ出す推定——からだけ解決する。
-    ゲートが参考年齢を隠した後の `None` をそのまま渡すので、隠した判断が母集団の
-    年齢から復元されることがない（§10.12-3）。
+    部位別）の描画は変えない（不変条件 12）。
     """
     estimate = _resolve_shown_estimate(gate_outcome)
     notice = "" if gate_outcome is None else age_gate_notice(gate_outcome.status)
@@ -508,13 +500,11 @@ def _render_preview_with_overlay(
         analysis.landmarks.preview,
         caption=t("検出したランドマーク"),
         overall=resolve_overall_distance(analysis.outcome),
-        equal_weight=resolve_equal_weight_distance(analysis.outcome),
         parts={name: resolve_part_distance_3d(analysis.outcome, name) for name in PART_NAMES},
         estimate=estimate,
         show_demographics=estimate is not None,
         notice=notice,
         gate=gate_color(analysis.outcome.state),
-        baseline=resolve_baseline(estimate),
     )
     render_tracking_status(
         analysis.landmarks.frame.status,
@@ -558,7 +548,7 @@ def render_image_section() -> None:
             t("顔の中心線を表示"),
             value=True,
             key="image_midline_enabled",
-            help=t("採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。"),
+            help=t("採点に使う正中点から推定した直線です。表示を変えても対称度は変わりません。"),
         )
         try:
             recorder, analysis = _analyze_uploaded_image(

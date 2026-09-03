@@ -1,9 +1,9 @@
-"""FR-039 / §9.6.1: 表示できた判定だけを溜める（`application.demographic_observations`）。
+"""FR-024 / §9.6.1: 表示できた判定だけを溜める（`application.demographic_observations`）。
 
 **この module の存在理由は 1 つの分岐にある。** 年齢ゲートが表示を止めたフレームの
-推定を溜めてしまうと、後から FR-042 のレポートの母集団としてゲートの内部判断が
-漏れる（§10.12-3、§10.11-2）。ここが壊れると、画面では隠したはずの判断が
-「20 歳・男性の平均」という形でファイルに残る。
+推定を溜めてしまうと、後から FR-042 のレポートの参考年齢要約としてゲートの内部判断が
+漏れる（§10.11-2）。ここが壊れると、画面では隠したはずの判断が「20 歳」という形で
+ファイルに残る。
 """
 
 from __future__ import annotations
@@ -16,9 +16,8 @@ from face_symmetry_lab.application.demographic_observations import (
     DemographicObservations,
     summarize_observations,
 )
-from face_symmetry_lab.domain.demographics import build_demographic_estimate
+from face_symmetry_lab.domain.demographics import build_demographic_estimate, observed_ages
 from face_symmetry_lab.domain.models import GenderLabel
-from face_symmetry_lab.domain.reference_baseline import observed_ages
 
 
 def _estimate(age: float = 24.0, female: float = 0.2):
@@ -42,7 +41,7 @@ def test_a_shown_estimate_is_kept() -> None:
 
 
 def test_an_estimate_the_gate_hid_is_never_kept() -> None:
-    """§10.12-3: 隠した判断が、後から母集団の年齢として復元されてはならない。"""
+    """§10.11-2: 隠した判断が、後から母集団の年齢として復元されてはならない。"""
     observations = DemographicObservations()
 
     # モデル自体は 18〜75 しか返さない（`build_demographic_estimate` の検証）。
@@ -111,10 +110,10 @@ def test_a_zero_capacity_is_refused() -> None:
 
 
 def test_the_overview_reads_the_same_rounding_as_the_population() -> None:
-    """§10.12-2: 画面の「24 歳」とレポートの年齢が食い違ってはならない。
+    """§9.6.1: 画面の「24 歳」とレポートの年齢が食い違ってはならない。
 
     罠: `int()` の切り捨てや自前の丸めを持つ実装は、ちょうど .5 の観測で
-    `observed_ages`（母集団の丸め）と 1 歳ずれる。
+    `observed_ages`（レポートの丸め）と 1 歳ずれる。
     """
     observations = DemographicObservations()
     for age in (24.5, 25.5, 26.0):

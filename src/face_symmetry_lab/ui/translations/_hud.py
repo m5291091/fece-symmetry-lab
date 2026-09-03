@@ -38,9 +38,8 @@ EN: Final[dict[str, str]] = {
         "browser's F11 for a full screen without tabs or the address bar."
     ),
     # `ui.hud.hud_bridge_script` が CFG へ載せ、`ui.hud_assets.HUD_RUNTIME_JS`
-    # が textContent として書き込む部位ラベル・凡例・スコア見出し・grip 文言。
+    # が textContent として書き込む部位ラベル・凡例・grip 文言。
     # 部位名は仕様どおり固定する。
-    "全体のスコア": "Overall score",
     "輪郭": "Contour",
     "目": "Eyes",
     "鼻": "Nose",

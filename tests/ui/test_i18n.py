@@ -32,8 +32,7 @@ from typing import Final
 from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.ui.i18n import t
-from face_symmetry_lab.ui.readings import BASELINE_CAVEAT
-from face_symmetry_lab.ui.scores import READING_LIMITS, SCORE_SCALE_CAPTION
+from face_symmetry_lab.ui.scores import READING_LIMITS
 from face_symmetry_lab.ui.smoothing_panel import SMOOTHING_SCOPE_NOTE
 from face_symmetry_lab.ui.translations import EN, RUNTIME_KEYS
 from face_symmetry_lab.ui.translations import _errors as _errors_table
@@ -305,8 +304,9 @@ def test_placeholders_match_between_the_source_and_the_translation() -> None:
 
 # --- 5: 禁止語の走査（AC-I18N-02） --------------------------------------------
 
-#: §5.3・AC-AGEGATE-04・AC-BASELINE-04 と同じ走査を訳表そのものへ課す
-#: （ADR-0010 (d)）。訳語で禁止を回避できる経路を作らない。
+#: §5.3・AC-AGEGATE-04・§10.7（順位語を作らないという規律。旧 AC-BASELINE-04 を
+#: 引き継ぐ）と同じ走査を訳表そのものへ課す（ADR-0010 (d)）。訳語で禁止を回避
+#: できる経路を作らない。
 _FORBIDDEN_ENGLISH_WORDING: Final[tuple[str, ...]] = (
     "perfect",
     "ideal",
@@ -333,7 +333,7 @@ _FORBIDDEN_ENGLISH_WORDING: Final[tuple[str, ...]] = (
     # §5.3 の「正常・異常」。`\b` 境界なので `normalisation`（撮影補正の
     # 説明で正当に使う語）には当たらない。
     "normal",
-    # AC-BASELINE-04 の「合格」。品質ゲートは "meets the measurement
+    # §10.7 の「合格」。品質ゲートは "meets the measurement
     # conditions" と述べるので、この語が要る場面は無い。
     "pass",
     "passes",
@@ -396,8 +396,6 @@ def test_the_english_translations_obey_the_same_length_limits_as_the_japanese() 
     原文（日本語）へ fail-open し、この assertion は既存の日本語制約の
     再確認にとどまる。3b 以降で英訳が入った時点から意味のある検査になる。
     """
-    assert len(EN.get(BASELINE_CAVEAT, BASELINE_CAVEAT)) < 60
-    assert len(EN.get(SCORE_SCALE_CAPTION, SCORE_SCALE_CAPTION)) < 60
     assert len(EN.get(READING_LIMITS[0], READING_LIMITS[0])) < 100
     assert len(EN.get(SMOOTHING_SCOPE_NOTE, SMOOTHING_SCOPE_NOTE)) < 60
 

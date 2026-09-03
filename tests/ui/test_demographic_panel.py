@@ -73,7 +73,7 @@ def test_the_panel_shows_the_age_and_the_gender_together() -> None:
 
 
 def test_the_panel_obeys_the_gate_like_every_other_area() -> None:
-    """§10.12-3: HUD・吹き出しが隠した判断を、タブから読めるようにしてはならない。
+    """§10.11-2: HUD・吹き出しが隠した判断を、タブから読めるようにしてはならない。
 
     罠: `estimate is not None` だけで描く実装は、HUD が固定文言へ切り替わって
     いる間もタブに参考年齢を出し続ける。

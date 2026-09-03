@@ -673,9 +673,9 @@ def test_every_live_fragment_reads_the_same_held_snapshot() -> None:
     """FR-041/AC-HOLD-01: 保持中に HUD と詳細結果が別々の瞬間の値を出さない。
 
     罠: 片方だけ `pipeline.snapshot()` を直接読む実装だと、保持区間の境界で
-    「HUD の部位別」と「計算過程の部位別」が食い違い、AC-DISPLAY-04 の文字列
-    一致がそこでだけ壊れる。参考年齢の fragment（2026-08-26）も同じ snapshot を
-    読む——HUD と別の瞬間のゲート判定を読むと、片方だけが数値を出す。
+    HUD の数値と詳細タブの併記（ずれ・生値）が食い違う。参考年齢の
+    fragment（2026-08-26）も同じ snapshot を読む——HUD と別の瞬間のゲート判定を
+    読むと、片方だけが数値を出す。
     """
     import inspect
 
@@ -808,25 +808,6 @@ def test_every_tab_survives_stopping_the_camera() -> None:
     assert source.count("_render_export_panel(pipeline)") == 1
 
 
-def test_the_camera_report_takes_its_population_from_the_shown_estimates() -> None:
-    """AC-BASELINE-05: 記録ではなく pipeline の観測から母集団を決める。
-
-    罠: `bundle.records` の `estimated_age_years` から作る実装は、年齢ゲートが
-    表示を止めたフレームの年齢も混ぜる——§9.2 の `age_gate_decision` 列が未実装
-    なので記録側では区別も付かず、ゲートが隠した判断が母集団の年齢から復元できて
-    しまう（§10.12-3）。
-    """
-    import inspect
-
-    from face_symmetry_lab.ui import camera
-
-    source = inspect.getsource(camera._render_export_panel)
-
-    assert "observations = pipeline.demographic_observations" in source
-    assert "resolve_session_baseline(observations)" in source
-    assert "estimated_age_years" not in source
-
-
 # --- §5.1（2026-08-26）: 参考年齢・参考性別の独立区画 -------------------------
 #
 # 区画そのものの描画（状態ごとの 1 行・ゲートの適用・来歴）は Image と共有する
@@ -881,7 +862,7 @@ def test_the_camera_panel_is_fed_the_gate_and_the_worker_state() -> None:
 def test_the_camera_panel_reports_the_range_it_showed_this_session() -> None:
     """§9.6.1 と同じ材料を画面にも出す（保存物だけが知っている状態にしない）。"""
     from face_symmetry_lab.application.demographic_observations import DemographicOverview
-    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+    from face_symmetry_lab.domain.demographics import ObservedAges
     from face_symmetry_lab.ui import camera
 
     caption = camera._session_demographic_caption(
@@ -910,18 +891,25 @@ def test_the_detail_tab_no_longer_carries_the_reference_age() -> None:
 
 
 def test_the_camera_report_carries_what_the_session_actually_showed() -> None:
-    """§9.6.1（2026-08-26）: レポートの参考年齢も、表示できた観測だけから作る。"""
+    """§9.6.1（2026-08-26）: レポートの参考年齢も、表示できた観測だけから作る。
+
+    罠（旧 AC-BASELINE-05、§9.6.1 と AC-AGEGATE-03 が引き継ぐ）: `bundle.records`
+    の `estimated_age_years` から作る実装は、年齢ゲートが表示を止めたフレームの
+    年齢も混ぜる——§9.2 の `age_gate_decision` 列が未実装なので記録側では区別も
+    付かず、ゲートが隠した判断が要約の年齢から復元できてしまう（§10.11-2）。
+    """
     import inspect
 
     from face_symmetry_lab.ui import camera
 
     source = inspect.getsource(camera._render_export_panel)
 
-    # 母集団（`resolve_session_baseline`）と同じ 1 つの snapshot から作る。2 度
-    # 取ると、その間に届いた推定の分だけ節と母集団がずれる。
+    # 参考年齢の要約は同じ 1 つの snapshot から作る。2 度取ると、その間に届いた
+    # 推定の分だけ節がずれる。
     assert "observations = pipeline.demographic_observations" in source
     assert "summarize_observations(observations)" in source
     assert "overview=overview" in source
+    assert "estimated_age_years" not in source
 
 
 # --- §5.1（2026-08-27）: 停止後の各区画の中身 ---------------------------------

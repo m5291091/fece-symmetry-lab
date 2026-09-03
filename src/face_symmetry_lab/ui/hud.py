@@ -9,12 +9,15 @@
 値の整形は必ず `ui.readings` の共通フォーマッタを通す。HUD がパネルとは別の
 表示規則へ分岐すると、同じ測定値が画面上で二通りに見えてしまう。
 
-H1（2026-08-11）で HUD の内容を全体・スコア・部位別 4 つ・参考値へ拡張し、
-直近の推移を示す折れ線グラフを追加した。H3（2026-08-12）で映像の隣にあった
-「ライブ解析」パネルを削除し、Camera で同じ内容を表示するのはこの HUD だけに
-一本化した。グラフの移動平均も `FrameAnalyzer` 側の §8.7 改訂で計算済みの値を
-運ぶだけであり、HUD（JS）側では一切平滑化しない。同じ理由——HUD が独自の
-2 つ目の表示規則へ分岐しない——による。
+H1（2026-08-11）で HUD の内容を全体・部位別 4 つ・参考値へ拡張し、直近の推移を
+示す折れ線グラフを追加した。H3（2026-08-12）で映像の隣にあった「ライブ解析」
+パネルを削除し、Camera で同じ内容を表示するのはこの HUD だけに一本化した。
+グラフの移動平均も `FrameAnalyzer` 側の §8.7 改訂で計算済みの値を運ぶだけで
+あり、HUD（JS）側では一切平滑化しない。同じ理由——HUD が独自の 2 つ目の表示
+規則へ分岐しない——による。
+
+**「全体のスコア」は撤回した**（2026-09-03、§0 項目 34）。HUD の payload・
+bridge の CFG のいずれにも `score`/`scoreLabel` を持たない。
 """
 
 from __future__ import annotations
@@ -27,17 +30,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from face_symmetry_lab.application.realtime import PipelineSnapshot
-from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
-from face_symmetry_lab.domain.reference_baseline import (
-    OVERALL_METRIC,
-    PART_METRICS,
-    SCORE_METRIC,
-    baseline_reading,
-)
 from face_symmetry_lab.ui.age_gate_notice import resolve_reference_age_view
-from face_symmetry_lab.ui.baseline import resolve_baseline
 from face_symmetry_lab.ui.hud_assets import (
     HUD_RUNTIME_JS,
     HUD_STYLESHEET,
@@ -46,21 +41,15 @@ from face_symmetry_lab.ui.hud_assets import (
 from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.readings import (
     GENDER_LABELS,
-    baseline_note,
-    format_baseline_score,
-    format_baseline_symmetry,
     format_display_hold,
-    format_score,
     format_smoothing_window,
     format_symmetry,
     gate_color,
     gate_guidance,
     gate_label,
     gate_warning,
-    resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
-    score_points_value,
     symmetry_percent,
 )
 
@@ -124,56 +113,9 @@ _HUD_AGE_TEMPLATE: Final[str] = "{age:.0f} 歳"
 _HUD_DEMOGRAPHIC_TEMPLATE: Final[str] = "参考年齢 {age} · 参考性別 {gender}"
 
 
-def build_baseline_payload(
-    *,
-    baseline: BaselineSummary | None,
-    overall: float | None,
-    equal_weight: float | None,
-    parts: Mapping[str, float | None],
-) -> dict[str, object]:
-    """FR-039: 各測定値へ添える「平均（差）」の表示文字列。
-
-    純粋関数で、`build_hud_payload` と同じく Camera・Image が共有する。**比べる相手の
-    値は、表示に使っているのと同じ変換を通してから引く**（対称度は `symmetry_percent`、
-    点は `score_points_value`）。ここで別の変換を挟むと、画面に出ている数と括弧の中の
-    差が食い違う。
-
-    `baseline` が `None` のときは全項目が空文字になる。空文字の要素は CSS の `:empty`
-    で畳まれるので、併記が無いときに空行が残らない。
-    """
-    if baseline is None:
-        return {
-            "symmetry": "",
-            "score": "",
-            "parts": {name: "" for name in PART_NAMES},
-            "note": "",
-        }
-    metrics = baseline.metrics
-    return {
-        "symmetry": format_baseline_symmetry(
-            baseline_reading(metrics, OVERALL_METRIC, value=symmetry_percent(overall))
-        ),
-        "score": format_baseline_score(
-            baseline_reading(metrics, SCORE_METRIC, value=score_points_value(equal_weight))
-        ),
-        "parts": {
-            name: format_baseline_symmetry(
-                baseline_reading(
-                    metrics,
-                    PART_METRICS[name],
-                    value=symmetry_percent(parts.get(name)),
-                )
-            )
-            for name in PART_NAMES
-        },
-        "note": baseline_note(age=baseline.age, gender=baseline.gender, count=baseline.count),
-    }
-
-
 def build_hud_payload(
     *,
     overall: float | None,
-    equal_weight: float | None,
     parts: Mapping[str, float | None],
     estimate: DemographicEstimate | None,
     show_demographics: bool,
@@ -181,7 +123,6 @@ def build_hud_payload(
     position: str,
     generation: str,
     notice: str = "",
-    baseline: BaselineSummary | None = None,
     state: str = "",
     smoothing: str = "",
     hold: str = "",
@@ -219,17 +160,12 @@ def build_hud_payload(
 
     3 つとも**空文字が既定で、`—` ではない**——併記の不在は測定の欠測ではない
     ため（`demo` 行と同じ扱い）、CSS の `:empty` が行ごと畳む。いずれも測定値の
-    整形（``symmetry``/``score``/``parts``/``chart``）へは一切混ざらない。
-
-    ``baseline``（FR-039）は同じ参考年齢・参考性別の母集団の要約。**参考年齢・
-    参考性別を表示していないときは渡してはならない**（§10.12-3）——母集団の年齢から
-    年齢ゲートの内部判断を復元できてしまうためである。渡さなければ ``baseline``
-    の各項目は空文字になり、CSS の `:empty` が行ごと畳む。
+    整形（``symmetry``/``parts``/``chart``）へは一切混ざらない。
 
     ``guidance``（FR-031）は品質ゲートが算出済みの主要因 1 件の行動可能な指示文
     （`ui.readings.gate_guidance` が生成）。状態名チップ（``state``）の下・数値の上
     に出して「何を直せば測定値が出るか」を映像上で示す。空文字なら `:empty` が畳む。
-    測定値の整形（``symmetry``/``score``/``parts``/``chart``）へは混ざらない。
+    測定値の整形（``symmetry``/``parts``/``chart``）へは混ざらない。
 
     ``warning``（§6.2）は非ブロッキングの助言。空文字は `:empty` で畳む。
     測定値・阻害理由の指示文（``guidance``）とは別行であり、分析を止めない
@@ -253,9 +189,6 @@ def build_hud_payload(
         "visible": visible,
         "symmetry": format_symmetry(overall),
         "label": t("対称度（実験値）"),
-        # §8.6.7: 「全体のスコア」だけは点の目盛りである。`format_symmetry` を
-        # 使うと HUD だけが 98% 前後の別の目盛りを出し、見出しと食い違う。
-        "score": format_score(equal_weight),
         "parts": part_readings,
         "demo": demo,
         "gate": gate,
@@ -266,19 +199,12 @@ def build_hud_payload(
         "warning": warning,
         "gen": generation,
         "chart": chart,
-        "baseline": build_baseline_payload(
-            baseline=baseline,
-            overall=overall,
-            equal_weight=equal_weight,
-            parts=parts,
-        ),
     }
 
 
 def hud_html(
     *,
     overall: float | None,
-    equal_weight: float | None,
     parts: Mapping[str, float | None],
     estimate: DemographicEstimate | None,
     show_demographics: bool,
@@ -286,7 +212,6 @@ def hud_html(
     position: str,
     generation: str,
     notice: str = "",
-    baseline: BaselineSummary | None = None,
     state: str = "",
     smoothing: str = "",
     hold: str = "",
@@ -303,7 +228,6 @@ def hud_html(
     """
     payload = build_hud_payload(
         overall=overall,
-        equal_weight=equal_weight,
         parts=parts,
         estimate=estimate,
         show_demographics=show_demographics,
@@ -311,7 +235,6 @@ def hud_html(
         position=position,
         generation=generation,
         notice=notice,
-        baseline=baseline,
         state=state,
         smoothing=smoothing,
         hold=hold,
@@ -334,10 +257,10 @@ def render_hud_payload(
     隠し要素であり id で参照されるため、DOM 上のどこへ出ても構わない。これが
     3 つ目の fragment を新設せずに既存の fragment へ相乗りできる理由である。
 
-    §8.6.3/§8.7: 全体値・全体のスコア・部位別はいずれも主指標 `symmetry-3d/1.0.0`
-    から作り（`ui.readings.resolve_overall_distance`/`resolve_equal_weight_distance`/
-    `resolve_part_distance_3d`）、パネルの見出しと同じ解決を通す。映像上の HUD と
-    パネルが同じ測定値に対して二通りの表示規則へ分岐しないようにするためである。
+    §8.6.3/§8.7: 全体値・部位別はいずれも主指標 `symmetry-3d/1.0.0` から作り
+    （`ui.readings.resolve_overall_distance`/`resolve_part_distance_3d`）、
+    パネルの見出しと同じ解決を通す。映像上の HUD とパネルが同じ測定値に対して
+    二通りの表示規則へ分岐しないようにするためである。
 
     H1: 世代識別子には `PipelineSnapshot.segment_id`（`SessionRecorder.segment_id`
     の読み戻し）をそのまま流用する。セッションの Reset・入力ソースの切替・
@@ -349,11 +272,6 @@ def render_hud_payload(
     固定文言を出す。ゲートを未接続の pipeline（`age_gate_outcome` が `None`）は
     従来どおり `show_demographics` だけで決める。
 
-    FR-039: 参考年齢・参考性別を実際に表示しているときに限り、同じ参考年齢・参考性別の
-    参照平均（§9.5）を解決して併記する。参照データが読めない・件数がしきい値未満・
-    年齢が 18〜75 の外のいずれでも `None` が返るだけで、左右差の表示は変わらない
-    （不変条件 12、AC-BASELINE-03）。
-
     FR-040/§5.4: `smoothing_tau_seconds`（pipeline が報告する現在の時定数）と
     品質ゲート状態を、枠色とは別のテキストとして併せて publish する。**snapshot
     ではなく引数で受けるのは、設定を変えた瞬間に表示へ反映させるためである。**
@@ -362,7 +280,6 @@ def render_hud_payload(
     """
     analysis = snapshot.analysis
     overall = resolve_overall_distance(analysis) if analysis is not None else None
-    equal_weight = resolve_equal_weight_distance(analysis) if analysis is not None else None
     parts: dict[str, float | None] = (
         {name: resolve_part_distance_3d(analysis, name) for name in PART_NAMES}
         if analysis is not None
@@ -371,28 +288,20 @@ def render_hud_payload(
 
     # §5.1（2026-08-26）: 表示可否は `ui.age_gate_notice` の 1 つの解決に任せる。
     # HUD・専用タブ・吹き出し・レポートが同じ関数を通ることが、「ある区画だけが
-    # ゲートの判断を漏らす」壊れ方を構造的に無くす手段である（§10.12-3）。
+    # ゲートの判断を漏らす」壊れ方を構造的に無くす手段である（§10.11-2）。
     view = resolve_reference_age_view(
         estimate=snapshot.demographic_estimate,
         gate_outcome=snapshot.age_gate_outcome,
         show_demographics=show_demographics,
     )
 
-    # FR-039/§10.12-3: 参考年齢・参考性別を実際に出しているときだけ母集団を解決する。
-    # `view.estimate` は既にゲートを通した後なので、ここで `snapshot` を読み直さない
-    # ——読み直すと、年齢ゲートが隠した判断が「20 歳・男性の平均」という母集団の
-    # 表示から復元できてしまう。
-    baseline = resolve_baseline(view.estimate)
-
     st.markdown(
         hud_html(
             overall=overall,
-            equal_weight=equal_weight,
             parts=parts,
             estimate=view.estimate,
             show_demographics=view.is_shown,
             notice=view.notice,
-            baseline=baseline,
             gate=gate_color(analysis.state if analysis is not None else None),
             state=gate_label(analysis.state if analysis is not None else None),
             smoothing=format_smoothing_window(smoothing_tau_seconds),
@@ -420,8 +329,8 @@ def hud_bridge_script(*, fullscreen: bool, position: str) -> str:
     にもされないため、`position: fixed` が期待どおりに振る舞う。
 
     FR-043: `ui.hud_assets.HUD_RUNTIME_JS` は骨格を 1 度だけ作る静的な文字列
-    なので、画面に出る日本語（部位ラベル・凡例・「全体のスコア」・grip の文言）
-    を直接焼き込むと言語切替が効かない。ここで `t()` を通した文字列を CFG へ
+    なので、画面に出る日本語（部位ラベル・凡例・grip の文言）を直接焼き込むと
+    言語切替が効かない。ここで `t()` を通した文字列を CFG へ
     載せ、runtime 側は骨格を作り直さず `textContent` を CFG の値で書き換える
     （bridge が再実行されるたびに、そのときの表示言語を反映する）。
     """
@@ -436,7 +345,6 @@ def hud_bridge_script(*, fullscreen: bool, position: str) -> str:
             "intervalMs": HUD_REFRESH_MS,
             "badgeText": t(FULLSCREEN_BADGE),
             "hintText": t(FULLSCREEN_HINT),
-            "scoreLabel": t("全体のスコア"),
             "partLabels": {
                 "contour": t("輪郭"),
                 "eyes": t("目"),

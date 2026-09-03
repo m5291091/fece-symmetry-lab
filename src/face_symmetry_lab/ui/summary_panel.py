@@ -10,15 +10,18 @@ fragment へ入れると、最大 3,000 行の要約を毎秒 5 回計算する�
 **文言の制約**（§10.7）: これは 1 セッション内の記述統計であって、母集団に対する
 順序への写像ではない。「偏差値」「順位」「パーセンタイル」「合否」「平均より上」「平均より下」
 と価値判断語を使わない。四分位範囲は「変動幅（真ん中 50%）」と呼ぶ——「分位」は
-§10.12 が順位化の語として名指ししているため、同じ語で別のものを指さない。
+§10.7 が順位化の語として名指ししているため、同じ語で別のものを指さない。
 
 **FR-043**: `SUMMARY_ROW_LABELS` の表示側ラベルは `ui.readings.PART_LABELS`
 （他エージェントの担当ファイル）を経由した値であり、この module から直接
 `t()` へ渡せない（`t()` の引数は同じモジュールの module-level literal か文字列
 リテラルでなければならない、`tests/ui/test_i18n.py`）。`summary_row_label` が
-`key`（`"symmetry"` / `"score"` / `domain.metrics.PART_NAMES` の要素、いずれも
-言語に依存しない固定識別子）から現在の表示言語のラベルを引き、`ui.report`
-（同じ訳表 `_report.py` を共有する）もこの関数越しに読む。
+`key`（`"symmetry"` / `domain.metrics.PART_NAMES` の要素、いずれも言語に依存
+しない固定識別子）から現在の表示言語のラベルを引き、`ui.report`（同じ訳表
+`_report.py` を共有する）もこの関数越しに読む。
+
+**「全体のスコア」は撤回した**（2026-09-03、§0 項目 34）。表の読みは
+`"symmetry"` と 4 部位の 5 つだけになり、単位はすべて % で揃う。
 """
 
 from __future__ import annotations
@@ -38,10 +41,9 @@ from face_symmetry_lab.ui.readings import PART_LABELS
 
 SUMMARY_HEADING: Final[str] = "##### このセッションの要約"
 
-#: §14.4 の実測（3 セッションの全幅 6.8 点）。中央値だけを見せると「自分の値が
-#: 決まった」と読まれるため、撮り直しで動く量を同じ場所へ置く。`ui.scores` の
-#: `SCORE_SCALE_CAPTION` と同じ役割で、開かないと見えない場所へは置かない。
-SUMMARY_LIMITS_NOTE: Final[str] = "撮り直すだけで中央値は数ポイント動きます（実測で全幅 6.8 点）。"
+#: §14.4 の実測。中央値だけを見せると「自分の値が決まった」と読まれるため、
+#: 撮り直しで動くことを同じ場所へ置く。開かないと見えない場所へは置かない。
+SUMMARY_LIMITS_NOTE: Final[str] = "撮り直すだけでも中央値は動きます。"
 
 #: 区間を分ける理由を、表のすぐ隣に置く。分かれていること自体が読み手には
 #: 唐突なので、「設定が違えば比べられない」という理由まで書く（ADR-0009 (c)）。
@@ -59,14 +61,13 @@ REFERENCE_AGE_RATE_HELP: Final[str] = (
     "顔が写っていないフレームは数えていません。"
 )
 
-#: 表の行の並び（キーの列挙のためだけに使う）。画面に出る 6 つと同じ順に
+#: 表の行の並び（キーの列挙のためだけに使う）。画面に出る 5 つと同じ順に
 #: そろえる。FR-042 のレポートも同じ並びを読む（画面と保存物で行の順が違わない
 #: ように）。**2 番目の要素（日本語ラベル）は表示に使わない**——実際に出す
 #: ラベルは必ず `summary_row_label(key)` を経由し、そちらが表示言語（FR-043）
 #: へ訳す。ここへ英訳を足す必要はない。
 SUMMARY_ROW_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("symmetry", "全体の対称度"),
-    ("score", "全体のスコア"),
     *tuple((name, PART_LABELS[name]) for name in PART_LABELS),
 )
 
@@ -90,14 +91,12 @@ def summary_row_label(key: str) -> str:
     """`SUMMARY_ROW_LABELS` の鍵から、現在の表示言語での見出しを引く。
 
     値（`PART_LABELS[name]` の日本語）ではなく鍵で分岐するのは、鍵が言語に
-    依存しない固定の識別子（`"symmetry"` / `"score"` / `domain.metrics.PART_NAMES`
-    の要素）だからである。`ui.report` も同じ関数を読み、レポートと画面のラベルが
+    依存しない固定の識別子（`"symmetry"` / `domain.metrics.PART_NAMES` の要素）
+    だからである。`ui.report` も同じ関数を読み、レポートと画面のラベルが
     ここ 1 か所からそろう。
     """
     if key == "symmetry":
         return t("全体の対称度")
-    if key == "score":
-        return t("全体のスコア")
     if key == "contour":
         return t("輪郭")
     if key == "eyes":
@@ -119,18 +118,16 @@ def format_summary_percent(value: float | None) -> str:
     return "—" if value is None else f"{value:.2f}%"
 
 
-def format_summary_points(value: float | None) -> str:
-    """要約の「全体のスコア」（既に点へ変換済み）。`%` を付けない（§8.6.7）。"""
-    return "—" if value is None else f"{value:.1f} 点"
-
-
-def _cells(reading: SummaryReading | None, *, points: bool) -> tuple[str, str, str]:
+def _cells(reading: SummaryReading | None) -> tuple[str, str, str]:
     """中央値・変動幅・最小〜最大の 3 セル。欠測は `—`（0 で埋めない）。"""
-    fmt = format_summary_points if points else format_summary_percent
     if reading is None:
         return ("—", "—", "—")
-    spread = fmt(reading.iqr) if reading.iqr is not None else "—"
-    return (fmt(reading.median), spread, f"{fmt(reading.minimum)} 〜 {fmt(reading.maximum)}")
+    spread = format_summary_percent(reading.iqr) if reading.iqr is not None else "—"
+    return (
+        format_summary_percent(reading.median),
+        spread,
+        f"{format_summary_percent(reading.minimum)} 〜 {format_summary_percent(reading.maximum)}",
+    )
 
 
 def reading_for(section: SummarySection, key: str) -> SummaryReading | None:
@@ -141,15 +138,13 @@ def reading_for(section: SummarySection, key: str) -> SummaryReading | None:
 def _reading_of(section: SummarySection, key: str) -> SummaryReading | None:
     if key == "symmetry":
         return section.symmetry
-    if key == "score":
-        return section.score
     return section.parts.get(key)
 
 
 def _render_reading_table(section: SummarySection) -> None:
-    """6 つの読みを Markdown 表で出す。
+    """5 つの読みを Markdown 表で出す。
 
-    **`st.metric` へ 6 つ並べない。** `st.metric` の値は 36px・`nowrap`・
+    **`st.metric` へ 5 つ並べない。** `st.metric` の値は 36px・`nowrap`・
     `text-overflow: ellipsis` なので、列を分けると幅が足りずに末尾が省略記号へ
     置き換わる（`ui.reference_page` が実測で確認済みの罠）。表なら列幅に合わせて
     縮む。`st.dataframe`/pandas を使わないのも同じ module の前例に従う。
@@ -163,7 +158,7 @@ def _render_reading_table(section: SummarySection) -> None:
     for key, _label in SUMMARY_ROW_LABELS:
         label = summary_row_label(key)
         reading = reading_for(section, key)
-        median, spread, extremes = _cells(reading, points=key == "score")
+        median, spread, extremes = _cells(reading)
         count = "—" if reading is None else f"{reading.sample_count:,}"
         rows.append(f"| {label} | {median} | {spread} | {extremes} | {count} |")
     st.markdown("\n".join((header, divider, *rows)))

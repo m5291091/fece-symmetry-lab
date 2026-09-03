@@ -16,26 +16,19 @@ import re
 
 import pytest
 
-from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, ReasonCode, Status
-from face_symmetry_lab.domain.reference_baseline import BaselineReading
+from face_symmetry_lab.domain.models import AnalysisState, ReasonCode, Status
 from face_symmetry_lab.ui.guidance import REASON_GUIDANCE
 from face_symmetry_lab.ui.readings import (
-    BASELINE_CAVEAT,
     GATE_COLORS,
-    baseline_note,
     display_signature,
-    format_baseline_score,
-    format_baseline_symmetry,
     format_display_hold,
     format_distance,
-    format_score,
     format_smoothing_window,
     format_symmetry,
     gate_color,
     gate_guidance,
     gate_label,
     gate_warning,
-    resolve_equal_weight_distance,
     resolve_overall_distance,
     resolve_part_distance_3d,
     symmetry_percent,
@@ -94,27 +87,6 @@ def test_symmetry_percent_of_a_missing_value_is_missing() -> None:
     assert symmetry_percent(None) is None
 
 
-# --- §8.6.7 「全体のスコア」の点 ----------------------------------------------
-
-
-def test_the_score_formatter_reports_points_and_never_a_percent_sign() -> None:
-    """§8.6.7: 単位は「点」であり %ではない。対称度 % と同じ数字として読ませない。
-
-    罠: `format_symmetry` を流用した実装（`98.28%`）はここで落ちる。
-    """
-    assert format_score(0.0172) == "82.0 点"
-    assert "%" not in format_score(0.0172)
-    assert format_score(None) == "—"
-
-
-def test_a_missing_score_is_not_shown_as_zero_points() -> None:
-    """不変条件 11・§8.6.7: 0 点は「ずれ 5.0% 以上」という測定結果であり、欠測とは
-    別である。両者を同じ表示にしてはならない。"""
-    assert format_score(None) == "—"
-    assert format_score(0.050) == "0.0 点"
-    assert format_score(0.080) == "0.0 点"
-
-
 # --- §8.6.3/§8.6.5: 表示・エクスポートを 3D 指標へ切り替える -----------------
 
 
@@ -149,30 +121,6 @@ def test_the_resolved_overall_distance_is_missing_without_a_three_dimensional_re
     outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None, symmetry_2d_overall=0.5)
 
     assert resolve_overall_distance(outcome) is None
-
-
-def test_the_resolved_equal_weight_distance_always_reads_the_raw_value() -> None:
-    """§8.6.5/§8.7: `s_3d` は EMA の対象外なので、平滑値へ落ちる経路を持たない。"""
-    outcome = _outcome_for_display(
-        symmetry_3d=_symmetry_3d_result(
-            contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018
-        ),
-        smooth_3d=0.0172,
-    )
-
-    symmetry_3d = outcome.symmetry_3d
-    assert symmetry_3d is not None
-    assert resolve_equal_weight_distance(outcome) == pytest.approx(
-        symmetry_3d.equal_weight_distance
-    )
-    # `d_3d`（平滑値・生値のいずれ）とも別の値であることを固定する。
-    assert resolve_equal_weight_distance(outcome) != pytest.approx(0.0172)
-
-
-def test_the_resolved_equal_weight_distance_is_missing_without_a_three_dimensional_result() -> None:
-    outcome = _outcome_for_display(symmetry_3d=None, smooth_3d=None)
-
-    assert resolve_equal_weight_distance(outcome) is None
 
 
 def test_resolve_part_distance_prefers_the_smoothed_value_over_the_raw_one() -> None:
@@ -248,86 +196,36 @@ def test_the_blocking_states_are_visually_distinct_from_ok() -> None:
     assert GATE_COLORS[Status.OK] != GATE_COLORS[Status.ERROR]
 
 
-# --- FR-039 参照平均の併記 ----------------------------------------------------
+# --- FR-039（撤回、2026-09-03）: 参照平均の併記 --------------------------------
 
 
-def test_baseline_symmetry_shows_the_mean_and_the_signed_difference() -> None:
-    reading = BaselineReading(mean=96.31, delta=2.11)
-    assert format_baseline_symmetry(reading) == "平均 96.31%（+2.11）"
+def test_readings_has_no_baseline_symbols() -> None:
+    """FR-039 は撤回された（§0 項目 34）。ui.readings から併記の道具が消えたことを固定する。"""
+    from face_symmetry_lab.ui import readings
+
+    for gone in (
+        "BASELINE_CAVEAT",
+        "baseline_note",
+        "format_baseline_score",
+        "format_baseline_symmetry",
+    ):
+        assert not hasattr(readings, gone), gone
 
 
-def test_baseline_symmetry_keeps_the_sign_when_the_value_is_below_the_mean() -> None:
-    """罠: `abs()` を挟んだ実装は符号を落とし、どちら側かが読めなくなる。"""
-    assert (
-        format_baseline_symmetry(BaselineReading(mean=96.31, delta=-1.4)) == "平均 96.31%（-1.40）"
-    )
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
 
 
-def test_baseline_score_uses_points_and_not_percent() -> None:
-    """§8.6.7: 点と % が同じ目盛りに見えてはならない（`format_score` と同じ桁）。"""
-    text = format_baseline_score(BaselineReading(mean=41.5, delta=20.8))
-    assert text == "平均 41.5 点（+20.8）"
-    assert "%" not in text
+def test_readings_has_no_score_symbols() -> None:
+    """§8.6.7 の表示スケールは撤回された。ui.readings から道具が消えたことを固定する。"""
+    from face_symmetry_lab.ui import readings
 
-
-def test_a_missing_display_value_leaves_the_mean_without_a_difference() -> None:
-    """不変条件 11: 差を 0 で埋めない（`+0.00` は「平均と同じ」という測定結果）。"""
-    assert format_baseline_symmetry(BaselineReading(mean=96.31, delta=None)) == "平均 96.31%"
-    assert format_baseline_score(BaselineReading(mean=41.5, delta=None)) == "平均 41.5 点"
-
-
-def test_a_vanishing_difference_never_renders_as_negative_zero() -> None:
-    """丸め誤差から「わずかに下」と読める表示を作らない。"""
-    assert format_baseline_symmetry(BaselineReading(mean=96.31, delta=-0.001)) == (
-        "平均 96.31%（+0.00）"
-    )
-
-
-def test_no_baseline_renders_as_nothing_rather_than_a_missing_marker() -> None:
-    """`—` は測定の欠測に使う記号であり、併記の不在ではない。"""
-    assert format_baseline_symmetry(None) == ""
-    assert format_baseline_score(None) == ""
-
-
-def test_the_baseline_note_names_the_population_and_the_count() -> None:
-    """AC-BASELINE-04: 何と比べているのかを画面から読み取れるようにする。"""
-    note = baseline_note(age=20, gender=GenderLabel.MALE, count=1075)
-    assert "20 歳" in note
-    assert "男性" in note
-    assert "1,075 件" in note
-    assert "人種で絞り込まず" in note
-
-
-@pytest.mark.parametrize(
-    "banned",
-    ["偏差値", "順位", "パーセンタイル", "分位", "合格", "平均より上", "平均より下"],
-)
-def test_the_baseline_note_never_ranks_the_user(banned: str) -> None:
-    """§10.12-1: 差は引き算であって、順序への写像ではない。"""
-    note = baseline_note(age=20, gender=GenderLabel.MALE, count=75)
-    assert banned not in note
-    assert banned not in BASELINE_CAVEAT
-
-
-@pytest.mark.parametrize("banned", ["美しい", "良い", "悪い", "優れ", "理想", "劣"])
-def test_the_baseline_note_carries_no_value_judgement(banned: str) -> None:
-    assert banned not in baseline_note(age=20, gender=GenderLabel.MALE, count=75)
-
-
-def test_the_baseline_note_is_a_single_line() -> None:
-    """§10.12-5 / §5.3.1（2026-08-16）: 但し書きは 1 行まで。
-
-    以前はこれが吹き出しの中で測定値より長く、そのために読まれなくなっていた。
-    残すのは「括弧の中が何か」と「探索値であること」、そして母集団だけである。
-    根拠と制限の全文は About が持つ。
-    """
-    note = baseline_note(age=20, gender=GenderLabel.FEMALE, count=75)
-
-    assert "括弧内は表示値と平均の差です" in note
-    assert "探索値" in note
-    assert "20 歳" in note and "75" in note
-    assert "人種で絞り込まず" in note
-    assert len(BASELINE_CAVEAT) < 60
+    for gone in (
+        "format_score",
+        "score_points_value",
+        "resolve_equal_weight_distance",
+        "SCORE_POINTS_TEMPLATE",
+    ):
+        assert not hasattr(readings, gone), gone
 
 
 # --- FR-040 / §5.4: 状態と平滑化時間のテキスト表示 ----------------------------

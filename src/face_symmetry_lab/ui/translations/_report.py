@@ -50,18 +50,10 @@ EN: Final[dict[str, str]] = {
     "変動幅（真ん中50%）": "Spread (middle 50%)",
     "最小 〜 最大": "Min - max",
     "件数": "Count",
-    "参照統計の平均": "Reference statistics mean",
     "対称度の推移": "Symmetry over time",
-    "全体のスコアの推移": "Overall score over time",
     "横軸は記録された順序です。縦軸の範囲外は端に貼り付きます。": (
         "The horizontal axis is the recorded order. "
         "Values outside the vertical range are clamped to the edge."
-    ),
-    " 点": " pts",
-    "{value:.1f} 点": "{value:.1f} pts",
-    "平均: 参照統計の {span}・{genders}（人種で絞り込まず {count:,} 件）。探索値です。": (
-        "Mean: reference statistics for {span} · {genders} "
-        "({count:,} cases, not filtered by race). An exploratory value."
     ),
     "{median} 歳": "{median} years",
     "{median} 歳（真ん中50%: {low}〜{high} 歳）": (
@@ -85,8 +77,6 @@ EN: Final[dict[str, str]] = {
         "it is shared after you save it."
     ),
     "全体の対称度": "Overall symmetry",
-    "全体のスコア": "Overall score",
-    "参照統計の平均（差）": "Reference statistics mean (difference)",
     "測定": "Measured",
     "女性": "Female",
     "男性": "Male",
@@ -94,30 +84,13 @@ EN: Final[dict[str, str]] = {
     "目": "Eyes",
     "鼻": "Nose",
     "口": "Mouth",
-    "「全体のスコア」の求め方": 'How the "Overall score" is calculated',
-    "部位が 1 つでも欠測しているため、この画像では計算できません。": (
-        "This cannot be calculated for this image because at least one part is missing."
-    ),
-    "4 部位の二乗平均平方根": "Root-mean-square of the 4 parts",
-    "部位": "Part",
-    # `_scores.py` も同じ語を持つ（列幅制約で "Dev" を選んでいる）。訳を合わせる。
-    "ずれ": "Dev",
-    "目盛りは 2 点で決まります。ずれ {full_score_pct:.2f}% が"
-    " 100 点、ずれ {zero_score_pct:.2f}% が 0 点です。"
-    "ずれが 1 ポイント動くと {points_per_deviation:.0f} 点動きます。": (
-        "The scale is fixed by two points: a deviation of {full_score_pct:.2f}% is "
-        "100 pts, and {zero_score_pct:.2f}% is 0 pts. Moving 1 point of deviation "
-        "moves the score by {points_per_deviation:.0f} pts."
-    ),
     "撮影の状態": "Capture conditions",
     "顔の向き yaw": "Face angle: yaw",
     "顔の向き pitch": "Face angle: pitch",
     "顔の向き roll": "Face angle: roll",
     "画面に占める顔の面積比": "Face area ratio of the frame",
     # --- ui/summary_panel.py -------------------------------------------------
-    "撮り直すだけで中央値は数ポイント動きます（実測で全幅 6.8 点）。": (
-        "Just retaking the shot can move the median by a few points (an observed range of 6.8 pts)."
-    ),
+    "撮り直すだけでも中央値は動きます。": "Just retaking the shot can move the median.",
     "設定が違う区間の値は、同じ中央値へまとめられません。": (
         "Segments with different settings cannot be combined into the same median."
     ),

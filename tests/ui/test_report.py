@@ -46,7 +46,6 @@ def _section(segment_id: str | None) -> SummarySection:
         valid_rate=0.8,
         valid_span_ms=42_000,
         symmetry=_reading(),
-        score=SummaryReading(median=82.0, minimum=70.5, maximum=90.1, iqr=6.8, sample_count=120),
         parts=dict.fromkeys(("contour", "eyes", "nose", "mouth"), _reading()),
         reason_counts=((ReasonCode.OFF_AXIS_YAW, 20),),
         age_gate_evaluated=100,
@@ -106,7 +105,6 @@ def _camera(**kwargs) -> str:
 def _series(**kwargs) -> TrendSeries:
     settings = {
         "symmetry": (97.5, 98.0, 98.4, 98.1),
-        "score": (80.0, 82.0, 84.0),
         "parts": {name: (97.0, 98.0) for name in ("contour", "eyes", "nose", "mouth")},
     }
     settings.update(kwargs)
@@ -246,7 +244,6 @@ def test_the_camera_report_carries_the_summary_in_two_tiers() -> None:
     html = _camera()
 
     assert "98.12%" in html
-    assert "82.0 点" in html
     assert "80.0%" in html  # 有効率
     assert "区間" in html
 
@@ -256,29 +253,26 @@ def test_the_camera_report_lists_the_hold_reasons() -> None:
 
 
 def test_the_camera_report_draws_every_reading_as_inline_svg() -> None:
-    """§9.6.1（2026-08-16）: 1 本だけでは、どの部位が動いていたのか分からない。"""
+    """§9.6.1（2026-08-16）: 1 本だけでは、どの部位が動いていたのか分からない。
+
+    §0 項目 34（2026-09-03）で「全体のスコア」を撤回したので、5 系列とも同じ
+    % の目盛りになり、1 つの図へ重ねる。
+    """
     html = _camera(series=_series())
 
-    assert "<svg" in html
-    # 全体の対称度 + 部位別 4 つ + スコアで 6 本。
-    assert html.count("<polyline") == 6
+    assert html.count("<svg") == 1
+    # 全体の対称度 + 部位別 4 つで 5 本。
+    assert html.count("<polyline") == 5
     for label in ("全体の対称度", "輪郭", "目", "鼻", "口"):
         assert label in html
-
-
-def test_the_points_chart_is_separate_from_the_percentage_chart() -> None:
-    """§8.6.7: 目盛りの違う 2 つを 1 つの軸へ重ねない。"""
-    html = _camera(series=_series())
-
-    assert html.count("<svg") == 2
 
 
 def test_a_chart_is_omitted_when_its_series_is_empty() -> None:
     """罠: 空の系列で軸だけの図を出す実装は、測れなかったことを図で嘘にする。"""
     assert "<svg" not in _camera(series=None)
-    assert "<svg" not in _camera(series=_series(symmetry=(), score=(), parts={}))
-    # 点だけが取れたセッションでは、点の図だけが出る。
-    assert _camera(series=_series(symmetry=(), parts={})).count("<svg") == 1
+    assert "<svg" not in _camera(series=_series(symmetry=(), parts={}))
+    # 部位別だけが取れたセッションでも、描けるものは描く。
+    assert _camera(series=_series(symmetry=())).count("<svg") == 1
 
 
 def test_the_camera_report_does_not_carry_every_row() -> None:
@@ -316,21 +310,12 @@ def test_a_camera_report_without_any_record_is_refused() -> None:
 # --- Image（§9.6.2） ----------------------------------------------------------
 
 
-def test_the_image_report_carries_the_six_readings() -> None:
+def test_the_image_report_carries_the_five_readings() -> None:
     html = _image()
 
     assert "全体の対称度" in html
-    assert "全体のスコア" in html
     for label in ("輪郭", "目", "鼻", "口"):
         assert label in html
-
-
-def test_the_image_report_shows_the_score_calculation() -> None:
-    """§8.6.3: 計算過程は画面にあるものと同じ値で、レポートにも入る。"""
-    html = _image()
-
-    assert "1.00" in html  # D_FULL のアンカー
-    assert "5.00" in html  # D_ZERO のアンカー
 
 
 def test_the_image_report_carries_the_pose() -> None:
@@ -356,7 +341,7 @@ def test_a_missing_reading_is_a_dash_rather_than_zero() -> None:
 
 
 def test_the_image_report_omits_the_reference_age_when_it_is_not_shown() -> None:
-    """FR-038/§10.12-3: 表示していない参考年齢をレポートへ出さない。"""
+    """FR-038/§10.11-2: 表示していない参考年齢をレポートへ出さない。"""
     html = _image(show_demographics=False)
 
     assert "参考年齢" not in html
@@ -391,118 +376,48 @@ def test_the_file_name_carries_no_person_or_clock() -> None:
     assert re.search(r"\d{4}-\d{2}-\d{2}", name) is None
 
 
-def test_the_baseline_column_is_dropped_when_there_is_nothing_to_compare() -> None:
-    """FR-039: 併記が無いときに空の列を残さない。
+# --- FR-039（撤回、2026-09-03）: 参照平均の併記 --------------------------------
 
-    罠: 常に 3 列で組む実装は、参考年齢を表示していない写真のレポートへ
-    見出しだけの列を残す——「機能が動いていて失敗している」と読まれる。
+
+def test_neither_report_mode_shows_a_reference_statistics_average() -> None:
+    """FR-039 は撤回された（§0 項目 34）。Camera・Image のどちらのレポートにも
+    「参照統計の平均」を出さない。
+
+    罠: 参考年齢・参考性別の節（§9.6.1）まで巻き添えで消す実装は、この test の
+    後半の assertion で落ちる——中央値・真ん中 50%・参考性別の確率は従来どおり
+    出続けなければならない。
     """
-    html = _image()
+    camera = _camera(overview=_overview())
+    image = _image(estimate=_estimate(), show_demographics=True)
 
-    assert "参照統計の平均" not in html
+    for html in (camera, image):
+        assert "参照統計の平均" not in html
 
-
-def test_the_baseline_column_appears_when_the_population_is_shown() -> None:
-    from face_symmetry_lab.application.reference_baseline import BaselineSummary
-    from face_symmetry_lab.domain.models import GenderLabel
-    from face_symmetry_lab.domain.reference_baseline import (
-        OVERALL_METRIC,
-        PART_METRICS,
-        SCORE_METRIC,
-    )
-    from face_symmetry_lab.domain.reference_stats import MetricSummary
-
-    baseline = BaselineSummary(
-        age=30,
-        gender=GenderLabel.MALE,
-        count=283,
-        metrics={
-            name: MetricSummary(mean=96.31, sd=1.2)
-            for name in (OVERALL_METRIC, SCORE_METRIC, *PART_METRICS.values())
-        },
-    )
-    html = _image(baseline=baseline, show_demographics=True)
-
-    assert "参照統計の平均" in html
-    assert "平均" in html
+    assert "31 歳" in camera
+    assert "29〜34 歳" in camera
+    assert DEMOGRAPHIC_HEADING in image
 
 
-# --- FR-039 / §9.6.1: セッションの参照平均（2026-08-16） ----------------------
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
 
 
-def _session_baseline():
-    from face_symmetry_lab.application.reference_baseline import SessionBaselineSummary
-    from face_symmetry_lab.domain.models import GenderLabel
-    from face_symmetry_lab.domain.reference_baseline import (
-        OVERALL_METRIC,
-        PART_METRICS,
-        SCORE_METRIC,
-        ObservedAges,
-    )
-    from face_symmetry_lab.domain.reference_stats import MetricSummary
+def test_neither_report_mode_shows_the_overall_score() -> None:
+    """§8.6.7 の表示スケールと H4 の求め方の開示を撤回した。
 
-    return SessionBaselineSummary(
-        ages=ObservedAges(median=20, low=20, high=24, sample_count=42),
-        genders=(GenderLabel.MALE,),
-        count=283,
-        metrics={
-            OVERALL_METRIC: MetricSummary(mean=96.31, sd=1.2),
-            SCORE_METRIC: MetricSummary(mean=41.5, sd=9.0),
-            **{name: MetricSummary(mean=96.0, sd=1.0) for name in PART_METRICS.values()},
-        },
-    )
+    罠: 参考年齢・参考性別の節まで巻き添えで消す実装は、この test の後半で
+    落ちる。
+    """
+    camera = _camera(series=_series(), overview=_overview())
+    image = _image(estimate=_estimate(), show_demographics=True)
 
+    for html in (camera, image):
+        for banned in ("全体のスコア", "点", "求め方"):
+            assert banned not in html
 
-def test_the_camera_report_carries_the_population_average() -> None:
-    """2026-08-16: 男 20 歳と判定されたら、その範囲の平均も載せる。"""
-    html = _camera(baseline=_session_baseline())
-
-    assert "参照統計の平均" in html
-    assert "96.31%" in html
-    assert "41.5 点" in html
-
-
-def test_the_population_is_named_next_to_its_average() -> None:
-    """§10.12-5: 何と比べているのかが書いていなければ、平均だけが残る。"""
-    html = _camera(baseline=_session_baseline())
-
-    assert "20 歳" in html
-    assert "20〜24 歳" in html
-    assert "男性" in html
-    assert "283" in html
-    assert "人種で絞り込まず" in html
-
-
-def test_the_average_column_is_absent_without_a_population() -> None:
-    """§10.12-3: 参考年齢を表示できなかったセッションでは併記も母集団も出ない。"""
-    html = _camera(baseline=None)
-
-    assert "参照統計の平均" not in html
-    assert "人種で絞り込まず" not in html
-
-
-def test_the_session_average_carries_no_difference_column() -> None:
-    """中央値と平均は別の母集団の代表値どうしなので、引き算しても意味を成さない。"""
-    html = _camera(baseline=_session_baseline())
-
-    assert "（+" not in html
-    assert "（-" not in html
-
-
-def test_a_single_year_population_is_written_without_a_range() -> None:
-    from face_symmetry_lab.domain.reference_baseline import ObservedAges
-
-    baseline = _session_baseline()
-    narrow = type(baseline)(
-        ages=ObservedAges(median=30, low=30, high=30, sample_count=5),
-        genders=baseline.genders,
-        count=baseline.count,
-        metrics=baseline.metrics,
-    )
-    html = _camera(baseline=narrow)
-
-    assert "30 歳" in html
-    assert "真ん中50%" not in html.split("計測条件")[0].split("参照統計の")[-1]
+    assert camera.count("<svg") == 1
+    assert camera.count("<polyline") == 5
+    assert DEMOGRAPHIC_HEADING in camera
+    assert DEMOGRAPHIC_HEADING in image
 
 
 def test_the_camera_report_carries_the_reference_age_rate() -> None:
@@ -530,7 +445,6 @@ def test_a_session_the_gate_never_ran_omits_the_rate_row() -> None:
         valid_rate=section.valid_rate,
         valid_span_ms=section.valid_span_ms,
         symmetry=section.symmetry,
-        score=section.score,
         parts=section.parts,
         reason_counts=section.reason_counts,
     )
@@ -546,7 +460,7 @@ def _overview():
     from face_symmetry_lab.application.demographic_observations import (
         DemographicOverview,
     )
-    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+    from face_symmetry_lab.domain.demographics import ObservedAges
 
     return DemographicOverview(
         ages=ObservedAges(median=31, low=29, high=34, sample_count=42),
@@ -598,7 +512,7 @@ def test_a_single_year_session_is_written_without_a_range() -> None:
     from face_symmetry_lab.application.demographic_observations import (
         DemographicOverview,
     )
-    from face_symmetry_lab.domain.reference_baseline import ObservedAges
+    from face_symmetry_lab.domain.demographics import ObservedAges
 
     html = _camera(
         overview=DemographicOverview(
@@ -612,7 +526,7 @@ def test_a_single_year_session_is_written_without_a_range() -> None:
 
 
 def test_a_camera_session_that_showed_nothing_has_no_reference_age_section() -> None:
-    """§9.6.1 / §10.12-3: 表示できなかったものをレポートへ出さない。"""
+    """§9.6.1 / §10.11-2: 表示できなかったものをレポートへ出さない。"""
     html = _camera(overview=None)
 
     assert DEMOGRAPHIC_HEADING not in html

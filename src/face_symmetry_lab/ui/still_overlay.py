@@ -34,13 +34,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 from numpy.typing import NDArray
 
-from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import DemographicEstimate
 from face_symmetry_lab.ui.hud import build_hud_payload
 from face_symmetry_lab.ui.i18n import t
 from face_symmetry_lab.ui.readings import part_label
-from face_symmetry_lab.ui.scores import PART_EQUAL_WEIGHT_LABEL
 
 #: 位置指定コンテキストを作るコンテナの key。`st.container(key=...)` は
 #: `.st-key-<key>` という class を吐くので、構造依存セレクタ（`nth-child` 等）
@@ -169,42 +167,16 @@ _STILL_OVERLAY_CSS: Final[str] = f"""
     font-size: clamp(.66rem, min(.85vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .015), .8rem);
     opacity: .75; margin-bottom: .2em;
 }}
-/* FR-039: 参照平均の併記。HUD（`ui.hud_assets` の `.fsl-hud-baseline`）と同じ
-   語彙・同じ役割で、対応する測定値のすぐ下に置く（§5.1）。`:empty` で畳むのは、
-   併記が無いときに空行を残さないためである（FR-024 と同じ理由）。 */
-.fsl-still-baseline {{
-    font-size: clamp(.58rem, min(.8vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .0135), .72rem);
-    opacity: .66; line-height: 1.3;
-}}
-.fsl-still-baseline:empty {{ display: none; }}
-.fsl-still-baseline-symmetry {{ margin-bottom: .5em; }}
-.fsl-still-score {{
-    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-    font-size: clamp(.95rem, min(1.5vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .027), 1.3rem);
-    font-weight: 600; margin-top: .5em;
-}}
-.fsl-still-score b {{
-    font-size: clamp(.64rem, min(.8vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .0145), .78rem);
-    font-weight: 400; opacity: .75;
-}}
 .fsl-still-parts {{
     display: flex; flex-wrap: wrap; gap: 6px clamp(8px, 1vw, 14px);
     font-size: clamp(.7rem, min(1vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .0185), .92rem);
     margin-top: 8px;
 }}
 .fsl-still-parts b {{ font-weight: 400; opacity: .75; margin-right: 4px; }}
-/* 部位別は「値」と「その平均」の 2 行で 1 つの塊にする（HUD と同じ）。 */
-.fsl-still-part {{ display: flex; flex-direction: column; }}
 .fsl-still-demo {{
     font-size: clamp(.78rem, min(1.15vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .021), 1.05rem);
     margin-top: 8px;
 }}
-/* FR-039 / §10.12-5: 母集団と但し書き。併記と同じ場所へ置くことが要件である。 */
-.fsl-still-baseline-note {{
-    font-size: clamp(.5rem, min(.68vw, var({PREVIEW_WIDTH_CSS_VAR}, 760px) * .0115), .62rem);
-    opacity: .6; line-height: 1.35; margin-top: 8px;
-}}
-.fsl-still-baseline-note:empty {{ display: none; }}
 /* ドラッグを受けるのはグリップだけ。吹き出し本体は `pointer-events: none` の
    ままにして、下にある画像の選択・右クリックを奪わない（HUD と同じ規約）。 */
 .fsl-still-grip {{
@@ -302,13 +274,11 @@ _STILL_DRAG_JS: Final[str] = """
 def still_overlay_html(
     *,
     overall: float | None,
-    equal_weight: float | None,
     parts: Mapping[str, float | None],
     estimate: DemographicEstimate | None,
     show_demographics: bool,
     gate: str,
     notice: str = "",
-    baseline: BaselineSummary | None = None,
 ) -> str:
     """吹き出し 1 つ分の markup を組み立てる純関数。
 
@@ -322,15 +292,9 @@ def still_overlay_html(
     失敗している」と読まれる、FR-024）。``notice``（FR-038）は
     `show_demographics` が偽のときにだけ、その独立した行の中身を年齢ゲートの
     固定文言（`ui.age_gate_notice`）へ差し替える。
-
-    ``baseline``（FR-039）は同じ参考年齢・参考性別の母集団の要約で、各測定値の
-    すぐ下へ平均と差を添える。**HUD と同じ文字列を `build_hud_payload` から取る**
-    ——ここで整形し直さない。渡さなければ併記の要素は空になり、CSS の `:empty`
-    が行ごと畳む。
     """
     payload = build_hud_payload(
         overall=overall,
-        equal_weight=equal_weight,
         parts=parts,
         estimate=estimate,
         show_demographics=show_demographics,
@@ -338,20 +302,11 @@ def still_overlay_html(
         position="左上",
         generation="",
         notice=notice,
-        baseline=baseline,
     )
     readings = payload["parts"]
     assert isinstance(readings, Mapping)
-    baseline_payload = payload["baseline"]
-    assert isinstance(baseline_payload, Mapping)
-    baseline_parts = baseline_payload["parts"]
-    assert isinstance(baseline_parts, Mapping)
     part_items = "".join(
-        '<span class="fsl-still-part">'
-        f"<span><b>{part_label(name)}</b>{readings[name]}</span>"
-        f'<span class="fsl-still-baseline">{baseline_parts[name]}</span>'
-        "</span>"
-        for name in PART_NAMES
+        f"<span><b>{part_label(name)}</b>{readings[name]}</span>" for name in PART_NAMES
     )
     demo = payload["demo"]
     demo_row = f'<div class="fsl-still-demo">{demo}</div>' if demo else ""
@@ -364,11 +319,6 @@ def still_overlay_html(
         f'<div class="fsl-still-hud" style="border: 2px solid {gate};">'
         f'<div class="fsl-still-value">{payload["symmetry"]}</div>'
         f'<div class="fsl-still-label">{payload["label"]}</div>'
-        f'<div class="fsl-still-baseline fsl-still-baseline-symmetry">'
-        f"{baseline_payload['symmetry']}</div>"
-        f'<div class="fsl-still-score">'
-        f"<b>{PART_EQUAL_WEIGHT_LABEL}</b>{payload['score']}"
-        f'<span class="fsl-still-baseline">{baseline_payload["score"]}</span></div>'
         f'<div class="fsl-still-parts">{part_items}</div>'
         f"{demo_row}"
         # **grip を但し書きより先に置く。** 箱は `pointer-events: none` で
@@ -376,7 +326,6 @@ def still_overlay_html(
         # 長い但し書きを grip の前に置くと、狭いプレビューで grip が箱の外へ
         # 押し出され、吹き出しを退ける手段そのものが失われる。
         f"{grip}"
-        f'<div class="fsl-still-baseline-note">{baseline_payload["note"]}</div>'
         "</div>"
     )
 
@@ -415,13 +364,11 @@ def render_image_with_overlay(
     *,
     caption: str,
     overall: float | None,
-    equal_weight: float | None,
     parts: Mapping[str, float | None],
     estimate: DemographicEstimate | None,
     show_demographics: bool,
     gate: str,
     notice: str = "",
-    baseline: BaselineSummary | None = None,
 ) -> None:
     """プレビュー画像と、その上に重ねる吹き出しを描く。
 
@@ -462,13 +409,11 @@ def render_image_with_overlay(
         st.markdown(
             still_overlay_html(
                 overall=overall,
-                equal_weight=equal_weight,
                 parts=parts,
                 estimate=estimate,
                 show_demographics=show_demographics,
                 gate=gate,
                 notice=notice,
-                baseline=baseline,
             ),
             unsafe_allow_html=True,
         )

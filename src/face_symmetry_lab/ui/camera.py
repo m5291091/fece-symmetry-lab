@@ -57,7 +57,6 @@ from face_symmetry_lab.domain.metrics import MetricConfigError
 from face_symmetry_lab.domain.session_summary import summarize_session, trend_series
 from face_symmetry_lab.domain.smoothing import DEFAULT_TAU_SECONDS
 from face_symmetry_lab.ui.age_gate_notice import SESSION_HIDDEN_NOTICE
-from face_symmetry_lab.ui.baseline import resolve_session_baseline
 from face_symmetry_lab.ui.demographic_panel import render_demographic_panel
 from face_symmetry_lab.ui.detail_panel import render_detail_panel
 from face_symmetry_lab.ui.export_panel import render_export_panel
@@ -398,24 +397,24 @@ def _render_detail_fragment(pipeline: RealtimeLandmarkPipeline) -> None:
 
     **更新頻度を 5 Hz から 1 Hz へ落とした理由（2026-08-31 の利用者報告対応）。**
     ライブの主表示は映像上の HUD（5 Hz、NFR-003/FR-013）が担う。詳細タブは
-    計算過程・姿勢・診断という二次表示であり、5 Hz でフル再描画する必要は無い。
+    姿勢・診断という二次表示であり、5 Hz でフル再描画する必要は無い。
     5 Hz でのフル再描画（bordered container + 2×columns + metrics + expander）は
     ブラウザのメインスレッドで WebRTC 映像のデコード・描画と競合し、長いセッション
     で映像が次第に重くなり最後に止まる障害を起こした。サーバ側の解析経路は有界で
     あることを実測で確認済み。詳細タブを 1 Hz にすることで競合を解消する。
 
-    項目26（H3）: HUD が既に部位別 4 つ・全体の対称度・全体のスコアを表示する
-    ため、`render_score_details` へ `show_parts=False` を渡して重複を避ける。
+    項目26（H3）: HUD が既に部位別 4 つ・全体の対称度を表示するため、
+    `render_score_details` へ `show_parts=False` を渡して重複を避ける。
 
     2026-08-26: 参考年齢・参考性別はここから **専用タブへ移した**
     （`_render_demographic_fragment`）。ここに間借りしていた間、この区画は
     推定が無いときに何も描かず、年齢ゲートの判定も読んでいなかった——HUD が
-    固定文言へ切り替わっている間もここだけが数値を出し続けており、§10.12-3 の
-    「表示していないときは併記しない」が区画によって食い違っていた。
+    固定文言へ切り替わっている間もここだけが数値を出し続けており、年齢ゲートが
+    隠した判断を区画によって食い違って漏らしていた（§10.11-2）。
 
     FR-041: HUD と同じ `_snapshot_for_display` を通す。片方だけ生の snapshot を
-    読むと、保持中に「HUD の部位別」と「計算過程の部位別」が別の瞬間の値になり、
-    AC-DISPLAY-04 の文字列一致が保持区間の境界でだけ壊れる。
+    読むと、保持中に HUD の数値と詳細タブの併記（ずれ・生値）が別の瞬間の値に
+    なり、同じ画面の 2 か所が食い違って見える（不変条件 11）。
 
     2026-08-27: 囲み・回復導線・診断用の折りたたみという**枠**は
     `ui.detail_panel` が Image と共有する。ここに残るのは、その枠へ渡す
@@ -625,11 +624,10 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
     summary = summarize_session(records)
     render_session_summary(summary)
 
-    # FR-039/§9.6.1: 参考年齢・参考性別と母集団は、どちらも **pipeline が溜めた
-    # 「表示を許した推定」** から決める。`bundle.records` から作ると、年齢ゲートが
-    # 隠した判断が年齢から復元できてしまう（§10.12-3、AC-BASELINE-05）。
-    # **snapshot は 1 度だけ取る**（`bundle` と同じ理由）——2 度取ると、その間に
-    # 届いた推定の分だけ「参考年齢の節」と「参照平均の母集団」がずれる。
+    # §9.6.1: 参考年齢・参考性別は **pipeline が溜めた「表示を許した推定」** から
+    # 決める。`bundle.records` から作ると、年齢ゲートが隠した判断が年齢から復元
+    # できてしまう（§10.11-2）。**snapshot は 1 度だけ取る**（`bundle` と同じ理由）
+    # ——2 度取ると、その間に届いた推定の分だけ結果がずれる。
     observations = pipeline.demographic_observations
     overview = summarize_observations(observations)
     # §9.6.1: 1 度も表示できなかったセッションでは節ごと出さず、ゲートを実際に
@@ -646,7 +644,6 @@ def _render_export_panel(pipeline: RealtimeLandmarkPipeline) -> None:
             summary=summary,
             bundle=bundle,
             series=trend_series(records),
-            baseline=resolve_session_baseline(observations),
             overview=overview,
             notice=notice,
         )
@@ -728,7 +725,7 @@ def _render_display_controls(pipeline: RealtimeLandmarkPipeline) -> None:
             t("顔の中心線を表示"),
             value=True,
             key="camera_midline_enabled",
-            help=t("採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。"),
+            help=t("採点に使う正中点から推定した直線です。表示を変えても対称度は変わりません。"),
         )
     with demographic_column:
         # この pipeline が実際に保持している worker を条件にする。worker が
@@ -823,7 +820,7 @@ def _render_hud_position_control() -> None:
         horizontal=True,
         help=t(
             "映像へ重ねる HUD の吹き出し"
-            "（状態・平滑化時間・全体の対称度・全体のスコア・部位別4つ・"
+            "（状態・平滑化時間・全体の対称度・部位別4つ・"
             "参考年齢・参考性別・折れ線グラフ）の位置です。映像自体は加工しません。"
             "HUD は掴んで動かせます。プリセットを選び直すと元の角へ戻ります。"
         ),

@@ -12,9 +12,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from face_symmetry_lab.application.age_gate import AgeGateStatus
-from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.models import AnalysisState, GenderLabel, Status
-from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.age_gate_notice import age_gate_notice
 from face_symmetry_lab.ui.hud import (
     FULLSCREEN_BADGE,
@@ -37,7 +35,6 @@ from face_symmetry_lab.ui.readings import (
     GENDER_LABELS,
     PART_LABELS,
     format_display_hold,
-    format_score,
     format_smoothing_window,
     format_symmetry,
     gate_label,
@@ -61,7 +58,6 @@ def _estimate(age: float = 34.0, female: float = 0.8):
 def _payload_kwargs() -> dict:
     return {
         "overall": 0.0215,
-        "equal_weight": 0.031,
         "parts": {"contour": 0.01, "eyes": 0.02, "nose": 0.03, "mouth": 0.015},
         "estimate": None,
         "show_demographics": False,
@@ -102,7 +98,7 @@ def test_the_hud_payload_reads_the_three_dimensional_overall_distance() -> None:
         "import json\n"
         "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
         "from face_symmetry_lab.ui.hud import render_hud_payload\n"
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
         "outcome = _outcome_for_display(\n"
         "    symmetry_3d=_symmetry_3d_result(\n"
         "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
@@ -134,15 +130,6 @@ def test_the_hud_carries_the_experimental_label() -> None:
 # --- H1: HUD をライブ解析パネルの内容へ拡張する ------------------------------
 
 
-def test_the_hud_carries_the_headline_score_through_the_shared_formatter() -> None:
-    """§8.6.5/§8.6.7: 「全体のスコア」（`s_3d`）も HUD へ、パネルと同じフォーマッタ
-    で届く。**そのフォーマッタは点の `format_score` であり、%の `format_symmetry`
-    ではない**（罠: HUD だけ対称度%のままにすると見出しと 2 つの目盛りが並ぶ）。"""
-    assert _payload(equal_weight=0.031)["score"] == format_score(0.031)
-    assert _payload(equal_weight=0.031)["score"] != format_score(0.0215)
-    assert _payload(equal_weight=0.031)["score"] != format_symmetry(0.031)
-
-
 def test_the_hud_carries_all_four_parts_through_the_shared_formatter() -> None:
     """§8.6.3: 4 部位も `ui.scores.format_symmetry` を通す（HUD 独自の整形をしない）。"""
     parts = _payload()["parts"]
@@ -153,14 +140,12 @@ def test_the_hud_carries_all_four_parts_through_the_shared_formatter() -> None:
     assert parts["mouth"] == format_symmetry(0.015)
 
 
-def test_a_missing_score_or_part_renders_as_a_dash_not_zero() -> None:
+def test_a_missing_part_renders_as_a_dash_not_zero() -> None:
     """NFR-013: 欠測は `—` であり、0 や前回値ではない。"""
     payload = _payload(
-        equal_weight=None,
         parts={"contour": None, "eyes": 0.02, "nose": None, "mouth": 0.015},
     )
 
-    assert payload["score"] == "—"
     assert payload["parts"]["contour"] == "—"
     assert payload["parts"]["nose"] == "—"
     assert payload["parts"]["eyes"] == format_symmetry(0.02)
@@ -301,7 +286,7 @@ def test_the_hud_payload_reads_the_recorders_segment_id_as_the_generation() -> N
         "import json\n"
         "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
         "from face_symmetry_lab.ui.hud import render_hud_payload\n"
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
         "outcome = _outcome_for_display(\n"
         "    symmetry_3d=_symmetry_3d_result(\n"
         "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
@@ -321,9 +306,9 @@ def test_the_hud_payload_reads_the_recorders_segment_id_as_the_generation() -> N
     assert payload["gen"] == "segment-xyz"
 
 
-def test_the_hud_payload_reads_the_equal_weight_score_and_parts_from_the_outcome() -> None:
-    """`render_hud_payload` が `resolve_equal_weight_distance`/
-    `resolve_part_distance_3d` を経由し、パネルと同じ値を読むことを固定する。
+def test_the_hud_payload_reads_the_smoothed_parts_from_the_outcome() -> None:
+    """`render_hud_payload` が `resolve_part_distance_3d` を経由し、パネルと
+    同じ値を読むことを固定する。
 
     部位別の平滑値（0.004 等）を生値（0.01 等）から大きく離しているため、
     実装が誤って生値をそのまま payload へ渡していればここで assertion が
@@ -333,7 +318,7 @@ def test_the_hud_payload_reads_the_equal_weight_score_and_parts_from_the_outcome
         "import json\n"
         "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
         "from face_symmetry_lab.ui.hud import render_hud_payload\n"
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
         "outcome = _outcome_for_display(\n"
         "    symmetry_3d=_symmetry_3d_result(\n"
         "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
@@ -351,7 +336,6 @@ def test_the_hud_payload_reads_the_equal_weight_score_and_parts_from_the_outcome
     html = at.markdown[0].value
     payload = json.loads(html.split(">", 1)[1].rsplit("<", 1)[0])
 
-    assert payload["score"] is not None
     assert payload["parts"]["contour"] == format_symmetry(0.004)
     assert payload["parts"]["contour"] != format_symmetry(0.01)
     assert payload["parts"]["eyes"] == format_symmetry(0.006)
@@ -400,7 +384,7 @@ def test_the_payload_carries_only_the_current_reading_never_a_whole_series() -> 
     """折れ線グラフの系列全体ではなく、現在値だけが 5 Hz の payload に乗る。
 
     「300 点 × 5 系列を毎回送る」実装ではこの assertion が落ちる（罠）。
-    数値であるべき箇所（`chart` の各系列値、`symmetry`/`score`/`parts` の
+    数値であるべき箇所（`chart` の各系列値、`symmetry`/`parts` の
     フォーマット済み文字列）に配列が紛れ込んでいないことを確認する。
     """
     payload = _payload()
@@ -411,7 +395,6 @@ def test_the_payload_carries_only_the_current_reading_never_a_whole_series() -> 
         assert isinstance(chart[key], (int, float))
     # フォーマット済みの表示値も単一の文字列であり、履歴の配列ではない。
     assert isinstance(payload["symmetry"], str)
-    assert isinstance(payload["score"], str)
     for value in payload["parts"].values():
         assert isinstance(value, str)
 
@@ -519,166 +502,33 @@ def test_the_chart_y_axis_is_a_fixed_window_not_zero_to_a_hundred_or_auto_scaled
     assert HUD_CHART_Y_MAX == 100.0
 
 
-# --- FR-039: 参照平均の併記 ----------------------------------------------------
+# --- FR-039（撤回、2026-09-03）: 参照平均の併記 --------------------------------
 
 
-def _baseline(**means: float) -> BaselineSummary:
-    defaults = {
-        "score_points": 45.0,
-        "symmetry_percent_overall": 96.0,
-        "symmetry_percent_contour": 95.0,
-        "symmetry_percent_eyes": 96.5,
-        "symmetry_percent_nose": 97.0,
-        "symmetry_percent_mouth": 96.2,
-    }
-    defaults.update(means)
-    return BaselineSummary(
-        age=20,
-        gender=GenderLabel.MALE,
-        count=75,
-        metrics={name: MetricSummary(mean=value, sd=1.0) for name, value in defaults.items()},
-    )
+def test_build_hud_payload_has_no_baseline_key() -> None:
+    """FR-039 は撤回された（§0 項目 34）。payload が baseline を運ばないことを固定する。"""
+    payload = _payload()
+
+    assert "baseline" not in payload
 
 
-def test_the_baseline_is_compared_against_the_same_value_that_is_displayed() -> None:
-    """AC-BASELINE-01: 括弧の中の差は、画面に出ている数から作る。"""
-    payload = _payload(baseline=_baseline())
-
-    baseline = payload["baseline"]
-    assert payload["symmetry"] == "97.85%"
-    assert baseline["symmetry"] == "平均 96.00%（+1.85）"
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
 
 
-def test_the_baseline_score_is_compared_in_points_and_not_in_percent() -> None:
-    """§8.6.7: 点と % を混ぜない（罠: 対称度の目盛りで引き算する実装は 51.9 を出す）。"""
-    payload = _payload(baseline=_baseline())
+def test_build_hud_payload_has_no_score_key() -> None:
+    """§8.6.7 の表示スケールは撤回された。payload が score を運ばないことを固定する。"""
+    payload = _payload()
 
-    assert payload["score"] == format_score(0.031)
-    assert payload["baseline"]["score"] == "平均 45.0 点（+2.5）"
-    assert "%" not in payload["baseline"]["score"]
+    assert "score" not in payload
 
 
-def test_every_part_carries_its_own_baseline() -> None:
-    payload = _payload(baseline=_baseline())
+def test_the_bridge_config_has_no_score_label() -> None:
+    """bridge の CFG からも `scoreLabel` を外した。"""
+    config_json = hud_bridge_script(fullscreen=False, position="左上")
+    blob = config_json.split("__fslHudConfig = ", 1)[1].split(";\n", 1)[0]
+    config = json.loads(blob)
 
-    parts = payload["baseline"]["parts"]
-    assert set(parts) == set(PART_LABELS)
-    assert parts["contour"] == "平均 95.00%（+4.00）"
-    assert parts["nose"] == "平均 97.00%（+0.00）"
-
-
-def test_the_baseline_note_names_the_population() -> None:
-    """AC-BASELINE-04: 何と比べているのかを、併記と同じ吹き出しの中へ置く。"""
-    note = _payload(baseline=_baseline())["baseline"]["note"]
-
-    assert "20 歳" in note and "男性" in note and "75 件" in note
-    assert "人種で絞り込まず" in note
-
-
-def test_no_baseline_leaves_every_slot_empty() -> None:
-    """併記が無いときは空文字であり `—` ではない（`:empty` で行ごと畳む）。"""
-    baseline = _payload()["baseline"]
-
-    assert baseline["symmetry"] == ""
-    assert baseline["score"] == ""
-    assert baseline["note"] == ""
-    assert set(baseline["parts"]) == set(PART_LABELS)
-    assert all(text == "" for text in baseline["parts"].values())
-
-
-def test_the_baseline_never_changes_the_measured_readings() -> None:
-    """§10.12-7: 参照統計は表示の上乗せであり、測定値の表示を変えない。"""
-    without = _payload()
-    with_baseline = _payload(baseline=_baseline())
-
-    for key in ("symmetry", "score", "parts", "chart", "label", "gate"):
-        assert without[key] == with_baseline[key]
-
-
-def test_a_missing_reading_gets_the_mean_without_a_difference() -> None:
-    """不変条件 11: `—` の項目に `+0.00` を作らない。"""
-    payload = _payload(equal_weight=None, baseline=_baseline())
-
-    assert payload["score"] == "—"
-    assert payload["baseline"]["score"] == "平均 45.0 点"
-
-
-def test_render_hud_payload_resolves_the_baseline_for_the_shown_estimate() -> None:
-    """FR-039: 同梱の参照統計を通した、Camera 側の端から端までの配線。"""
-    at = AppTest.from_string(
-        "import json\n"
-        "from datetime import UTC, datetime\n"
-        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
-        "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
-        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
-        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.021,\n"
-        ")\n"
-        "estimate = build_demographic_estimate(\n"
-        "    estimated_age_years=20.4,\n"
-        "    gender_probabilities=(0.2, 0.8),\n"
-        "    model_version='age-gender/test',\n"
-        "    model_sha256='a' * 64,\n"
-        "    observed_at=datetime(2026, 8, 16, tzinfo=UTC),\n"
-        ")\n"
-        "snapshot = PipelineSnapshot(analysis=outcome, demographic_estimate=estimate)\n"
-        "render_hud_payload(snapshot, show_demographics=True)\n"
-    )
-    at.run()
-
-    assert not at.exception
-    payload = json.loads(at.markdown[0].value.split(">", 1)[1].rsplit("<", 1)[0])
-    assert "参考年齢 20 歳" in payload["demo"]
-    assert "20 歳・男性" in payload["baseline"]["note"]
-    assert "75 件" in payload["baseline"]["note"]
-    assert payload["baseline"]["symmetry"].startswith("平均 ")
-
-
-def test_render_hud_payload_drops_the_baseline_when_the_gate_hides_the_age() -> None:
-    """§10.12-3: 母集団の年齢からゲートの内部判断を復元させない。"""
-    at = AppTest.from_string(
-        "import json\n"
-        "from datetime import UTC, datetime\n"
-        "from face_symmetry_lab.application.age_gate import AgeGateOutcome, AgeGateStatus\n"
-        "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
-        "from face_symmetry_lab.domain.demographics import build_demographic_estimate\n"
-        "from face_symmetry_lab.ui.hud import render_hud_payload\n"
-        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
-        "outcome = _outcome_for_display(\n"
-        "    symmetry_3d=_symmetry_3d_result(\n"
-        "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
-        "    ),\n"
-        "    smooth_3d=0.021,\n"
-        ")\n"
-        "estimate = build_demographic_estimate(\n"
-        "    estimated_age_years=20.4,\n"
-        "    gender_probabilities=(0.2, 0.8),\n"
-        "    model_version='age-gender/test',\n"
-        "    model_sha256='a' * 64,\n"
-        "    observed_at=datetime(2026, 8, 16, tzinfo=UTC),\n"
-        ")\n"
-        "snapshot = PipelineSnapshot(\n"
-        "    analysis=outcome,\n"
-        "    demographic_estimate=estimate,\n"
-        "    age_gate_outcome=AgeGateOutcome(\n"
-        "        status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None\n"
-        "    ),\n"
-        ")\n"
-        "render_hud_payload(snapshot, show_demographics=True)\n"
-    )
-    at.run()
-
-    assert not at.exception
-    payload = json.loads(at.markdown[0].value.split(">", 1)[1].rsplit("<", 1)[0])
-    assert payload["baseline"]["note"] == ""
-    assert payload["baseline"]["symmetry"] == ""
-    assert "20" not in payload["baseline"]["note"]
-    # 左右差の表示は変わらない（不変条件 12）。
-    assert payload["symmetry"] == format_symmetry(0.021)
+    assert "scoreLabel" not in config
 
 
 # --- FR-040 / §5.4: 状態と平滑化時間のテキスト表示 ----------------------------
@@ -715,7 +565,7 @@ def test_the_state_and_smoothing_never_change_the_measured_readings() -> None:
         smoothing=format_smoothing_window(2.0),
     )
 
-    for key in ("symmetry", "score", "parts", "chart"):
+    for key in ("symmetry", "parts", "chart"):
         assert annotated[key] == plain[key]
 
 
@@ -725,7 +575,7 @@ def test_render_hud_payload_publishes_the_state_and_smoothing_window() -> None:
         "import json\n"
         "from face_symmetry_lab.application.realtime import PipelineSnapshot\n"
         "from face_symmetry_lab.ui.hud import render_hud_payload\n"
-        "from tests.ui.test_scores import _outcome_for_display, _symmetry_3d_result\n"
+        "from tests.ui.conftest import _outcome_for_display, _symmetry_3d_result\n"
         "outcome = _outcome_for_display(\n"
         "    symmetry_3d=_symmetry_3d_result(\n"
         "        contour=0.01, eyes=0.02, nose=0.03, mouth=0.015, overall=0.018\n"
@@ -822,7 +672,7 @@ def test_the_hud_label_translates_to_english() -> None:
         "import streamlit as st\n"
         "from face_symmetry_lab.ui.hud import build_hud_payload\n"
         "payload = build_hud_payload(\n"
-        "    overall=0.0215, equal_weight=0.031,\n"
+        "    overall=0.0215,\n"
         "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
         "    estimate=None, show_demographics=False, gate='#2E9E5B',\n"
         "    position='左上', generation='segment-1',\n"
@@ -844,7 +694,7 @@ def test_the_demographic_line_template_translates_to_english() -> None:
         "from face_symmetry_lab.ui.hud import build_hud_payload\n"
         "from tests.ui.test_hud import _estimate\n"
         "payload = build_hud_payload(\n"
-        "    overall=0.0215, equal_weight=0.031,\n"
+        "    overall=0.0215,\n"
         "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
         "    estimate=_estimate(age=34.4), show_demographics=True,\n"
         "    gate='#2E9E5B', position='左上', generation='segment-1',\n"
@@ -877,7 +727,6 @@ def test_the_bridge_config_translates_its_static_labels_to_english() -> None:
 
     assert not at.exception
     config = at.session_state["config"]
-    assert config["scoreLabel"] == "Overall score"
     assert config["partLabels"] == {
         "contour": "Contour",
         "eyes": "Eyes",
@@ -896,7 +745,6 @@ def test_the_bridge_config_defaults_to_japanese_labels() -> None:
     blob = config_json.split("__fslHudConfig = ", 1)[1].split(";\n", 1)[0]
     config = json.loads(blob)
 
-    assert config["scoreLabel"] == "全体のスコア"
     assert config["partLabels"]["contour"] == "輪郭"
     assert config["gripText"] == "ドラッグで移動"
 

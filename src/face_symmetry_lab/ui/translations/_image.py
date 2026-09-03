@@ -28,10 +28,10 @@ EN: Final[dict[str, str]] = {
     "静止画のランドマークと左右差": "Still-image landmarks and symmetry",
     "顔の中心線を表示": "Show the face midline",
     # `_camera.py` も同じ原文を持つ（同種のトグル）。訳を合わせて統合時の衝突を避ける。
-    "採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。": (
+    "採点に使う正中点から推定した直線です。表示を変えても対称度は変わりません。": (
         "A line estimated from the midpoints used for"
         " scoring. Toggling this does not change the "
-        "score."
+        "symmetry value."
     ),
     "ランドマークを表示できません。": "Landmarks cannot be shown.",
     # --- 追跡状態のメッセージ（`_IMAGE_STATUS_MESSAGES`）----------------------

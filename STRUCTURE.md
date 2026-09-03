@@ -172,7 +172,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 - Verify: `uv run python scripts/generate_structure.py --include-untracked --check`
 
 <!-- BEGIN GENERATED TREE -->
-_File-list SHA-256: `2fcc4b79b06ae702ec6572d91efba05bf1871c052616a270426ffff3507e3182`_
+_File-list SHA-256: `1da0512c59410072cb963c51fbbdc8343dda68e6472ef6709ead3ebe4139d0ea`_
 
 face-symmetry-lab/
 - `.antigravity/`
@@ -272,15 +272,15 @@ face-symmetry-lab/
         - … (4 files)
       - … (1 files)
     - `application/`
-      - … (18 files)
+      - … (17 files)
     - `domain/`
-      - … (25 files)
+      - … (23 files)
     - `runtime/`
       - … (3 files)
     - `ui/`
       - `translations/`
         - … (10 files)
-      - … (25 files)
+      - … (24 files)
     - `__init__.py`
     - `__main__.py`
 - `tests/`
@@ -310,7 +310,6 @@ face-symmetry-lab/
     - `test_preview_compositor.py`
     - `test_quality.py`
     - `test_realtime.py`
-    - `test_reference_baseline.py`
     - `test_reference_browser.py`
     - `test_session.py`
     - `test_still_image.py`
@@ -330,15 +329,13 @@ face-symmetry-lab/
     - `test_models.py`
     - `test_overlay.py`
     - `test_pose.py`
-    - `test_reference_baseline.py`
     - `test_reference_stats.py`
-    - `test_score_explanation.py`
-    - `test_score_scale.py`
     - `test_session_summary.py`
     - `test_smoothing.py`
     - `test_symmetrization.py`
     - `test_symmetry.py`
     - `test_symmetry_3d.py`
+    - `test_symmetry_display.py`
     - `test_tracking_zoom.py`
     - `test_warp_mesh.py`
   - `fixtures/`
@@ -365,7 +362,6 @@ face-symmetry-lab/
     - `test_about_page.py`
     - `test_age_gate_notice.py`
     - `test_app.py`
-    - `test_baseline.py`
     - `test_camera.py`
     - `test_demographic_panel.py`
     - `test_detail_panel.py`

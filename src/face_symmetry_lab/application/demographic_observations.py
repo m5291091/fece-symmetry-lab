@@ -1,13 +1,13 @@
-"""FR-039 / §9.6.1: 1 セッションで**実際に表示できた**参考年齢・参考性別を溜める。
+"""FR-024 / §9.6.1: 1 セッションで**実際に表示できた**参考年齢・参考性別を溜める。
 
-FR-042 の Camera レポートが参照平均を出すために要る。リアルタイムでは参考年齢が
-数秒ごとに変わるため、Image のように 1 点では母集団を決められない。
+FR-042 の Camera レポートが参考年齢・参考性別の要約を出すために要る。リアルタイム
+では参考年齢が数秒ごとに変わるため、Image のように 1 点では要約を決められない。
 
 **エクスポートの記録から作ってはならない。** 年齢ゲート（FR-038）が表示を止めた
 フレームの推定も `SessionRecorder` には入っており、§9.2 の `age_gate_decision`
 列がまだ実装されていないため、記録の側から「表示できた行」を見分けることもできない。
-記録から母集団を作ると、**ゲートが隠した内部判断が母集団の年齢から復元できてしまう**
-（§10.12-3、§10.11-2）。そこで、表示を許した瞬間にここへ溜める。
+記録から要約を作ると、**ゲートが隠した内部判断が要約の年齢から復元できてしまう**
+（§10.11-2）。そこで、表示を許した瞬間にここへ溜める。
 
 溜めるのは年齢と性別だけで、フレームも埋め込みも保持しない。上限を持つのは
 `SessionRecorder` の履歴と同じ理由である（セッションが長くても有界に保つ）。
@@ -19,9 +19,12 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 
-from face_symmetry_lab.domain.demographics import mean_gender_probabilities
+from face_symmetry_lab.domain.demographics import (
+    ObservedAges,
+    mean_gender_probabilities,
+    observed_ages,
+)
 from face_symmetry_lab.domain.models import DemographicEstimate, GenderLabel
-from face_symmetry_lab.domain.reference_baseline import ObservedAges, observed_ages
 
 #: 溜める観測の上限。1Hz の推論で 30 分ぶんに相当する。四分位を取るのに十分で、
 #: これを超えたセッションでは古いほうから捨てる（新しいほうが「いまの顔」に近い）。
@@ -36,9 +39,9 @@ class DemographicOverview:
     「そのセッションが何歳・どの参考性別として表示されていたか」を範囲で述べる
     しかない。
 
-    **年齢の丸めと範囲の決め方は参照平均の母集団と同じもの**（`observed_ages`）を
-    使う。ここで 2 つ目の数え方を作ると、同じセッションのレポートの中で「31 歳」と
-    「30 歳の平均」が並ぶ（§10.12-2）。
+    **年齢の丸めと範囲の決め方は `domain.demographics.observed_ages` が定める 1 つ
+    だけ**である。ここで 2 つ目の数え方を作ると、同じレポートの中で画面の参考年齢と
+    要約の年齢が食い違う（§9.6.1）。
 
     **参考性別は観測フレームのモデル性別確率の平均**（女性・男性の確率）として持つ
     （2026-08-31 の指示）。判定が途中で入れ替わったセッションで 2 つのラベルが並ぶ
@@ -81,8 +84,8 @@ class DemographicObservations:
         """1 件の推定を、**表示を許されたときだけ**溜める。
 
         ``may_show`` は `AgeGateOutcome.may_show_reference_age`（ゲート未接続なら
-        真）である。偽のときに溜めてしまうと、後からレポートの母集団としてゲートの
-        判断が漏れる——**この 1 行がこの module の存在理由である**。
+        真）である。偽のときに溜めてしまうと、後からレポートの参考年齢要約として
+        ゲートの判断が漏れる——**この 1 行がこの module の存在理由である**。
         """
         if estimate is None or not may_show:
             return
@@ -114,9 +117,9 @@ def summarize_observations(
 
     **渡してよいのは `DemographicObservations.snapshot()` だけ**である——あちらは
     ゲートが表示を許した推定しか溜めない。記録から作った列を渡すと、ゲートが隠した
-    判断がレポートの年齢から復元できてしまう（§10.12-3、§10.11-2）。
+    判断がレポートの年齢から復元できてしまう（§10.11-2）。
 
-    年齢が 1 件も §9.5 の範囲（18〜75）に収まらないセッションでは `observed_ages`
+    年齢が 1 件もモデルの対象範囲（18〜75）に収まらないセッションでは `observed_ages`
     が `None` を返すので、ここも `None` になる——clamp して「18 歳」を作らない。
     参考性別は**観測フレームのモデル性別確率の平均**として持つ（2026-08-31 の指示）。
     判定が途中で入れ替わったセッションで 2 つのラベルが並ぶと紛らわしいため、

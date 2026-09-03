@@ -185,7 +185,7 @@ class RealtimeLandmarkPipeline:
         #: FR-039/§9.6.1: FR-042 の Camera レポートが母集団を決めるための観測。
         #: **表示を許された推定だけ**を溜める（`application.demographic_observations`）。
         #: エクスポートの記録から作ると、年齢ゲートが隠した判断が母集団の年齢から
-        #: 復元できてしまう（§10.12-3）。
+        #: 復元できてしまう（§10.11-2）。
         self._observations = DemographicObservations()
         #: FR-038: 既存の worker/relay 構造は変えず（推論は独立して走り続ける）、
         #: `age_gate` が接続されていればスコアリングと同じ同期経路で判定だけを
@@ -331,7 +331,7 @@ class RealtimeLandmarkPipeline:
 
         demographic_sample = self._demographics.collect(timestamp_ms)
         if demographic_sample is not None:
-            # §10.12-3: ゲートが表示を許したときだけ溜める。ゲート未接続
+            # §10.11-2: ゲートが表示を許したときだけ溜める。ゲート未接続
             # （`age_gate_outcome is None`）は HUD と同じく「許す」側で扱う。
             self._observations.observe(
                 demographic_sample[0],
@@ -707,7 +707,7 @@ class RealtimeLandmarkPipeline:
 
         FR-042 の Camera レポートが母集団を決めるために読む。記録（`export_bundle`）
         ではなくこちらを読むこと——記録には年齢ゲートが表示を止めたフレームの推定も
-        入っており、そこから母集団を作ると隠した判断が復元できてしまう（§10.12-3）。
+        入っており、そこから母集団を作ると隠した判断が復元できてしまう（§10.11-2）。
         """
         return self._observations.snapshot()
 

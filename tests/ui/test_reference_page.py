@@ -158,27 +158,13 @@ def test_reference_page_says_that_an_unset_axis_matches_everything() -> None:
     assert "未選択" in text or "選択しない" in text
 
 
-def test_reference_page_discloses_the_stretched_point_scale() -> None:
-    """§8.6.7: 「点」は引き伸ばした目盛りである、という開示を Analyze と揃える。
-
-    罠: Analyze 側にだけ `SCORE_SCALE_CAPTION` を置く実装は、同じ「点」を
-    2 つの画面で違う扱いにする。ここでは母集団の中の位置を表さないことを、
-    §10.7 が禁じる語（順位・パーセンタイル・偏差値）を使わずに述べる。
-    """
-    at = _run()
-    text = _all_text(at)
-
-    assert "引き伸ば" in text
-    assert "母集団" in text
-
-
 def test_the_part_breakdown_is_not_squeezed_into_five_metric_columns() -> None:
     """§5.4: 5 つ並べた `st.metric` は値が切れる。**実測の回帰。**
 
     `st.metric` の値は 36px・`white-space: nowrap`・`text-overflow: ellipsis`
     である。5 列に分けると 1 列 99px になり、「95.05%」（110px）が 11px はみ出して
     末尾の `%` が省略記号へ置き換わっていた——5 つとも、画面幅に関わらず。
-    見出しの 3 つ（件数・平均・標準偏差）は 1〜2 列なので `st.metric` のままでよい。
+    見出し（件数）は 1 列なので `st.metric` のままでよい。
 
     罠: 部位別を `st.metric` へ戻すと、この assertion が落ちる。
     """
@@ -186,7 +172,7 @@ def test_the_part_breakdown_is_not_squeezed_into_five_metric_columns() -> None:
 
     labels = [element.label for element in at.metric]
 
-    assert labels == ["一致した件数", "平均スコア（点）", "標準偏差（点）"]
+    assert labels == ["一致した件数"]
 
 
 def test_the_part_breakdown_still_shows_every_label_and_value() -> None:
@@ -272,6 +258,28 @@ def test_reference_page_uses_no_value_judgement_words() -> None:
 
     for forbidden in ("美しい", "良い", "悪い", "優れ", "理想", "劣"):
         assert forbidden not in text, f"価値判断語が出ている: {forbidden}"
+
+
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
+
+
+def test_the_reference_page_no_longer_shows_an_average_score() -> None:
+    """§8.6.7 の表示スケールを撤回した。
+
+    罠: 平均・標準偏差の `st.metric` ごと部位別・全体の % 表まで消す実装は、
+    この test の後半（件数・部位別 4 つ・全体）で落ちる。
+    """
+    at = _run()
+    text = _all_text(at)
+
+    assert "平均スコア" not in text
+    assert "標準偏差（点）" not in text
+
+    metric_labels = [element.label for element in at.metric]
+    assert "一致した件数" in metric_labels
+
+    for label in ("輪郭", "目", "鼻", "口", "全体"):
+        assert label in text
 
 
 def test_reference_page_survives_missing_reference_data() -> None:

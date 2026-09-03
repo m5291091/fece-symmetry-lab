@@ -25,9 +25,6 @@ _FULL = (
     "reading = SummaryReading(\n"
     "    median=98.12, minimum=96.05, maximum=99.20, iqr=0.83, sample_count=120\n"
     ")\n"
-    "score = SummaryReading(\n"
-    "    median=82.0, minimum=70.5, maximum=90.1, iqr=6.8, sample_count=120\n"
-    ")\n"
     "def section(segment_id, ok=120, total=150):\n"
     "    return SummarySection(\n"
     "        segment_id=segment_id,\n"
@@ -36,7 +33,6 @@ _FULL = (
     "        valid_rate=ok / total,\n"
     "        valid_span_ms=42_000,\n"
     "        symmetry=reading,\n"
-    "        score=score,\n"
     "        parts={name: reading for name in ('contour', 'eyes', 'nose', 'mouth')},\n"
     "        reason_counts=((ReasonCode.OFF_AXIS_YAW, 20), (ReasonCode.TOO_FAR, 10)),\n"
     "        age_gate_evaluated=100,\n"
@@ -58,7 +54,6 @@ _MISSING = (
     "    valid_rate=0.0,\n"
     "    valid_span_ms=None,\n"
     "    symmetry=None,\n"
-    "    score=None,\n"
     "    parts={name: None for name in ('contour', 'eyes', 'nose', 'mouth')},\n"
     "    reason_counts=(),\n"
     ")\n"
@@ -95,18 +90,16 @@ def test_the_valid_rate_is_shown_as_a_percentage() -> None:
 
 
 def test_the_readings_are_shown_in_their_display_units() -> None:
-    """§8.6.7: 対称度は %、全体のスコアは点。同じ目盛りに見えてはならない。"""
+    """§8.6.3: 対称度は %。"""
     text = _all_text(_run())
 
     assert "98.12%" in text
-    assert "82.0 点" in text
-    assert "82.0%" not in text
 
 
 def test_every_displayed_reading_appears_in_the_table() -> None:
     text = _all_text(_run())
 
-    for label in ("全体の対称度", "全体のスコア", "輪郭", "目", "鼻", "口"):
+    for label in ("全体の対称度", "輪郭", "目", "鼻", "口"):
         assert label in text
 
 
@@ -141,17 +134,27 @@ def test_missing_readings_render_as_a_dash_rather_than_zero() -> None:
     assert not at.exception
     assert "—" in text
     assert "0.00%" not in text
-    assert "0.0 点" not in text
     # 有効率だけは 0% であって欠測ではない（分母は確定している）。
     assert "0.0%" in text
 
 
 def test_the_summary_states_that_it_moves_between_takes() -> None:
-    """§14.4 の実測（撮り直しで全幅 6.8 点）を注記として必ず添える。"""
+    """§14.4 の実測を注記として必ず添える。"""
     text = _all_text(_run())
 
     assert SUMMARY_LIMITS_NOTE in text
     assert "撮り直" in SUMMARY_LIMITS_NOTE
+
+
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
+
+
+def test_the_summary_no_longer_shows_the_overall_score() -> None:
+    """§8.6.7 の表示スケールを撤回した。読みは 5 つになり、「点」表記は現れない。"""
+    text = _all_text(_run())
+
+    assert "全体のスコア" not in text
+    assert "点" not in text
 
 
 @pytest.mark.parametrize(

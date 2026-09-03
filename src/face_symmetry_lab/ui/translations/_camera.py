@@ -128,10 +128,10 @@ EN: Final[dict[str, str]] = {
     "年齢・性別モデルが未配置のため使用できません。": (
         "Unavailable because the age/gender model is not installed."
     ),
-    "採点に使う正中点から推定した直線です。表示を変えてもスコアは変わりません。": (
+    "採点に使う正中点から推定した直線です。表示を変えても対称度は変わりません。": (
         "A line estimated from the midpoints used for"
         " scoring. Toggling this does not change the "
-        "score."
+        "symmetry value."
     ),
     "推論を停止してモデルを解放": "Stop inference and release the model",
     "数値を入れ替える間隔": "Value refresh interval",
@@ -154,13 +154,13 @@ EN: Final[dict[str, str]] = {
         "Brightness gain ×{gain:.2f}{zoom} · Analysis interval {interval_ms} ms"
     ),
     (
-        "映像へ重ねる HUD の吹き出し（状態・平滑化時間・全体の対称度・全体のスコア・部位別4"
+        "映像へ重ねる HUD の吹き出し（状態・平滑化時間・全体の対称度・部位別4"
         "つ・参考年齢・参考性別・折れ線グラフ）の位置です。映像自体は加工しません。HUD "
         "は掴んで動かせます。プリセットを選び直すと元の角へ戻ります。"
     ): (
         "Position of the HUD overlay on the video "
         "(status · smoothing window · overall "
-        "symmetry · overall score · the 4 parts · "
+        "symmetry · the 4 parts · "
         "reference age & gender · trend chart). The "
         "video itself is not altered. Drag the HUD to"
         " move it; choosing a preset returns it to "

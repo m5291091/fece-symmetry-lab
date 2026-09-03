@@ -137,7 +137,7 @@ def test_an_ungated_pipeline_shows_the_estimate() -> None:
 
 
 def test_the_gate_hides_the_estimate_everywhere_it_could_be_read() -> None:
-    """§10.12-3: 数値を隠す区画と出す区画が混在すると、隠した判断が読めてしまう。
+    """§10.11-2: 数値を隠す区画と出す区画が混在すると、隠した判断が読めてしまう。
 
     罠: 区画ごとにゲートを読み直す実装は、片方だけ分岐を落としても
     「動いているように見える」——だからここで 1 つの解決だけを固定する。

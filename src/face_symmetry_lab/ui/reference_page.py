@@ -11,7 +11,7 @@
 作らず、測定結果と参照統計をこの画面へ並べない。
 
 **FR-039（吹き出し・HUD への参照平均の併記）とは別の画面である。** 2026-08-16 に
-§10.7 を限定解除したのは Analyze 側の併記だけで（§10.12、ADR-0006）、この画面の
+§10.7 の限定解除（FR-039）は 2026-09-03 に撤回され、この画面の
 禁止は解除していない。同じセルテーブルを読むが、こちらは人種・性別・年齢を利用者が
 自由に絞り込んで母集団そのものを眺めるためのページであり、個人の測定値は現れない。
 
@@ -76,17 +76,6 @@ _FILTER_SCOPE_HELP: Final[str] = (
     "同じ軸の複数選択はそのいずれかに一致するものが残ります。"
 )
 
-#: §8.6.7: 「点」は実測が集まる範囲へ合わせて引き伸ばした目盛りである。Analyze 側
-#: （`ui.scores.SCORE_SCALE_CAPTION`）にだけ開示を置くと、同じ「点」を 2 つの画面で
-#: 違う扱いにしてしまう。**§10.7 が禁じる語（順位・パーセンタイル・偏差値）を
-#: 使わずに、母集団の中の位置を表さないことを述べる。**
-_SCORE_SCALE_CAPTION: Final[str] = "点は引き伸ばした目盛りで、母集団の中の位置を表しません。"
-
-_SCORE_SCALE_HELP: Final[str] = (
-    "点は、実測が集まる範囲（ずれ 1.0〜5.0%）へ合わせて引き伸ばした目盛りで読んだ値です。"
-    "引き伸ばした分だけばらつきも拡大します。"
-)
-
 #: §9.5 の 7 指標のうち、部位別・全体の平均対称度（%）として並べる 5 つ。
 #: `domain.metrics.PART_NAMES` の順（輪郭・目・鼻・口）に全体を続ける——
 #: `ui.readings` が使うラベルを再利用し、部位名の和訳を 2 か所に持たない。
@@ -113,8 +102,6 @@ _INSUFFICIENT_COUNT_TEMPLATE: Final[str] = (
     "一致した件数が {threshold} 件未満のため、平均・標準偏差は表示しません"
     "（件数が少ない集計は誤差が大きく、参考になりません）。"
 )
-_MEAN_SCORE_LABEL: Final[str] = "平均スコア（点）"
-_SD_SCORE_LABEL: Final[str] = "標準偏差（点）"
 _PART_BREAKDOWN_CAPTION: Final[str] = "部位別・全体の平均対称度（%）"
 _OVERALL_LABEL: Final[str] = "全体"
 
@@ -263,20 +250,11 @@ def _render_results(result: ReferenceQueryResult, *, min_group_for_ci: int) -> N
     elif not aggregate.has_statistics:
         st.info(t(_INSUFFICIENT_COUNT_TEMPLATE).format(threshold=min_group_for_ci))
     else:
-        score_summary = aggregate.metrics["score_points"]
-        mean_column, sd_column = st.columns(2)
-        mean_column.metric(t(_MEAN_SCORE_LABEL), f"{score_summary.mean:.2f}")
-        sd_column.metric(
-            t(_SD_SCORE_LABEL),
-            "—" if score_summary.sd is None else f"{score_summary.sd:.2f}",
-        )
-        st.caption(t(_SCORE_SCALE_CAPTION), help=t(_SCORE_SCALE_HELP))
-
         st.caption(t(_PART_BREAKDOWN_CAPTION))
         # **5 つを `st.metric` へ分けない。** `st.metric` の値は 36px・
         # `white-space: nowrap`・`text-overflow: ellipsis` なので、5 列に割ると
         # 1 列 99px になり「95.05%」（110px）の末尾の `%` が省略記号へ置き換わる
-        # （実測、画面幅に関わらず 5 つとも）。見出しの 3 つは 1〜2 列なので
+        # （実測、画面幅に関わらず 5 つとも）。見出しの 1 つ（件数）は 1 列なので
         # `st.metric` のままでよい。表なら列幅に合わせて縮み、切れない。
         # `_render_matched_cells` と同じく pandas は使わない（同関数の docstring）。
         header = (

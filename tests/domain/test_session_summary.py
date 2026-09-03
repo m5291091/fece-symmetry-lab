@@ -21,6 +21,7 @@ from face_symmetry_lab.domain.models import ReasonCode, Status
 from face_symmetry_lab.domain.session_summary import (
     SummaryError,
     SummarySection,
+    TrendSeries,
     summarize_session,
     trend_series,
 )
@@ -42,7 +43,6 @@ class _Record:
         elapsed_ms: int = 0,
         reason_codes: tuple[ReasonCode, ...] = (),
         overall: float | None = 0.02,
-        equal_weight: float | None = 0.03,
         contour: float | None = 0.01,
         eyes: float | None = 0.02,
         nose: float | None = 0.03,
@@ -54,7 +54,6 @@ class _Record:
         self.elapsed_ms = elapsed_ms
         self.reason_codes = reason_codes
         self.distance3d_overall_raw = overall
-        self.distance3d_parts_equal_raw = equal_weight
         self.distance3d_contour_raw = contour
         self.distance3d_eyes_raw = eyes
         self.distance3d_nose_raw = nose
@@ -153,23 +152,12 @@ def test_the_interquartile_range_is_missing_for_a_single_sample() -> None:
 
 
 def test_every_displayed_reading_is_summarised() -> None:
-    """画面に出る 6 つ（全体の対称度・全体のスコア・部位別 4 つ）を過不足なく持つ。"""
+    """画面に出る 5 つ（全体の対称度・部位別 4 つ）を過不足なく持つ。"""
     summary = summarize_session(_ok_records([0.02, 0.03]))
 
     assert summary.overall.symmetry is not None
-    assert summary.overall.score is not None
     assert set(summary.overall.parts) == {"contour", "eyes", "nose", "mouth"}
     assert all(reading is not None for reading in summary.overall.parts.values())
-
-
-def test_the_score_is_summarised_on_the_points_scale() -> None:
-    """§8.6.7: スコアは点。対称度 % と同じ目盛りに見えてはならない。"""
-    summary = summarize_session(_ok_records([0.02], equal_weight=0.03))
-
-    score = summary.overall.score
-    assert score is not None
-    # `score_points` のアンカー（D_FULL=0.010 / D_ZERO=0.050）から 0.03 は 50 点。
-    assert score.median == pytest.approx(50.0)
 
 
 def test_a_reading_missing_on_some_rows_uses_only_the_rows_that_have_it() -> None:
@@ -190,10 +178,18 @@ def test_a_reading_missing_on_some_rows_uses_only_the_rows_that_have_it() -> Non
 
 def test_a_reading_missing_on_every_row_is_missing_rather_than_zero() -> None:
     """不変条件 11: 欠測は 0 で埋めない。"""
-    summary = summarize_session(_ok_records([0.02], equal_weight=None))
+    summary = summarize_session(_ok_records([0.02], nose=None))
 
-    assert summary.overall.score is None
+    assert summary.overall.parts["nose"] is None
     assert summary.overall.symmetry is not None
+
+
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
+
+
+def test_the_summary_section_no_longer_carries_a_score_field() -> None:
+    """§8.6.7 の表示スケールを撤回したので、要約からも `score` を外した。"""
+    assert "score" not in SummarySection.__slots__
 
 
 def test_rows_that_are_not_ok_never_contribute_a_value() -> None:
@@ -353,19 +349,16 @@ def test_the_trend_series_carries_the_valid_rows_in_display_units() -> None:
 
 def test_every_displayed_reading_gets_its_own_series() -> None:
     """2026-08-16: 1 本だけでは「どの部位が動いていたのか」が後から分からない。"""
-    series = trend_series(_ok_records([0.010, 0.020], equal_weight=0.03, nose=0.04))
+    series = trend_series(_ok_records([0.010, 0.020], nose=0.04))
 
     assert set(series.parts) == {"contour", "eyes", "nose", "mouth"}
-    assert series.score == pytest.approx((50.0, 50.0))
     assert series.parts["nose"] == pytest.approx((96.0, 96.0))
 
 
-def test_the_points_series_stays_on_its_own_scale() -> None:
-    """§8.6.7: 点と % は別の軸。同じ系列へ混ぜない。"""
-    series = trend_series(_ok_records([0.020], equal_weight=0.03))
-
-    assert series.symmetry == pytest.approx((98.0,))
-    assert series.score == pytest.approx((50.0,))
+def test_the_trend_series_no_longer_carries_a_score_field() -> None:
+    """§0 項目 34: 「全体のスコア」の点の系列を撤回した。5 系列とも % になり、
+    1 つの図へ重ねられる（§9.6.1）。"""
+    assert "score" not in TrendSeries.__slots__
 
 
 def test_a_series_with_nothing_to_draw_reports_itself_as_empty() -> None:

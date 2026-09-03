@@ -13,14 +13,11 @@ import numpy as np
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from face_symmetry_lab.application.reference_baseline import BaselineSummary
 from face_symmetry_lab.domain.demographics import build_demographic_estimate
 from face_symmetry_lab.domain.metrics import PART_NAMES
-from face_symmetry_lab.domain.models import GenderLabel
-from face_symmetry_lab.domain.reference_stats import MetricSummary
 from face_symmetry_lab.ui.hud import build_hud_payload
 from face_symmetry_lab.ui.readings import PART_LABELS
-from face_symmetry_lab.ui.scores import format_score, format_symmetry
+from face_symmetry_lab.ui.scores import format_symmetry
 from face_symmetry_lab.ui.still_overlay import (
     STILL_OVERLAY_CONTAINER_KEY,
     still_overlay_html,
@@ -40,7 +37,6 @@ def _estimate(age: float = 34.0, female: float = 0.8):
 def _overlay_kwargs() -> dict:
     return {
         "overall": 0.0215,
-        "equal_weight": 0.031,
         "parts": {"contour": 0.01, "eyes": 0.02, "nose": 0.03, "mouth": 0.015},
         "estimate": None,
         "show_demographics": False,
@@ -67,17 +63,8 @@ def test_the_still_overlay_reuses_the_hud_display_strings() -> None:
     markup = _overlay()
 
     assert payload["symmetry"] in markup
-    assert payload["score"] in markup
     for reading in payload["parts"].values():  # type: ignore[union-attr]
         assert reading in markup
-
-
-def test_the_still_overlay_shows_the_score_on_the_point_scale() -> None:
-    """§8.6.7: 「全体のスコア」は点であり、対称度 % ではない。"""
-    markup = _overlay()
-
-    assert format_score(0.031) in markup
-    assert format_symmetry(0.031) not in markup
 
 
 def test_the_still_overlay_labels_all_four_parts() -> None:
@@ -118,11 +105,10 @@ def test_the_still_overlay_markup_carries_no_script_or_timer() -> None:
 
 def test_missing_values_render_as_a_dash_rather_than_zero() -> None:
     """不変条件 11/NFR-013: 欠測は `—`。0 や前回値で埋めない。"""
-    markup = _overlay(overall=None, equal_weight=None, parts=dict.fromkeys(PART_NAMES))
+    markup = _overlay(overall=None, parts=dict.fromkeys(PART_NAMES))
 
     assert "—" in markup
     assert "0.00%" not in markup
-    assert "0.0 点" not in markup
 
 
 def test_the_demographic_row_is_absent_rather_than_empty_when_not_requested() -> None:
@@ -145,7 +131,6 @@ def test_the_demographic_row_sits_in_its_own_element_apart_from_the_symmetry() -
     assert "参考年齢" in demographic_block
     assert "参考性別" in demographic_block
     assert format_symmetry(0.0215) not in demographic_block
-    assert format_score(0.031) not in demographic_block
 
 
 def test_a_notice_replaces_the_demographic_row_when_demographics_are_hidden() -> None:
@@ -204,7 +189,6 @@ def _render_source(*, show_demographics: bool = False) -> str:
         "    np.zeros((8, 8, 3), dtype=np.uint8),\n"
         "    caption='検出したランドマーク',\n"
         "    overall=0.0215,\n"
-        "    equal_weight=0.031,\n"
         "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
         "    estimate=None,\n"
         f"    show_demographics={show_demographics},\n"
@@ -235,7 +219,7 @@ def test_the_image_and_the_overlay_are_both_drawn() -> None:
 
     assert not at.exception
     assert len(at.get("image")) == 1
-    assert format_score(0.031) in _rendered_html(at)
+    assert format_symmetry(0.0215) in _rendered_html(at)
 
 
 def test_the_preview_must_be_an_image_array() -> None:
@@ -247,7 +231,6 @@ def test_the_preview_must_be_an_image_array() -> None:
             np.zeros((8, 8), dtype=np.uint8),
             caption="c",
             overall=None,
-            equal_weight=None,
             parts={},
             estimate=None,
             show_demographics=False,
@@ -258,38 +241,31 @@ def test_the_preview_must_be_an_image_array() -> None:
 # --- 見出し結果（2026-08-12 に削除）から引き継いだ不変条件 --------------------
 
 
-def test_the_score_and_the_symmetry_are_distinct_readings() -> None:
-    """§8.6.5: 「全体のスコア」（`s_3d`）と「全体の対称度」（`d_3d`）は重みだけが
-    違う別の総合量で、一致しない。罠: 吹き出しへ `d_3d` を両方へ渡す実装は、
-    2 つの読みが同じ量の 2 つの表示になっていることを見逃す。"""
-    markup = _overlay(overall=0.02, equal_weight=0.031)
-
-    assert format_symmetry(0.02) in markup
-    assert format_score(0.031) in markup
-    assert format_score(0.02) not in markup
-
-
-def test_only_the_score_goes_missing_when_a_single_part_is_missing() -> None:
-    """§8.6.5/AC-SCORE-10: 部位が 1 つ欠測すると `s_3d` だけが欠測になり、
-    `d_3d` は定義され続ける。吹き出しでもこの非対称な欠測条件を保つ。"""
-    markup = _overlay(
-        overall=0.018,
-        equal_weight=None,
-        parts={"contour": 0.01, "eyes": 0.02, "nose": None, "mouth": 0.015},
-    )
-
-    assert format_symmetry(0.018) in markup
-    score_block = markup.split('class="fsl-still-score"', 1)[1].split("</div>", 1)[0]
-    assert "—" in score_block
-
-
 def test_every_reading_is_a_dash_when_the_three_dimensional_result_is_missing() -> None:
     """不変条件 11: §8.5.1 の重ね合わせが成立しないときは全部 `—`。0 や前値でない。"""
-    markup = _overlay(overall=None, equal_weight=None, parts=dict.fromkeys(PART_NAMES))
+    markup = _overlay(overall=None, parts=dict.fromkeys(PART_NAMES))
 
     # stylesheet のコメントにも `—` は出るので、吹き出しの本体だけを数える。
     body = markup.split("</style>")[-1]
-    assert body.count("—") == 1 + 1 + len(PART_NAMES)
+    assert body.count("—") == 1 + len(PART_NAMES)
+
+
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
+
+
+def test_the_overlay_no_longer_shows_the_overall_score() -> None:
+    """§8.6.7 の表示スケールを撤回した。吹き出しから点の表示を外す。
+
+    罠: 部位別 4 つ・全体の対称度まで巻き添えで消す実装は、この test の後半で
+    落ちる。
+    """
+    markup = _overlay()
+
+    assert "fsl-still-score" not in markup
+    assert "点" not in markup
+    assert format_symmetry(0.0215) in markup
+    for name in PART_NAMES:
+        assert format_symmetry(_overlay_kwargs()["parts"][name]) in markup
 
 
 def test_the_overlay_stylesheet_survives_the_render() -> None:
@@ -412,7 +388,6 @@ def test_the_bubble_type_scales_with_the_viewport() -> None:
     for selector in (
         ".fsl-still-value {",
         ".fsl-still-label {",
-        ".fsl-still-score {",
         ".fsl-still-parts {",
         ".fsl-still-demo {",
     ):
@@ -572,99 +547,15 @@ def test_the_drag_runtime_is_installed_once_per_render() -> None:
     assert len(iframes) == 1
 
 
-# --- FR-039: 参照平均の併記 ----------------------------------------------------
+# --- FR-039（撤回、2026-09-03）: 参照平均の併記 --------------------------------
 
 
-def _baseline() -> BaselineSummary:
-    means = {
-        "score_points": 45.0,
-        "symmetry_percent_overall": 96.0,
-        "symmetry_percent_contour": 95.0,
-        "symmetry_percent_eyes": 96.5,
-        "symmetry_percent_nose": 97.0,
-        "symmetry_percent_mouth": 96.2,
-    }
-    return BaselineSummary(
-        age=20,
-        gender=GenderLabel.MALE,
-        count=75,
-        metrics={name: MetricSummary(mean=value, sd=1.0) for name, value in means.items()},
-    )
-
-
-def test_the_still_overlay_reuses_the_hud_baseline_strings() -> None:
-    """罠: 吹き出し側で平均を組み立て直す実装は、HUD と 2 つ目の表示規則へ分岐する。"""
-    payload = build_hud_payload(
-        **_overlay_kwargs(), position="左上", generation="", baseline=_baseline()
-    )
-    html = _overlay(baseline=_baseline())
-
-    assert payload["baseline"]["symmetry"] in html
-    assert payload["baseline"]["score"] in html
-    assert payload["baseline"]["note"] in html
-    for name in PART_NAMES:
-        assert payload["baseline"]["parts"][name] in html
-
-
-def test_each_reading_carries_its_baseline_next_to_it() -> None:
-    """§5.1: 併記は対応する測定値のすぐ下に置き、独立した区画へ切り出さない。"""
-    html = _overlay(baseline=_baseline())
-
-    assert html.count('class="fsl-still-baseline"') == 5  # スコア + 部位別 4 つ
-    assert 'class="fsl-still-baseline fsl-still-baseline-symmetry"' in html
-    assert 'class="fsl-still-baseline-note"' in html
-    # 測定値そのものは変わらない。
-    assert format_symmetry(0.0215) in html
-    assert format_score(0.031) in html
-
-
-def test_the_overlay_without_a_baseline_leaves_the_slots_empty() -> None:
-    """併記が無いときに空行を残さない（CSS の `:empty` が畳む）。"""
+def test_the_overlay_has_no_baseline_traces() -> None:
+    """FR-039 は撤回された（§0 項目 34）。吹き出しの HTML から併記が消えたことを固定する。"""
     html = _overlay()
 
-    assert "平均 " not in html
-    assert '<div class="fsl-still-baseline-note"></div>' in html
-
-
-def test_the_still_baseline_scales_with_the_preview() -> None:
-    """縦長写真でプレビューだけが狭くなる場合にも切れないこと（§5.1）。"""
-    html = _overlay(baseline=_baseline())
-    rule = html[html.index(".fsl-still-baseline {") :]
-    rule = rule[: rule.index("}")]
-
-    assert "font-size: clamp(" in rule
-    assert "var(--fsl-preview-width" in rule
-
-
-@pytest.mark.parametrize(
-    "banned",
-    ["偏差値", "順位", "パーセンタイル", "分位", "合格", "平均より上", "平均より下"],
-)
-def test_the_overlay_never_ranks_the_user(banned: str) -> None:
-    """§10.12-1 / AC-BASELINE-04。"""
-    assert banned not in _overlay(baseline=_baseline())
-
-
-def test_the_overlay_states_the_population_and_its_limits() -> None:
-    """AC-BASELINE-04: 母集団・件数・探索値であることを同じ吹き出しの中へ置く。"""
-    html = _overlay(baseline=_baseline())
-
-    assert "20 歳" in html and "男性" in html and "75 件" in html
-    assert "人種で絞り込まず" in html
-    assert "探索値" in html
-    assert "基準値ではありません" in html
-
-
-def test_the_note_never_pushes_the_drag_grip_out_of_the_box() -> None:
-    """箱は `pointer-events: none` + `max-height` なので、あふれた分は掴めない。
-
-    罠: 長い但し書きを grip の前に置く実装は、狭いプレビューで grip を箱の外へ
-    押し出し、吹き出しを退ける手段そのものを失わせる。
-    """
-    html = _overlay(baseline=_baseline())
-    markup = html[html.index('<div class="fsl-still-hud"') :]  # stylesheet を除く
-
-    assert markup.index("fsl-still-grip") < markup.index("fsl-still-baseline-note")
+    assert "fsl-still-baseline" not in html
+    assert "平均" not in html
 
 
 def test_the_bubble_footprint_includes_its_padding_and_border() -> None:
@@ -679,7 +570,7 @@ def test_the_bubble_footprint_includes_its_padding_and_border() -> None:
     罠: `box-sizing` を親コンテナ側だけに書く実装は、吹き出し自身へ継承されない
     （`box-sizing` は継承しないプロパティである）。
     """
-    html = _overlay(baseline=_baseline())
+    html = _overlay()
     rule = html[html.index(f".st-key-{STILL_OVERLAY_CONTAINER_KEY} .fsl-still-hud {{") :]
     rule = rule[: rule.index("}")]
 
@@ -702,7 +593,7 @@ def test_the_drag_grip_label_translates_to_english() -> None:
         "import streamlit as st\n"
         "from face_symmetry_lab.ui.still_overlay import still_overlay_html\n"
         "markup = still_overlay_html(\n"
-        "    overall=0.0215, equal_weight=0.031,\n"
+        "    overall=0.0215,\n"
         "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
         "    estimate=None, show_demographics=False, gate='#2E9E5B',\n"
         ")\n"

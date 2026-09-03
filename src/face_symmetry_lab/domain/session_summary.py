@@ -29,7 +29,7 @@ from math import isfinite
 
 from face_symmetry_lab.domain.metrics import PART_NAMES
 from face_symmetry_lab.domain.models import ReasonCode, Status
-from face_symmetry_lab.domain.score_scale import score_points, symmetry_percent
+from face_symmetry_lab.domain.symmetry_display import symmetry_percent
 
 #: FR-021: 画面へ出す HOLD 理由の件数。上位これだけで、利用者が次に何をすべきか
 #: は決まる。全件を並べても行動は変わらない。
@@ -47,11 +47,10 @@ class SummaryError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class SummaryReading:
-    """1 つの測定値に対する分布の記述。単位は**表示単位**である。
+    """1 つの測定値に対する分布の記述。単位は**表示単位**（対称度 %）である。
 
-    対称度は %、全体のスコアは点。変換は単調なので順序と中央値は変換の前後で
-    一致するが、四分位は補間を伴い、clamp を含むスコアの目盛りでは一致しない。
-    そのため**必ず変換後の値で計算する**（AC-SUMMARY-01）。
+    変換は単調なので順序と中央値は変換の前後で一致するが、四分位は補間を伴う
+    ため**必ず変換後の値で計算する**（AC-SUMMARY-01）。
 
     対称度は距離の最大が % の最小へ写るため、`minimum` / `maximum` は距離で見た
     ときと入れ替わる。
@@ -81,7 +80,6 @@ class SummarySection:
     #: 最初と最後の OK 行の `elapsed_ms` の差。OK 行が 2 件未満なら欠測。
     valid_span_ms: int | None
     symmetry: SummaryReading | None
-    score: SummaryReading | None
     parts: dict[str, SummaryReading | None]
     #: 出現回数の多い順、上位 `TOP_REASON_COUNT` 件。同数のときは最初に現れた順。
     reason_counts: tuple[tuple[ReasonCode, int], ...]
@@ -203,7 +201,6 @@ def _section(records: Sequence[object], *, segment_id: str | None) -> SummarySec
         valid_rate=len(ok_rows) / len(records) if records else 0.0,
         valid_span_ms=span,
         symmetry=_reading(_collect(records, "distance3d_overall_raw"), convert=symmetry_percent),
-        score=_reading(_collect(records, "distance3d_parts_equal_raw"), convert=score_points),
         parts={
             name: _reading(_collect(records, f"distance3d_{name}_raw"), convert=symmetry_percent)
             for name in PART_NAMES
@@ -224,22 +221,21 @@ MAX_TREND_POINTS: int = 600
 class TrendSeries:
     """FR-042 §9.6.1 の推移図が描く系列。単位は**表示単位**である。
 
-    `symmetry` と `parts` は % で同じ軸へ重ねられるが、`score` は点なので
-    **別の図にする**——目盛りの違う 2 つを 1 つの軸へ重ねると、どちらの単位で
-    読めばよいのか分からなくなる（§8.6.7 が % と点を分けているのと同じ理由）。
+    `symmetry` と `parts` はどちらも同じ % の目盛りなので、**1 つの図へ重ねて
+    よい**（§0 項目 34 で「全体のスコア」の点の目盛りを撤回したため、5 系列とも
+    同じ単位になった。以前は点の系列だけ別の図にしていた）。
 
     系列ごとに長さが違うことがある。部位が個別に欠測したフレームでは、その部位
     だけ点が 1 つ少ないためである。横軸は「記録された順序」であって時刻ではない。
     """
 
     symmetry: tuple[float, ...]
-    score: tuple[float, ...]
     parts: dict[str, tuple[float, ...]]
 
     @property
     def is_empty(self) -> bool:
         """描くものが 1 つも無い（軸だけの図を出さないための判定）。"""
-        return not self.symmetry and not self.score and not any(self.parts.values())
+        return not self.symmetry and not any(self.parts.values())
 
 
 def _thinned(
@@ -265,10 +261,10 @@ def trend_series(
     *,
     max_points: int = MAX_TREND_POINTS,
 ) -> TrendSeries:
-    """FR-042 §9.6.1 の推移図が描く 6 系列。
+    """FR-042 §9.6.1 の推移図が描く 5 系列。
 
     要約と同じく **OK 行の生値だけ**を読み、表示単位へ変換して返す。画面に出る
-    6 つ（全体の対称度・全体のスコア・部位別 4 つ）をすべて描くのは、1 本だけでは
+    5 つ（全体の対称度・部位別 4 つ）をすべて描くのは、1 本だけでは
     「どの部位が動いていたのか」がセッションの後から分からないためである
     （2026-08-16 の指示）。
     """
@@ -279,11 +275,6 @@ def trend_series(
         symmetry=_thinned(
             _collect(rows, "distance3d_overall_raw"),
             convert=symmetry_percent,
-            max_points=max_points,
-        ),
-        score=_thinned(
-            _collect(rows, "distance3d_parts_equal_raw"),
-            convert=score_points,
             max_points=max_points,
         ),
         parts={
@@ -301,7 +292,7 @@ def summarize_session(records: Iterable[object]) -> SessionSummary:
     """FR-021 の要約を、`segment_id` ごとと全体の 2 段で返す。
 
     ``records`` は `domain.export.SessionRecord` の列を想定するが、読むのは
-    `analysis_status` / `segment_id` / `elapsed_ms` / `reason_codes` と 6 つの
+    `analysis_status` / `segment_id` / `elapsed_ms` / `reason_codes` と 5 つの
     生値の列だけである。約 50 列のうち要約に関係するのはこれだけなので、
     型ではなく読む属性で結んである。
 

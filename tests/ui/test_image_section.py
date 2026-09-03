@@ -215,7 +215,6 @@ def test_a_failed_estimate_does_not_stop_the_symmetry_panel_from_rendering(
         "    np.zeros((8, 8, 3), dtype=np.uint8),\n"
         "    caption='検出したランドマーク',\n"
         "    overall=0.02,\n"
-        "    equal_weight=0.05,\n"
         "    parts={'contour': 0.01, 'eyes': 0.02, 'nose': 0.03, 'mouth': 0.015},\n"
         "    estimate=None,\n"
         "    show_demographics=False,\n"
@@ -412,7 +411,7 @@ def test_gate_blocking_hides_the_bubble_estimate() -> None:
     assert "参考年齢・参考性別を表示できません" in markup
 
 
-# --- FR-039: 参照平均の併記 ----------------------------------------------------
+# --- FR-039（撤回、2026-09-03）: 参照平均の併記 --------------------------------
 
 
 _BUBBLE_SETUP = (
@@ -455,10 +454,9 @@ _BUBBLE_SETUP = (
 )
 
 
-def test_the_bubble_carries_the_baseline_for_the_shown_estimate() -> None:
-    """FR-039/AC-BASELINE-01: 同梱の参照統計を通した、Image 側の端から端までの配線。
-
-    30 歳・男性は `configs/reference/` の全人種を合わせて 283 件である。
+def test_the_bubble_has_no_reference_statistics_average() -> None:
+    """FR-039 は撤回された（§0 項目 34）。吹き出しは参考年齢だけを出し、
+    参照統計の平均は出さない。
     """
     at = AppTest.from_string(_BUBBLE_SETUP + "_render_preview_with_overlay(analysis, None)\n")
     at.run()
@@ -466,30 +464,8 @@ def test_the_bubble_carries_the_baseline_for_the_shown_estimate() -> None:
     assert not at.exception
     markup = " ".join(element.value for element in at.markdown)
     assert "参考年齢 30 歳" in markup
-    assert "30 歳・男性" in markup
-    assert "283 件" in markup
-    assert "人種で絞り込まず" in markup
-
-
-def test_the_bubble_drops_the_baseline_when_the_gate_hides_the_age() -> None:
-    """§10.12-3: 母集団の年齢から、ゲートが隠した判断を復元させない。
-
-    罠: 吹き出しへ渡す推定とは別に session state から母集団を引く実装は、
-    参考年齢を隠したまま「30 歳・男性の平均」を出してしまう。
-    """
-    at = AppTest.from_string(
-        _BUBBLE_SETUP + "_render_preview_with_overlay(\n"
-        "    analysis,\n"
-        "    AgeGateOutcome(status=AgeGateStatus.OUT_OF_RANGE, decision=None, reason=None),\n"
-        ")\n"
-    )
-    at.run()
-
-    assert not at.exception
-    markup = " ".join(element.value for element in at.markdown)
-    assert "平均 " not in markup
-    assert "30 歳" not in markup
-    assert "参考年齢・参考性別を表示できません" in markup
+    assert "人種で絞り込まず" not in markup
+    assert "参照統計の平均" not in markup
 
 
 def test_the_page_module_no_longer_owns_the_image_mode() -> None:
@@ -528,7 +504,7 @@ def test_the_image_mode_never_renders_a_session_summary() -> None:
 
 
 def test_the_image_export_offers_a_report_built_from_the_shown_estimate() -> None:
-    """§10.12-3: レポートの母集団は、吹き出しへ実際に出した推定からだけ決まる。
+    """§9.6.1: レポートの母集団は、吹き出しへ実際に出した推定からだけ決まる。
 
     罠: session state の推定を直接読む実装は、年齢ゲートが隠した判断を
     レポートの母集団の年齢から復元させる。

@@ -130,7 +130,6 @@ def test_every_hud_reading_uses_a_fluid_type_size() -> None:
     for selector in (
         "#fsl-hud-value {",
         "#fsl-hud-label {",
-        "#fsl-hud-score-row {",
         "#fsl-hud-parts {",
         "#fsl-hud-demo {",
     ):
@@ -330,66 +329,13 @@ def test_the_control_row_is_centred_without_a_transform() -> None:
     assert "margin-left: auto;" in rule and "margin-right: auto;" in rule
 
 
-# --- FR-039: 参照平均の併記 ----------------------------------------------------
+# --- FR-039（撤回、2026-09-03）: 参照平均の併記 --------------------------------
 
 
-def test_the_baseline_rows_scale_with_the_hud() -> None:
-    """§5.1: 併記も箱と一緒に縮む（固定 px へ戻すと狭い画面で外へ出る）。"""
-    rule = HUD_STYLESHEET[HUD_STYLESHEET.index(".fsl-hud-baseline {") :]
-    rule = rule[: rule.index("}")]
-
-    assert "font-size: clamp(" in rule
-    assert "min(" in rule  # 幅と高さの足りないほうへ合わせる
-
-
-def test_an_absent_baseline_collapses_instead_of_leaving_a_blank_row() -> None:
-    """FR-024 と同じ理由: 空行は「動いていて失敗している」と読まれる。"""
-    assert ".fsl-hud-baseline:empty { display: none; }" in HUD_STYLESHEET
-    assert "#fsl-hud-baseline-note:empty { display: none; }" in HUD_STYLESHEET
-
-
-def test_the_baseline_is_quieter_than_the_reading_it_annotates() -> None:
-    """§5.2: 差を達成度として演出しない。比べる相手であって主役ではない。"""
-    rule = HUD_STYLESHEET[HUD_STYLESHEET.index(".fsl-hud-baseline {") :]
-    rule = rule[: rule.index("}")]
-
-    assert "opacity: .66;" in rule
-    # 色・矢印・ゲージで大小を演出しない。
-    for banned in ("color:", "background", "::before", "transform"):
-        assert banned not in rule
-
-
-def test_each_part_keeps_its_own_baseline_beneath_it() -> None:
-    """4 部位 × 2 値が 1 行に混ざると、どの平均がどの部位のものか読めない。"""
-    assert ".fsl-hud-part { display: flex; flex-direction: column; }" in HUD_STYLESHEET
-    for part in ("contour", "eyes", "nose", "mouth"):
-        assert f'id="fsl-hud-baseline-{part}"' in HUD_RUNTIME_JS
-
-
-def test_the_baseline_skeleton_is_built_once_with_the_rest_of_the_hud() -> None:
-    """5 Hz の tick は骨格を作り直さない（§5.2）。"""
-    for element_id in (
-        "fsl-hud-baseline-symmetry",
-        "fsl-hud-baseline-score",
-        "fsl-hud-baseline-note",
-    ):
-        assert f'id="{element_id}"' in HUD_RUNTIME_JS
-        assert f"setText('{element_id}'" in HUD_RUNTIME_JS
-
-
-def test_the_tick_reads_the_baseline_from_the_payload() -> None:
-    """罠: HUD 側で平均を組み立て直す実装は、吹き出しと 2 つ目の表示規則へ分岐する。"""
-    assert "var baseline = data.baseline || {};" in HUD_RUNTIME_JS
-    assert "baseline.symmetry" in HUD_RUNTIME_JS
-    assert "baseline.score" in HUD_RUNTIME_JS
-    assert "baseline.note" in HUD_RUNTIME_JS
-    # 併記の不在に `—` を入れない（測定の欠測ではない）。
-    assert "baseline.symmetry || ''" in HUD_RUNTIME_JS
-
-
-def test_the_note_never_pushes_the_drag_grip_out_of_the_hud() -> None:
-    """HUD も `pointer-events: none` + `max-height` である（吹き出しと同じ理由）。"""
-    assert HUD_RUNTIME_JS.index("fsl-hud-grip") < HUD_RUNTIME_JS.index('id="fsl-hud-baseline-note"')
+def test_the_hud_assets_have_no_baseline_traces() -> None:
+    """FR-039 は撤回された（§0 項目 34）。stylesheet と JS のどちらにも残らないことを固定する。"""
+    assert "fsl-hud-baseline" not in HUD_STYLESHEET
+    assert "fsl-hud-baseline" not in HUD_RUNTIME_JS
 
 
 def test_the_hud_footprint_includes_its_padding_and_border() -> None:
@@ -497,7 +443,6 @@ def test_the_static_labels_are_read_from_the_bridge_config_not_baked_into_the_sk
     """FR-043: 骨格（`HUD_RUNTIME_JS`）は 1 度しか作り直さないので、日本語を
     直接焼き込むと言語切替が効かない。CFG から読む配線があることを固定する。
     """
-    assert "CFG.scoreLabel" in HUD_RUNTIME_JS
     assert "CFG.partLabels.contour" in HUD_RUNTIME_JS
     assert "CFG.partLabels.eyes" in HUD_RUNTIME_JS
     assert "CFG.partLabels.nose" in HUD_RUNTIME_JS
@@ -507,17 +452,27 @@ def test_the_static_labels_are_read_from_the_bridge_config_not_baked_into_the_sk
     # このラベル書き換えは、骨格を新規に作った・作らなかったに関わらず毎回走る
     # 節に置く（`if (!hud) { ... }` の外）。bridge の再実行だけで言語が切り替わる
     # ようにするためである。
-    assert HUD_RUNTIME_JS.index("CFG.scoreLabel") > HUD_RUNTIME_JS.index(
+    assert HUD_RUNTIME_JS.index("CFG.partLabels.contour") > HUD_RUNTIME_JS.index(
         "document.body.appendChild(hud);"
     )
 
 
 def test_the_runtime_no_longer_hardcodes_the_japanese_labels() -> None:
     """罠: 骨格へ日本語を戻すと、英語モードでも「輪郭」等が焼き付いたまま出る。"""
-    assert '<span id="fsl-hud-score-label">全体のスコア</span>' not in HUD_RUNTIME_JS
     assert "<b>輪郭</b>" not in HUD_RUNTIME_JS
     assert ">全体</span>" not in HUD_RUNTIME_JS
     assert '<div id="fsl-hud-grip">⠿ ドラッグで移動</div>' not in HUD_RUNTIME_JS
+
+
+# --- §0 項目 34（撤回、2026-09-03）: 「全体のスコア」--------------------------
+
+
+def test_the_hud_assets_no_longer_reference_the_overall_score() -> None:
+    """§8.6.7 の表示スケールを撤回した。stylesheet と実行時 JS のどちらにも
+    `fsl-hud-score` が現れないことを固定する。"""
+    assert "fsl-hud-score" not in HUD_STYLESHEET
+    assert "fsl-hud-score" not in HUD_RUNTIME_JS
+    assert "scoreLabel" not in HUD_RUNTIME_JS
 
 
 # --- FR-031: fsl-hud-guidance の DOM 要素・CSS・tick -------------------------

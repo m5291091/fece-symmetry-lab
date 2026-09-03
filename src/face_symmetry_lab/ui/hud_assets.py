@@ -144,47 +144,14 @@ HUD_STYLESHEET: Final[str] = """
 #fsl-hud-label {
     font-size: clamp(.7rem, min(.9vw, 1.6vh), .85rem); opacity: .75; margin-bottom: .2em;
 }
-/* FR-039: 参照平均の併記。**対応する測定値のすぐ下に置く**（§5.1）。独立した区画へ
-   まとめると、どの数字に対する平均なのかが読み取れなくなる。測定値より小さく薄く
-   して、比べる相手であって主役ではないことを大きさでも示す（§5.2: 差を達成度として
-   演出しない）。
-
-   `:empty` で畳むのは、併記が無いとき——参考年齢を表示していない、参照データが
-   読めない、件数がしきい値未満——に空行を残さないためである。空行は「機能が動いて
-   いて失敗している」と読まれる（FR-024 と同じ理由）。 */
-.fsl-hud-baseline {
-    font-size: clamp(.6rem, min(.8vw, 1.4vh), .74rem);
-    opacity: .66; line-height: 1.3;
-}
-.fsl-hud-baseline:empty { display: none; }
-#fsl-hud-baseline-symmetry { margin-bottom: .5em; }
-/* H1: 「全体のスコア」行。全体の対称度（#fsl-hud-value）より小さく、部位別の
-   行より目立たせる。§8.6.3 は表示名だけの区別であり評価の強調ではない。 */
-#fsl-hud-score-row {
-    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-    font-size: clamp(1rem, min(1.6vw, 2.8vh), 1.35rem); font-weight: 600; margin-top: .5em;
-}
-#fsl-hud-score-label {
-    font-size: clamp(.68rem, min(.85vw, 1.5vh), .8rem); font-weight: 400; opacity: .75;
-}
 /* H1: 部位別 4 つ。折り返し可能な行にして、狭い HUD 幅でも収める。 */
 #fsl-hud-parts {
     display: flex; flex-wrap: wrap; gap: 6px clamp(8px, 1vw, 14px);
     font-size: clamp(.72rem, min(1.05vw, 1.9vh), .95rem); margin-top: 8px;
 }
-/* FR-039: 部位別は「値」と「その平均」の 2 行で 1 つの塊にする。横並びのままだと、
-   4 部位 × 2 値が 1 行に混ざってどの平均がどの部位のものか分からなくなる。 */
-.fsl-hud-part { display: flex; flex-direction: column; }
 .fsl-hud-part b { font-weight: 400; opacity: .75; margin-right: 4px; }
 #fsl-hud-demo { font-size: clamp(.8rem, min(1.2vw, 2.1vh), 1.1rem); margin-top: 8px; }
 #fsl-hud-demo:empty { display: none; }
-/* FR-039 / §10.12-5: 母集団と但し書き。併記と同じ場所に置くことが要件なので、
-   別ページへのリンクで代替しない。数値より一段小さくする。 */
-#fsl-hud-baseline-note {
-    font-size: clamp(.52rem, min(.7vw, 1.2vh), .64rem);
-    opacity: .6; line-height: 1.35; margin-top: 8px;
-}
-#fsl-hud-baseline-note:empty { display: none; }
 /* H1: 折れ線グラフ。骨格（<svg>・<polyline> 5 本・軸ラベル・凡例）は bridge が
    1 度だけ作り、5Hz の tick では `points` 属性だけを書き換える。 */
 #fsl-hud-chart { display: block; width: 100%; height: auto; margin-top: 10px; }
@@ -341,7 +308,7 @@ HUD_RUNTIME_JS: Final[str] = """
     hud = document.createElement('div');
     hud.id = 'fsl-hud';
     hud.hidden = true;
-    // H1: 全体・スコア・部位別 4 つ・参考値の内容（H3 以降、Camera でこれらを
+    // H1: 全体・部位別 4 つ・参考値の内容（H3 以降、Camera でこれらを
     // 表示するのはこの HUD だけである）と、折れ線グラフの骨格（svg 要素・
     // polyline 要素 5 本・軸ラベル・凡例）をここで 1 度だけ作る。5Hz の
     // tick（sync）はこの骨格を作り直さず、textContent と points 属性だけを
@@ -360,35 +327,25 @@ HUD_RUNTIME_JS: Final[str] = """
       '<div class="fsl-hud-warning" id="fsl-hud-warning"></div>' +
       '<div id="fsl-hud-value"></div>' +
       '<div id="fsl-hud-label"></div>' +
-      '<div class="fsl-hud-baseline" id="fsl-hud-baseline-symmetry"></div>' +
       // FR-043: ラベルは空のまま作り、直後（骨格を作った・作らないに関わらず
       // 常に実行される節）で CFG.* から textContent を書き込む。骨格へ日本語を
       // 直接焼き込むと、5Hz の tick とは別経路である言語切替が反映されない。
-      '<div id="fsl-hud-score-row">' +
-        '<span id="fsl-hud-score-label"></span>' +
-        '<span id="fsl-hud-score-value"></span>' +
-        '<span class="fsl-hud-baseline" id="fsl-hud-baseline-score"></span>' +
-      '</div>' +
       '<div id="fsl-hud-parts">' +
         '<span class="fsl-hud-part">' +
           '<span><b id="fsl-hud-part-label-contour"></b>' +
             '<span id="fsl-hud-part-contour"></span></span>' +
-          '<span class="fsl-hud-baseline" id="fsl-hud-baseline-contour"></span>' +
         '</span>' +
         '<span class="fsl-hud-part">' +
           '<span><b id="fsl-hud-part-label-eyes"></b>' +
             '<span id="fsl-hud-part-eyes"></span></span>' +
-          '<span class="fsl-hud-baseline" id="fsl-hud-baseline-eyes"></span>' +
         '</span>' +
         '<span class="fsl-hud-part">' +
           '<span><b id="fsl-hud-part-label-nose"></b>' +
             '<span id="fsl-hud-part-nose"></span></span>' +
-          '<span class="fsl-hud-baseline" id="fsl-hud-baseline-nose"></span>' +
         '</span>' +
         '<span class="fsl-hud-part">' +
           '<span><b id="fsl-hud-part-label-mouth"></b>' +
             '<span id="fsl-hud-part-mouth"></span></span>' +
-          '<span class="fsl-hud-baseline" id="fsl-hud-baseline-mouth"></span>' +
         '</span>' +
       '</div>' +
       '<div id="fsl-hud-demo"></div>' +
@@ -422,8 +379,7 @@ HUD_RUNTIME_JS: Final[str] = """
       // `max-height: min(90vh, 720px)` なので、あふれた分は読むことも掴むことも
       // できない。長い但し書きを grip の前に置くと、縦に短い窓で grip が箱の外へ
       // 押し出され、HUD を退ける手段そのものが失われる。
-      '<div id="fsl-hud-grip">⠿ <span id="fsl-hud-grip-label"></span></div>' +
-      '<div id="fsl-hud-baseline-note"></div>';
+      '<div id="fsl-hud-grip">⠿ <span id="fsl-hud-grip-label"></span></div>';
     document.body.appendChild(hud);
 
     // ドラッグは grip だけで受ける。HUD の残りはクリックが透過し、下にある
@@ -466,7 +422,6 @@ HUD_RUNTIME_JS: Final[str] = """
 
   // FR-043: 骨格は 1 度しか作らないが、表示言語はいつでも切り替わりうる。
   // 骨格の有無に関わらず、bridge が呼ばれるたびに CFG の現在値で書き換える。
-  document.getElementById('fsl-hud-score-label').textContent = CFG.scoreLabel;
   document.getElementById('fsl-hud-part-label-contour').textContent = CFG.partLabels.contour;
   document.getElementById('fsl-hud-part-label-eyes').textContent = CFG.partLabels.eyes;
   document.getElementById('fsl-hud-part-label-nose').textContent = CFG.partLabels.nose;
@@ -601,11 +556,9 @@ HUD_RUNTIME_JS: Final[str] = """
     var valueEl = document.getElementById('fsl-hud-value');
     var labelEl = document.getElementById('fsl-hud-label');
     var demoEl = document.getElementById('fsl-hud-demo');
-    var scoreEl = document.getElementById('fsl-hud-score-value');
     if (valueEl && valueEl.textContent !== data.symmetry) valueEl.textContent = data.symmetry;
     if (labelEl && labelEl.textContent !== data.label) labelEl.textContent = data.label;
     if (demoEl && demoEl.textContent !== data.demo) demoEl.textContent = data.demo;
-    if (scoreEl && scoreEl.textContent !== data.score) scoreEl.textContent = data.score;
     for (var p = 0; p < PART_KEYS.length; p++) {
       var partName = PART_KEYS[p];
       var partEl = document.getElementById('fsl-hud-part-' + partName);
@@ -614,9 +567,6 @@ HUD_RUNTIME_JS: Final[str] = """
         partEl.textContent = partText;
       }
     }
-    // FR-039: 参照平均の併記。payload が持たない・母集団が決まらないときは空文字で
-    // あり、CSS の `:empty` が行ごと畳む。ここで `—` を入れない（併記の不在は測定の
-    // 欠測ではない）。
     // FR-040/§5.4: 状態と平滑化時間。どちらも空文字なら `:empty` が畳む。
     // `—` を入れない（設定や状態の不在は測定の欠測ではない）。
     setText('fsl-hud-state', data.state || '');
@@ -628,15 +578,6 @@ HUD_RUNTIME_JS: Final[str] = """
     setText('fsl-hud-guidance', data.guidance || '');
     // §6.2: 非ブロッキングの助言。空文字なら `:empty` が畳む。`—` を入れない。
     setText('fsl-hud-warning', data.warning || '');
-
-    var baseline = data.baseline || {};
-    var baselineParts = baseline.parts || {};
-    setText('fsl-hud-baseline-symmetry', baseline.symmetry || '');
-    setText('fsl-hud-baseline-score', baseline.score || '');
-    setText('fsl-hud-baseline-note', baseline.note || '');
-    for (var b = 0; b < PART_KEYS.length; b++) {
-      setText('fsl-hud-baseline-' + PART_KEYS[b], baselineParts[PART_KEYS[b]] || '');
-    }
 
     if (data.gate !== lastGate) {
       lastGate = data.gate;
