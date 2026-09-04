@@ -67,7 +67,7 @@
 flowchart TD
     UI["<b>ui</b><br/>Streamlit の composition と表示<br/>HUD・タブ・レポート・i18n"]
     APP["<b>application</b><br/>use case・状態・入力検証・port<br/>realtime / analyzer / cadence / session"]
-    DOM["<b>domain</b><br/>純粋計算と immutable DTO<br/>symmetry_3d / geometry / score_scale / smoothing"]
+    DOM["<b>domain</b><br/>純粋計算と immutable DTO<br/>symmetry_3d / geometry / symmetry_display / smoothing"]
     RT["<b>runtime</b><br/>frame scheduling と表示キャッシュ<br/>FrameScheduler / TtlCache"]
     ADP["<b>adapters</b><br/>MediaPipe / ONNX Runtime / OpenCV<br/>model store / export / IO"]
 
@@ -97,26 +97,30 @@ flowchart TD
 ```mermaid
 flowchart TD
     CAM([Web カメラ]) --> WEBRTC["WebRTC frame<br/>30fps"]
-    WEBRTC --> SCHED{"<b>FrameScheduler</b><br/>latest-frame-wins・容量 1"}
-    SCHED -->|"解析中に届いた<br/>フレームは捨てる"| DROP(["破棄"])
-    SCHED --> CAD{"<b>AnalysisCadence</b><br/>ランドマーク推論を<br/>最大 8Hz へ間引く"}
-    CAD -->|"間引かれた<br/>フレーム"| CACHE["<b>display_cache</b><br/>直前の幾何・背景 mask を<br/>250ms だけ再利用"]
-    CAD -->|"解析する<br/>フレーム"| BRIGHT["明るさ補正<br/>（検出器入力のみ）"]
-    BRIGHT --> LMK["<b>Face Landmarker</b><br/>478 点 + z"]
-    LMK --> ANA["<b>FrameAnalyzer</b><br/>① 3D 正規化<br/>② Procrustes 重ね合わせ<br/>③ 品質ゲート<br/>④ 時間ベース EMA"]
-    ANA --> GATE["age-gate<br/>参考年齢の表示可否"]
-    GATE --> SNAP["<b>PipelineSnapshot</b><br/>不変ビュー"]
-    CACHE --> SNAP
+    WEBRTC --> CAD{"<b>AnalysisCadence</b><br/>ランドマーク推論を<br/>最大 8Hz へ間引く"}
+    CAD -->|"周期の外の<br/>フレーム"| CACHE["<b>display_cache</b><br/>直前の幾何・背景 mask を<br/>250ms だけ再利用"]
+    CAD -->|"周期が来た<br/>フレーム"| SCHED{"<b>FrameScheduler</b><br/>latest-frame-wins・容量 1"}
+    SCHED -->|"解析中に届いた<br/>フレーム"| CACHE
+    SCHED -->|"解析する<br/>フレーム"| DET["検出器入力の調整<br/>明るさ補正・追跡ズーム<br/>（表示には及ばない）"]
+    DET --> LMK["<b>Face Landmarker</b><br/>478 点 + z<br/>座標は元フレームへ写像"]
+
+    LMK --> ANA["<b>FrameAnalyzer</b><br/>① 品質ゲート<br/>② 3D 正規化<br/>③ Procrustes 重ね合わせ<br/>④ 時間ベース EMA"]
+    ANA --> SNAP["<b>PipelineSnapshot</b><br/>不変ビュー"]
+    ANA --> REC["SessionRecorder<br/>記述統計要約・HTML レポート"]
+    ANA -.-> GATE["age-gate<br/>参考年齢の表示可否"]
+    GATE -.-> SNAP
+    LMK -.->|"単一顔の切り出し"| WORKER["<b>独立 worker</b>（別スレッド・1Hz・容量 1）<br/>年齢・性別推論"]
+    WORKER -.-> SNAP
+
+    LMK --> PAINT["ランドマーク・中心線の描画"]
+    PAINT --> VIDEO(["ブラウザへ返す映像"])
+    PAINT -.-> BG["背景置換（表示専用・任意）"]
+    BG -.-> VIDEO
+    CACHE --> VIDEO
 
     SNAP --> HUD["映像上 HUD（5Hz・DOM オーバーレイ）<br/>数値・直近 60 秒の折れ線・品質枠色"]
     SNAP --> TAB1["詳細タブ（1Hz）<br/>計算過程・姿勢・診断"]
     SNAP --> TAB2["参考年齢・参考性別タブ（1Hz）"]
-    SNAP --> REC["SessionRecorder<br/>記述統計要約・HTML レポート"]
-
-    WEBRTC -.-> WORKER["<b>独立 worker</b>（別スレッド・1Hz・容量 1）<br/>年齢・性別推論"]
-    WORKER -.-> SNAP
-    WEBRTC -.-> BG["背景置換（表示専用・任意）"]
-    BG -.-> HUD
 
     style ANA fill:#dde7ff,stroke:#4a5f9e,color:#111
     style WORKER fill:#fdf3cd,stroke:#8a6d1f,color:#111
@@ -124,14 +128,16 @@ flowchart TD
     style GATE fill:#fdf3cd,stroke:#8a6d1f,color:#111
 ```
 
-点線の経路（年齢・性別推論・背景置換・age-gate）は**クリティカルパス外**であり、失敗しても実線の経路を止めない（失敗分離、不変条件 12）。
+点線の経路（年齢・性別推論・背景置換・age-gate）は**クリティカルパス外**であり、失敗しても実線の経路——左右差の分析・スナップショット・記録——を止めない（失敗分離、不変条件 12）。
 
 ### 2.3 設計上の要点
 
-- **latest-frame-wins** — 解析中に届いたフレームは捨てる。キューを伸ばして遅延を積むより、最新の 1 枚だけを見る。
+- **latest-frame-wins** — 解析中に届いたフレームは解析しない。キューを伸ばして遅延を積むより、最新の 1 枚だけを見る。捨てるのは解析であってフレームではなく、映像は直前の幾何を再利用して返す。
 - **間引きと保持** — 重いランドマーク推論を最大 8Hz へ間引き、間引いたフレームは直前の幾何を 250ms だけ再利用する（`runtime.display_cache`）。
 - **数値は映像へ焼き込まない** — HUD は映像の上に重ねた DOM レイヤーで、映像 pixel を書き換えない（遅延要件 FR-013）。HUD は位置選択とドラッグ移動ができる。
 - **タブは 1Hz** — 5Hz のフル再描画はブラウザのメインスレッドで WebRTC 映像と競合する。HUD だけが NFR-003 の 4〜5Hz を維持する。
+- **検出器の入力だけを整える** — 明るさ補正と追跡ズーム（直前フレームの単一顔 bbox を切り出して拡大し、結果を元フレームの座標へ写像する。奥行き $z$ は窓の幅比で戻す）は、検出器へ渡すフレームにしか掛からない。画面へ返す映像は生のままである。
+- **自動調整は表示と周期にしか触れない** — 明るさ gain とズーム policy を 1 秒ごと、解析周期を実測処理時間から更新する。採点に影響する設定は存在しない——距離そのものを指標にしたことで、感度係数も部位の重みも消えたためである（不変条件 10）。
 - **モデルは暗黙に取得しない** — `configs/model-manifest.json` に URL・size・ライセンス・SHA-256 を固定し、明示操作でのみ取得する。1 byte でも違えば配置しない。
 
 ---
@@ -194,11 +200,11 @@ $M(\mathbf{X})$ を $\mathbf{X}$ へ、**並進と回転だけ**で最小二乗�
 \; \bigl\lVert\, \mathbf{X} - \left( M(\mathbf{X})\mathbf{R} + \mathbf{t} \right) \bigr\rVert_F^2
 ```
 
-解は共分散行列の特異値分解で閉形式に得る。回転が鏡映になる場合、すなわち $\det < 0$ の場合は、右特異行列 $\mathbf{V}$ の最終列の符号を反転して真の回転へ落とす。
+解は共分散行列の特異値分解で閉形式に得る。回転が鏡映になる場合、すなわち $\det < 0$ の場合は、左特異行列 $\mathbf{U}$ の最終列の符号を反転して真の回転へ落とす（$\mathbf{V}$ の最終列を反転しても同じ $\mathbf{R}^\ast$ になる）。
 
 ```math
 \mathbf{H} = \tilde{M}^{\mathsf{T}} \tilde{X} = \mathbf{U}\boldsymbol{\Sigma}\mathbf{V}^{\mathsf{T}}, \qquad
-\mathbf{R}^\ast = \mathbf{V}\mathrm{diag}\!\left(1,\,1,\,\det(\mathbf{V}\mathbf{U}^{\mathsf{T}})\right)\mathbf{U}^{\mathsf{T}}
+\mathbf{R}^\ast = \mathbf{U}\mathrm{diag}\!\left(1,\,1,\,\det(\mathbf{U}\mathbf{V}^{\mathsf{T}})\right)\mathbf{V}^{\mathsf{T}}
 ```
 
 残差ベクトルを次で定める。
@@ -215,7 +221,7 @@ $M(\mathbf{X})$ を $\mathbf{X}$ へ、**並進と回転だけ**で最小二乗�
 
 ```math
 d_{3D} \;=\; \sqrt{ \frac{1}{126} \sum_{i=1}^{126} \lVert \mathbf{r}_i \rVert^2 }
-\qquad\text{(全体の対称度 — 対応点を 1 票ずつ数える)}
+\qquad\text{(全体の距離 — 対応点を 1 票ずつ数える)}
 ```
 
 ```math
@@ -232,7 +238,7 @@ z_p  = \sqrt{ \frac{1}{m_p}\sum_{i \in p} r_{i,z}^2 }
 
 **部位別は並列の診断値であり、総合値へは寄与しない。** 部位ごとに Procrustes を走らせ直さないのは、3D の剛体変換が 6 自由度を持つためである。少ない点で 6 自由度を消費すると残差が構造的に小さくなり、ペア数の少ない部位（鼻 7 組）ほど値が下がる。部位間の差が「非対称さ」ではなく「ペア数」を反映してしまう。
 
-**2 つの恒等式**（誤差 0 で成立、§4.2 で実測確認済み）:
+**2 つの恒等式**（いずれも構成から厳密に従う。1 つ目は実写でも誤差 0 を確認した — §4.2）:
 
 ```math
 d_{3D}^2 = xy^2 + z^2 , \qquad
@@ -263,6 +269,8 @@ s_{3D}^2 = \sum_p \frac{1}{P}\, d_{3D,p}^2 \quad\text{(部位を 1 票)}
 \text{symmetry\_percent} \;=\; 100 \times (1 - d) \quad [\%]
 ```
 
+$d > 1$（対応点のずれが両眼間隔そのものを超える、検出破綻に相当する状態）では表示だけが 0% で下げ止まる。clamp は表示上の下限であり、$d$ 自体は上限なく記録される。
+
 $d_{3D}$（全体）と $d_{3D,p}$（部位別 4 つ）のいずれもこの同じ変換を通す。**画面へ出す左右差はこの 5 つだけで、他の総合量・目盛り・点数を持たない。**
 
 **「全体のスコア」は撤回した（2026-09-03）。** $s_{3D}$ を 2 点のアンカー（ずれ 1.0% = 100 点、ずれ 5.0% = 0 点）で 0〜100 の「点」へ引き伸ばす表示スケール `display-scale/1.0.0` を持っていたが、機能ごと削除した。目盛りを 25 倍にするとばらつきも 25 倍になる（§4.4 のセッション間全幅 0.273pt は 6.8 点にあたった）ため、**分解能は上がっても情報は増えなかった**。実測が 98% 前後の狭い幅へ集まるという事実（§4.3、§4.5）そのものは変わらず、`ui/hud.py` の折れ線グラフが y 軸を 95〜100% に固定する対処だけが残る。
@@ -276,7 +284,7 @@ $d_{3D}$（全体）と $d_{3D,p}$（部位別 4 つ）のいずれもこの同�
 \hat{d}_t = \alpha_t\, d_t + (1 - \alpha_t)\, \hat{d}_{t-1}
 ```
 
-$\alpha$ を固定するとフレームレートが動くたびに実効時定数が変わるため、経過時間 $\Delta t$ から毎回導く。時定数 $\tau$ は映像直下のポップオーバーから選べる（既定 0.4 秒、0.05〜30.0 秒の離散段）。**平滑化は表示の追随の速さだけを変え、生値・計算式・エクスポート列を変えない。**
+$\alpha$ を固定するとフレームレートが動くたびに実効時定数が変わるため、経過時間 $\Delta t$ から毎回導く。時定数 $\tau$ は映像直下のポップオーバーから選べる（既定 0.4 秒、0.1〜30.0 秒の 12 段）。**平滑化は表示の追随の速さだけを変え、生値・計算式・エクスポート列を変えない。**
 
 ### 3.8 欠測規則
 
@@ -284,7 +292,7 @@ $z$ が欠測、または使用可能な対応ペアが各部位の `min_pairs` 
 
 ### 3.9 モデル資産
 
-すべて `configs/model-manifest.json` に取得元 URL・サイズ・ライセンス・SHA-256 を固定し、アプリは起動時に自動取得しない。
+すべて `configs/model-manifest.json` にサイズ・ライセンス・SHA-256 を固定し、アプリは起動時に自動取得しない。同梱の age-gate 以外は取得元 URL も固定する。
 
 | 用途                            | モデル / データ                                                                           | 版                             | ライセンス                     |
 | ------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------ |
@@ -316,7 +324,7 @@ $z$ が欠測、または使用可能な対応ペアが各部位の `min_pairs` 
   ├─ 姿勢が範囲外              −3,638
   ├─ 顔なし                      −205
   └─ 複数顔                       −24
-有効 14,754 枚（有効率 79.2%）
+有効 14,754 枚（年齢帯を満たす候補 18,621 枚に対して 79.2%）
 ```
 
 **参照統計の使い方の制限（`requirement.md` §10.7）:** **利用者自身の測定結果と参照統計を結び付けず、両者を同じ画面へ並べない。** 参照統計は独立した閲覧ページの中だけで完結し、利用者の測定値を持ち込まない。偏差値・順位・パーセンタイル・分位・合否・「平均より上／下」を、数値としても語としても作らない。群間差の原因を示唆する文言・グラフを持たず、人種別・性別別の値をランキングに読める形で並べない。
@@ -337,7 +345,7 @@ $z$ が欠測、または使用可能な対応ペアが各部位の `min_pairs` 
 
 ### 4.1 感度 — 部位別ゲイン（既知量の非対称を注入したときの応答）
 
-$1.0$ = 注入した分を正しく検出。take01・600 フレーム・領域変位場 $\sigma = 0.12$ IOD。
+$1.0$ = 注入した分を正しく検出。take01・5 フレーム・領域変位場 $\sigma = 0.12$ IOD。
 
 | 部位 |  `symmetry-2d/2.0.0` | `symmetry-3d/1.0.0` |
 | ---- | -------------------: | ------------------: |
@@ -465,7 +473,7 @@ uv run python scripts/bootstrap_models.py --verify             # 配置済みフ
 uv run --script scripts/convert_demographic_model.py           # 公式 IR → 派生 ONNX を決定的生成
 ```
 
-取得は一時ファイルへ書き、SHA-256 が一致した場合だけ `models/` へ atomic rename する。配置先を変える場合は、ランドマークに `FACE_SYMMETRY_LAB_LANDMARKER_PATH`、年齢・性別の派生モデルに `FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH` を設定する。別パスも manifest と同じ size・SHA-256 でなければ読み込まない。モデルは Git に含めない。
+取得は一時ファイルへ書き、SHA-256 が一致した場合だけ `models/` へ atomic rename する。配置先を変える場合は、ランドマークに `FACE_SYMMETRY_LAB_LANDMARKER_PATH`、年齢・性別の派生モデルに `FACE_SYMMETRY_LAB_DEMOGRAPHIC_ONNX_PATH` を設定する。別パスも manifest と同じ size・SHA-256 でなければ読み込まない。モデルは Git に含めない。**例外は `models/age_gate_model.onnx` の 1 件だけ**で、取得元 URL を持たない自作資産のためリポジトリへ同梱する（`requirement.md` §22.5）。
 
 ### 5.2 技術スタック
 

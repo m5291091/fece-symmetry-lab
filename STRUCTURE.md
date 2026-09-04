@@ -17,7 +17,6 @@ Read this file once at the start of a task. After locating the relevant module, 
 | About page (methodology / constraints / models / privacy) | `src/face_symmetry_lab/ui/about_page.py` |
 | 参照統計ブラウザ（人種・性別・年齢での絞り込み閲覧、FR-037） | `src/face_symmetry_lab/ui/reference_page.py` |
 | 参照統計の凍結セルテーブル（§9.5、アプリが読む唯一の参照データ） | `configs/reference/utkface_symmetry3d_cells_v1.csv` |
-| 吹き出し・HUD へ併記する参照平均の解決（FR-039） | `src/face_symmetry_lab/ui/baseline.py` |
 | 参照統計セルテーブルの生成 (dev-only、アプリからは呼ばない) | `scripts/build_reference_dataset.py` |
 | 参照統計の生成元 notebook（再現性の正本。`src/` からは参照しない） | `research/utkface-symmetry/utkface_symmetry_lab.ipynb` |
 | Realtime camera UI | `src/face_symmetry_lab/ui/camera.py` |
@@ -54,8 +53,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Landmark map derivation | `scripts/derive_landmark_map.py` |
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
 | 3D object symmetry 指標（§8.5.1、並走） | `src/face_symmetry_lab/domain/symmetry_3d.py` |
-| 「全体のスコア」の表示スケール（§8.6.7） | `src/face_symmetry_lab/domain/score_scale.py` |
-| 「全体のスコア」の計算過程 DTO（§8.6.3 H4） | `src/face_symmetry_lab/domain/score_explanation.py` |
+| 対称度の表示変換（`100% - ずれ%`、§8.6.3） | `src/face_symmetry_lab/domain/symmetry_display.py` |
 | 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
 | 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
 | 対称化画像のピクセルワーピング | `src/face_symmetry_lab/adapters/imaging/piecewise_warp.py` |
@@ -96,8 +94,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Normalization / TLS midline / 3D 正規化 | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, FR-036, AC-SCORE-02, §8.5.1 |
 | Symmetry distances | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01, AC-SCORE-04 |
 | 3D object symmetry 距離（並走） | `domain/symmetry_3d.py` | `tests/domain/test_symmetry_3d.py` | FR-036, AC-SCORE-05〜09, §8.5.1, §8.6.5 |
-| 「全体のスコア」の表示スケール | `domain/score_scale.py` | `tests/domain/test_score_scale.py` | FR-013, §8.6.7, AC-DISPLAY-05 |
-| 「全体のスコア」の計算過程 DTO | `domain/score_explanation.py` | `tests/domain/test_score_explanation.py` | FR-013, §8.6.3, §8.6.5, §8.6.7, AC-DISPLAY-04 |
+| 対称度の表示変換（`100% - ずれ%`） | `domain/symmetry_display.py` | `tests/domain/test_symmetry_display.py` | FR-013, §8.6.3 |
 | 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
 | 変形メッシュ・安全ガード | `domain/warp_mesh.py` | `tests/domain/test_warp_mesh.py` | FR-035, AC-SYMM-02, §8.6.4 |
 | Delaunay＋区分アフィン変形 | `adapters/imaging/piecewise_warp.py` | `tests/adapters/test_piecewise_warp.py` | FR-035, AC-SYMM-02, §8.6.4 |
@@ -157,10 +154,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 参照統計の use case・入力検証・失敗分離 | `application/reference_browser.py` | `tests/application/test_reference_browser.py` | FR-037, AC-REFERENCE-02, AC-REFERENCE-03 |
 | 凍結参照アセットの読み込みと sha256 検証 | `adapters/io/reference_dataset.py` | `tests/adapters/test_reference_dataset.py` | FR-037, §9.5, §10.9, AC-REFERENCE-03 |
 | 参照統計ページの描画と注意書き | `ui/reference_page.py` | `tests/ui/test_reference_page.py` | FR-037, §10.7, AC-REFERENCE-02〜04 |
-| 参照平均の併記（母集団の選択と差） | `domain/reference_baseline.py` | `tests/domain/test_reference_baseline.py` | FR-039, §10.12, AC-BASELINE-01, AC-BASELINE-02 |
-| 参照平均の use case（失敗分離・memo 化・セッション単位） | `application/reference_baseline.py` | `tests/application/test_reference_baseline.py` | FR-039, §9.6.1, §10.12, AC-BASELINE-01, AC-BASELINE-03, AC-BASELINE-05 |
 | 表示できた判定の観測 | `application/demographic_observations.py` | `tests/application/test_demographic_observations.py` | FR-039, FR-042, §10.12, AC-BASELINE-05 |
-| 参照平均の画面側の解決 | `ui/baseline.py` | `tests/ui/test_baseline.py` | FR-039, §10.12, AC-BASELINE-01 |
 | 個票 → セルテーブルの生成と自己検証 (dev-only) | `scripts/build_reference_dataset.py` | `tests/repository/test_build_reference_dataset.py` | FR-037, §9.5, §10.9 |
 
 ## Maintenance
