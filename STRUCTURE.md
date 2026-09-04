@@ -31,6 +31,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | レポートへ入れる図の組み立て（FR-042） | `src/face_symmetry_lab/ui/report_figures.py` |
 | 図の縮小と data URI 符号化（FR-042） | `src/face_symmetry_lab/adapters/imaging/image_encoding.py` |
 | Image 入力モード一式 | `src/face_symmetry_lab/ui/image_section.py` |
+| 静止画に重ねる吹き出し（HUD と同じ数値・同じ整形） | `src/face_symmetry_lab/ui/still_overlay.py` |
 | 表示値の解決と整形（HUD・吹き出し・詳細で共有） | `src/face_symmetry_lab/ui/readings.py` |
 | Camera / Image 共有の対称化パネル | `src/face_symmetry_lab/ui/symmetrization_panel.py` |
 | Camera / Image 共有の結果タブの並び（§5.1） | `src/face_symmetry_lab/ui/result_tabs.py` |
@@ -74,11 +75,19 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Tracking-zoom landmark wrapper | `src/face_symmetry_lab/adapters/inference/tracking_zoom_landmarker.py` |
 | Tracking-zoom geometry | `src/face_symmetry_lab/domain/tracking_zoom.py` |
 | MediaPipe segmentation adapter | `src/face_symmetry_lab/adapters/inference/mediapipe_segmenter.py` |
+| ローカル runtime 起動失敗の共通文言 | `src/face_symmetry_lab/adapters/inference/runtime_errors.py` |
 | Brightness / background compositing | `src/face_symmetry_lab/domain/frame_adjustments.py` |
+| 明るさの非ブロッキング警告（採点・品質ゲートを止めない） | `src/face_symmetry_lab/domain/capture_quality.py` |
 | 明るさ・追跡ズームの自動調整heuristic | `src/face_symmetry_lab/domain/auto_tuning.py` |
 | Segmentation model card | `docs/model-cards/mediapipe-selfie-segmenter.md` |
 | Age / gender adapter | `src/face_symmetry_lab/adapters/inference/opencv_demographic_estimator.py` |
 | Age / gender model card | `docs/model-cards/openvino-age-gender-retail-0013.md` |
+| 参考年齢の表示ゲート（FR-038）の幾何特徴 41 次元 | `src/face_symmetry_lab/domain/age_gate.py` |
+| 参考年齢の表示ゲートの use case（安全側の既定・失敗分離） | `src/face_symmetry_lab/application/age_gate.py` |
+| 参考年齢の表示ゲートの ONNX 実行と spec 読み込み | `src/face_symmetry_lab/adapters/inference/onnx_age_gate.py` |
+| 参考年齢を出せないときの固定文言（内部判断を属性化しない、§10.11-2） | `src/face_symmetry_lab/ui/age_gate_notice.py` |
+| 参考年齢の表示ゲートの凍結 spec（特徴量順・動作点） | `configs/age-gate-v1.json` |
+| 参考年齢の表示ゲートのモデルカード | `docs/model-cards/age-gate-v1.md` |
 | Architecture decisions | `docs/adr/` |
 | Repository verification | `scripts/verify.py` |
 
@@ -108,6 +117,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | レポートの図の組み立て | `ui/report_figures.py` | `tests/ui/test_report_figures.py` | FR-042, FR-034, FR-035, AC-REPORT-03 |
 | 図の縮小と data URI 符号化 | `adapters/imaging/image_encoding.py` | `tests/adapters/test_image_encoding.py` | FR-042, §10.4, AC-REPORT-02 |
 | Demographic mapping | `domain/demographics.py` | `tests/domain/test_demographics.py` | FR-022, FR-023 |
+| 参考年齢の表示ゲートの幾何特徴（41 次元） | `domain/age_gate.py` | `tests/domain/test_age_gate.py` | FR-038, §10.11, NFR-013, AC-AGEGATE-01 |
 | Safe image input | `application/image_input.py` | `tests/application/test_image_input.py` | FR-006, FR-007 |
 | Realtime frame pipeline | `application/realtime.py` | `tests/application/test_realtime.py` | FR-013, NFR-017 |
 | 解析周期・表示 TTL | `application/analysis_cadence.py` | `tests/application/test_analysis_cadence.py` | NFR-006, §1.2(17), §14.3d |
@@ -115,6 +125,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | 年齢・性別の中継役 | `application/demographic_relay.py` | `tests/application/test_demographic_relay.py` | FR-022〜024, §14.3 |
 | 自動調整の判断ロジック（cadence・表示のみ） | `application/auto_tune_controller.py` | `tests/application/test_auto_tune_controller.py` | FR-029, FR-030, AC-AUTOTUNE-01, AC-AUTOTUNE-02 |
 | 年齢・性別の独立worker | `application/demographic_worker.py` | `tests/application/test_demographic_worker.py` | FR-022〜024, §14.3 |
+| 参考年齢の表示ゲートの use case と配線 | `application/age_gate.py` | `tests/application/test_age_gate.py` / `tests/application/test_age_gate_wiring.py` | FR-038, §9.2, §10.11, AC-AGEGATE-02, AC-AGEGATE-03 |
 | Session recording / fingerprint | `application/session.py` | `tests/application/test_session.py` | FR-016, FR-017, FR-020 |
 | Quality gate | `application/quality.py` | `tests/application/test_quality.py` | FR-010, AC-STATE-01 |
 | Analysis orchestration | `application/analyzer.py` | `tests/application/test_analyzer.py` | FR-011, FR-012 |
@@ -124,17 +135,22 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Tracking-zoom geometry | `domain/tracking_zoom.py` | `tests/domain/test_tracking_zoom.py` | FR-026, §14.3a, §8.1.1, AC-ZOOM-01 |
 | Tracking-zoom landmark wrapper | `adapters/inference/tracking_zoom_landmarker.py` | `tests/adapters/test_tracking_zoom_landmarker.py` | FR-026, FR-008, §8.1.1, AC-ZOOM-01 |
 | Brightness / background compositing | `domain/frame_adjustments.py` | `tests/domain/test_frame_adjustments.py` | FR-027, FR-028, AC-DISPLAY-01 |
+| 明るさの非ブロッキング警告 | `domain/capture_quality.py` | `tests/domain/test_capture_quality.py` | FR-010, §6.2, §6.3, §8.2, NFR-013 |
 | 明るさ・追跡ズームの自動調整heuristic | `domain/auto_tuning.py` | `tests/domain/test_auto_tuning.py` | FR-026, FR-028, FR-029, AC-AUTOTUNE-01 |
 | MediaPipe segmentation adapter | `adapters/inference/mediapipe_segmenter.py` | `tests/adapters/test_mediapipe_segmenter.py` | FR-027, AC-DISPLAY-01 |
 | OpenCV age / gender inference | `adapters/inference/opencv_demographic_estimator.py` | `tests/adapters/test_opencv_demographic_estimator.py` | FR-022〜024 |
+| 参考年齢の表示ゲートの ONNX 実行 | `adapters/inference/onnx_age_gate.py` | `tests/adapters/test_onnx_age_gate.py` | FR-038, §10.6, §22.5, AC-AGEGATE-01, AC-AGEGATE-03 |
+| ローカル runtime 起動失敗の共通文言 | `adapters/inference/runtime_errors.py` | `tests/adapters/test_runtime_errors.py` | §5.3, §14.4, §21.5 |
 | Metric bundle loading | `adapters/io/metric_config.py` | `tests/adapters/test_metric_config.py` | FR-011, FR-020 |
 | 詳細結果の描画と §5.3 の文言 | `ui/scores.py` | `tests/ui/test_scores.py` | FR-013, FR-014, §5.2, §5.3, §8.6.3 |
 | 表示値の解決と整形（共有） | `ui/readings.py` | `tests/ui/test_readings.py` | FR-013, FR-036, §8.6.3, §8.6.7, §14.3e |
 | Camera / Image 共有の対称化パネル | `ui/symmetrization_panel.py` | `tests/ui/test_symmetrization_panel.py` | FR-034, FR-035, §5.3, §10.7 |
 | Camera / Image 共有の結果タブの並び | `ui/result_tabs.py` | `tests/ui/test_result_tabs.py` | FR-013, FR-032, §5.1, §5.4, AC-LAYOUT-01 |
 | Camera / Image 共有の参考年齢・参考性別の区画 | `ui/demographic_panel.py` | `tests/ui/test_demographic_panel.py` | FR-022, FR-024, FR-038, §5.1, §10.11, §10.12 |
+| 参考年齢を出せないときの固定文言 | `ui/age_gate_notice.py` | `tests/ui/test_age_gate_notice.py` | FR-038, §10.7, §10.11, AC-AGEGATE-04 |
 | Camera / Image 共有の詳細結果の枠 | `ui/detail_panel.py` | `tests/ui/test_detail_panel.py` | FR-013, FR-014, §5.1, §14.3f, AC-LAYOUT-01 |
 | Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
+| 静止画に重ねる吹き出し | `ui/still_overlay.py` | `tests/ui/test_still_overlay.py` | FR-013, FR-014, FR-024, FR-036, FR-038, §5.1, §14.3e, AC-LAYOUT-01 |
 | ダウンロードパネル（CSV / JSON / レポート、Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020, FR-042 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
@@ -142,6 +158,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Real-model smoke | `scripts/bootstrap_models.py` | `tests/model/test_real_landmarker.py` | FR-002, §21.1 |
 | OpenVINO reference parity | `scripts/verify_openvino_parity.py` | `tests/model/test_openvino_parity.py` | OD-07, FR-022〜024, §21.1 |
 | Cross-ONNX-runtime agreement | `scripts/verify_onnx_runtime_agreement.py` | `tests/model/test_onnx_runtime_agreement.py` | OD-07, FR-022〜024, §21.1 |
+| age-gate の凍結 contract（実 ONNX） | `models/age_gate_model.onnx` | `tests/model/test_age_gate_contract.py` | FR-038, §22.5, AC-AGEGATE-01 |
 | Camera composition | `ui/camera.py` | `tests/ui/test_camera.py` | FR-004, FR-005, FR-034, NFR-009 |
 | 映像へ重ねる HUD の組み立て | `ui/hud.py` | `tests/ui/test_hud.py` | FR-013, FR-032, §5.2, §14.3e |
 | HUD のブラウザ資産（CSS・実行時 JS） | `ui/hud_assets.py` | `tests/ui/test_hud_assets.py` | FR-013, FR-032, §5.2, §5.4, §14.3e |
