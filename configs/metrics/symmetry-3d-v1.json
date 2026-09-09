@@ -316,5 +316,5 @@
       "min_pairs": 6
     }
   },
-  "notes": "3D object symmetry 解析による残差 RMS 距離 (requirement.md §8.5.1, §8.6.5, FR-036)。対応ペア表・眼アンカー・landmark_map_version は symmetry-2d/2.0.0 と同一で、距離の定義だけが異なる。midline_indices は同じ landmark_map_version を共有するため列として保持するが、この指標は正中線を推定せず参照しない (§8.4 適用範囲)。正規化スケールは 3D の両眼アンカー間距離であり、2D 投影距離ではない (§8.5.1)。部位別と xy/z 分解は単一の重ね合わせの残差から集計する並列の診断出力であり、総合値へ寄与しない。この版では表示・EMA・エクスポートへ接続せず、symmetry-2d/2.0.0 と並走する。"
+  "notes": "3D object symmetry 解析による残差 RMS 距離 (requirement.md §8.5.1, §8.6.5, FR-036)。対応ペア表・眼アンカー・landmark_map_version は symmetry-2d/2.0.0 と同一で、距離の定義だけが異なる。midline_indices は同じ landmark_map_version を共有するため列として保持するが、この指標は正中線を推定せず参照しない (§8.4 適用範囲)。正規化スケールは 3D の両眼アンカー間距離であり、2D 投影距離ではない (§8.5.1)。部位別と xy/z 分解は単一の重ね合わせの残差から集計する並列の診断出力であり、総合値へ寄与しない。本 bundle が主指標であり、表示・§8.7 の EMA・エクスポートの distance3d_* 列へ接続する。symmetry-2d/2.0.0 は画面から外れ、エクスポートに distance_*_raw として診断目的で残る。"
 }

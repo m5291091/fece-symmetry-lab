@@ -57,8 +57,10 @@ class AnalysisOutcome:
     face_area_ratio: float | None
     metric_version: str
     landmark_map_version: str
-    #: §8.5.1 / §8.6.5 の並走指標（`symmetry-3d/1.0.0`, FR-036）。この版では
-    #: `AnalysisOutcome` までは届くが、表示・エクスポートへは接続しない。
+    #: §8.5.1 / §8.6.5 の主指標（`symmetry-3d/1.0.0`, FR-036）。表示は
+    #: `ui.readings.resolve_overall_distance` / `resolve_part_distance_3d` が、
+    #: エクスポートは `application.session` が `distance3d_*_raw` 列としてここから
+    #: 読む。
     symmetry_3d: Symmetry3DResult | None = None
     #: `symmetry_3d.overall.distance`（`d_3d`）へ §8.7 と同じ時間ベース EMA を
     #: 独立に掛けたもの。`overall_distance_smooth` とは別の EMA インスタンスで
@@ -210,10 +212,10 @@ class FrameAnalyzer:
         if symmetry is not None and symmetry.overall is not None:
             smooth = self._ema.update(symmetry.overall, at=at)
 
-        # symmetry-3d/1.0.0（§8.5.1, §8.6.5, FR-036）は 2D と並走するだけで、
-        # まだ誰も読まない。2D の失敗処理（Status.ERROR にしてゲートと EMA を
-        # リセットする）をここへコピーしない —— 3D の失敗はこのフレームの 3D
-        # 側だけを欠測にし、state・品質ゲート・2D の距離・EMA の
+        # symmetry-3d/1.0.0（§8.5.1, §8.6.5, FR-036）は主指標であり、表示と
+        # エクスポートはここから読む。それでも 2D の失敗処理（Status.ERROR にして
+        # ゲートと EMA をリセットする）をここへコピーしない —— 3D の失敗はこの
+        # フレームの 3D 側だけを欠測にし、state・品質ゲート・2D の距離・EMA の
         # いずれも変えない（不変条件 12 の失敗分離）。`quality_ok` は品質ゲート
         # 直後の判定であり、2D の算出が後から失敗して `state` が ERROR に変わっ
         # ても、3D はそれに引きずられない。
