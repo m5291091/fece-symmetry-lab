@@ -4,7 +4,7 @@
 |---|---|
 | metric_version | `symmetry-2d/2.0.0` |
 | landmark_map_version | `mediapipe-478-mirror/1.0.0` |
-| status | 較正すべき自由パラメータを持たない（OD-01 は解消）。**表示からは外れ、診断列としてエクスポートに残る**（主指標は `symmetry-3d/1.0.0`、`docs/model-cards/symmetry-3d-v1.md`） |
+| status | 較正すべき自由パラメータを持たない（OD-01 は解消）。**表示からは外れ、§9.2 の内部記録に診断列として残る**（主指標は `symmetry-3d/1.0.0`、`docs/model-cards/symmetry-3d-v1.md`） |
 | config | `configs/metrics/symmetry-2d-v1.json` |
 | intended comparison | 同一人物・同一端末・同一照明・同一撮影条件内の相対比較 |
 
@@ -54,34 +54,42 @@
 
 1. 本人の明示同意がある成人の入力だけを使い、画像・映像・landmarkを保存しない。
 2. 同一人物について、端末・距離・照明を固定した独立再撮影を2回以上行う。
-3. 各撮影で品質ゲートを通った連続フレームをCSVまたはJSONへ明示保存する。
+3. 各撮影で品質ゲートを通った連続フレームを §9.2 の内部記録として残す（FR-017 の
+   CSV / JSON は 2026-08-16 に撤回済みで、書き出せるのは FR-042 の HTML レポートだけである）。
 4. `metric_version` と `config_fingerprint` が一致するレコードだけを同じ評価へ含める。
 5. `distance_*_raw` と `distance_overall_raw` の件数、最小値、四分位、中央値、最大値、
    および同一人物の再撮影差を報告する。
 
-## エクスポート契約
+## 記録契約（§9.2）
 
-スキーマ`4.0.0`は本 bundle の正規化RMS距離を診断列（`distance_contour_raw`・
+**2026-08-16 に FR-017（CSV / JSON エクスポート）を撤回したので、この契約が定めるのは
+外へ書き出す形式ではなく `SessionRecorder` がアプリ内部に持つ記録である。** 読み手は
+FR-021 の要約と FR-042 のレポートだけで、書き出せる成果物は FR-042 の HTML レポート
+1 種類しかない。
+
+スキーマ`5.0.0`は本 bundle の正規化RMS距離を診断列（`distance_contour_raw`・
 `distance_eyes_raw`・`distance_nose_raw`・`distance_mouth_raw`・`distance_overall_raw`）
 として含む。主指標が`symmetry-3d/1.0.0`へ切り替わったため、本bundleのEMA列
-`distance_overall_smooth`はv4.0で削除された（並走する3Dの平滑値`distance3d_overall_smooth`
-に置き換わった）。行ごとの版は`metric_version_2d`列で追跡する。ほかに、幾何へ混合しない
-撮影条件依存の`skin_quality_score_raw`と補正gain、および18〜75歳向け年齢・性別fieldを
-含む。画像、映像、landmark座標、元ファイル名、人物名は含めない。派生数値も匿名とは
-限らないため、利用者の明示操作でのみ保存し、共有先と保持期間を管理する。
+`distance_overall_smooth`はv4.0で削除された（主指標側の平滑値`distance3d_overall_smooth`
+に置き換わった）。行ごとの版は`metric_version_2d`列で追跡する。ほかに18〜75歳向け
+年齢・性別fieldとFR-038のゲート判定列を含む。**肌表面参考値列（`skin_*` 8 列）は v5.0
+で削除した**（FR-025 / §8.6.1 撤回、2026-08-31）。画像、映像、landmark座標、元ファイル名、
+人物名は含めない。派生数値も匿名とは限らないため、利用者の明示的なダウンロード操作で
+ディスクへ出るのは FR-042 のレポートだけであり、その共有先と保持期間は利用者が管理する
+（§10.4、ADR-0009）。
 
-## 肌表面参考指標との関係
+## 肌表面参考指標との関係（撤回）
 
-`skin-surface/0.1.0`はGray-worldと明度補正後の頬patchの色調・texture均一性を比較する
-独立した実験値である。照明、影、化粧、髭、眼鏡、camera処理を完全には分離できず、
-肌質、疾患、健康、美しさを表さない。OD-08完了まで`skin_quality_frozen: false`とし、
-本指標の4部位または全体距離へ混合しない。
+**撤回**（2026-08-31 の指示、FR-025 / §8.6.1）。`skin-surface/0.1.0` は機能ごと削除した。
+`domain.skin_quality`・関連テスト・記録列 8 つ・UI 表示ブロックはすべて除去済みで、
+評価対象が無くなったため OD-08 も撤回された（AC-APPEARANCE-01 も同様）。「本指標の 4 部位
+または全体距離へ混合しない」という当時の約束は、混合する対象そのものが存在しなくなった
+ことで満たされている。
 
 ## 未取得の証跡
 
 - 部位別距離・全体距離の分布（参考統計）
 - 同一人物の再撮影差
-- 肌表面参考値の照明・camera・再撮影差と補正gainの評価
 
 AC-SCORE-04 は「較正されていない自由パラメータを持たないこと」を要求する条件へ
 置き換わり、v2.0.0 で満たされている。上記の参考統計が揃うまで、UI は引き続き
