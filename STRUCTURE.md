@@ -151,7 +151,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Camera / Image 共有の詳細結果の枠 | `ui/detail_panel.py` | `tests/ui/test_detail_panel.py` | FR-013, FR-014, §5.1, §14.3f, AC-LAYOUT-01 |
 | Image 入力モード一式 | `ui/image_section.py` | `tests/ui/test_image_section.py` | FR-004, FR-006, FR-024, §5.1, §10.8 |
 | 静止画に重ねる吹き出し | `ui/still_overlay.py` | `tests/ui/test_still_overlay.py` | FR-013, FR-014, FR-024, FR-036, FR-038, §5.1, §14.3e, AC-LAYOUT-01 |
-| ダウンロードパネル（CSV / JSON / レポート、Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020, FR-042 |
+| ダウンロードパネル（HTML レポート 1 種類、Camera・Image共用） | `ui/export_panel.py` | `tests/ui/test_export_panel.py` | FR-017, FR-020, FR-042 |
 | Still-image landmarks | `application/still_image.py` | `tests/application/test_still_image.py` | FR-006, FR-013 |
 | 対称化の一発処理 | `application/symmetrization.py` | `tests/application/test_symmetrization.py` | FR-034, FR-035, AC-SYMM-01, AC-SYMM-02, §14.3g |
 | Model manifest / install | `adapters/io/model_store.py` | `tests/adapters/test_model_store.py` | FR-002, AC-MODEL-01 |
