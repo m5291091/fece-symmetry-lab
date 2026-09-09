@@ -50,10 +50,14 @@ def equal_weight_distance_from_parts(distances: Mapping[str, float | None]) -> f
 
         s_3d = sqrt( Σ_p d_p² / P )        P = 部位数（現行は 4）
 
-    `Symmetry3DResult.equal_weight_distance` が自身の `splits`（生値）から呼ぶ
-    のと同じ式であり、そちらから切り出した。部位別距離を単独で持つ場面
-    （`ui.scores` の「全体のスコア」計算過程の開示、H2）でも同じ式を再利用でき、
-    domain 層の外（ui）で計算式を複製しないための境界である（CLAUDE.md §5・§6）。
+    **この式の唯一の実装である。** 現在の production 呼び出し元は
+    `Symmetry3DResult.equal_weight_distance`（自身の `splits` の生値から呼ぶ）
+    だけである。切り出した当初の理由——`ui.scores` の「全体のスコア」計算過程の
+    開示（H2）が部位別平滑値から同じ式を呼べるようにすること——は、2026-09-03 の
+    撤回（§0 項目 34）で消えた。それでも module 直下の関数として残しているのは、
+    部位別距離の辞書だけを与えて式そのものを検算するテストがこの名前を突いている
+    ためである。`s_3d` 自体は残り、記録列 `distance3d_parts_equal_raw`（§9.2）と
+    `age-gate/1.0.0` の特徴量 `s3d_distance`（§10.11）が上のプロパティ経由で読む。
 
     **部位が 1 つでも欠測（`None`）、またはキー自体が無ければ欠測を返す。**
     使える部位だけで平均しない（§8.6.5 と同じ規約、不変条件 11）。
