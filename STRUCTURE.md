@@ -50,10 +50,10 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Runtime ports | `src/face_symmetry_lab/application/ports.py` |
 | Pinned model manifest | `configs/model-manifest.json` |
 | Frozen metric bundle | `configs/metrics/symmetry-2d-v1.json` |
-| 3D object symmetry の凍結 bundle（並走） | `configs/metrics/symmetry-3d-v1.json` |
+| 3D object symmetry の凍結 bundle（主指標） | `configs/metrics/symmetry-3d-v1.json` |
 | Landmark map derivation | `scripts/derive_landmark_map.py` |
 | Symmetry metric | `src/face_symmetry_lab/domain/symmetry.py` |
-| 3D object symmetry 指標（§8.5.1、並走） | `src/face_symmetry_lab/domain/symmetry_3d.py` |
+| 3D object symmetry 指標（§8.5.1、主指標） | `src/face_symmetry_lab/domain/symmetry_3d.py` |
 | 対称度の表示変換（`100% - ずれ%`、§8.6.3） | `src/face_symmetry_lab/domain/symmetry_display.py` |
 | 対称化ビジュアライゼーション（純粋幾何） | `src/face_symmetry_lab/domain/symmetrization.py` |
 | 対称化の一発処理 | `src/face_symmetry_lab/application/symmetrization.py` |
@@ -102,7 +102,7 @@ Read this file once at the start of a task. After locating the relevant module, 
 | Metric bundle validation | `domain/metrics.py` | `tests/domain/test_metrics.py` | FR-011, FR-018 |
 | Normalization / TLS midline / 3D 正規化 | `domain/geometry.py` | `tests/domain/test_geometry.py` | FR-011, FR-036, AC-SCORE-02, §8.5.1 |
 | Symmetry distances | `domain/symmetry.py` | `tests/domain/test_symmetry.py` | FR-011, AC-SCORE-01, AC-SCORE-04 |
-| 3D object symmetry 距離（並走） | `domain/symmetry_3d.py` | `tests/domain/test_symmetry_3d.py` | FR-036, AC-SCORE-05〜09, §8.5.1, §8.6.5 |
+| 3D object symmetry 距離（主指標） | `domain/symmetry_3d.py` | `tests/domain/test_symmetry_3d.py` | FR-036, AC-SCORE-05〜10, §8.5.1, §8.6.5 |
 | 対称度の表示変換（`100% - ずれ%`） | `domain/symmetry_display.py` | `tests/domain/test_symmetry_display.py` | FR-013, §8.6.3 |
 | 対称化点群・ズレ | `domain/symmetrization.py` | `tests/domain/test_symmetrization.py` | FR-034, AC-SYMM-01, §8.6.2 |
 | 変形メッシュ・安全ガード | `domain/warp_mesh.py` | `tests/domain/test_warp_mesh.py` | FR-035, AC-SYMM-02, §8.6.4 |
